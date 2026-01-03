@@ -1,0 +1,16 @@
+{
+  "name": "x1-wallet",
+  "version": "1.0.0",
+  "private": true,
+  "description": "X1 Wallet - Extension & Mobile Apps",
+  "scripts": {
+    "dev:extension": "pnpm --filter @x1-wallet/extension dev",
+    "build:extension": "pnpm --filter @x1-wallet/extension build",
+    "dev:mobile": "pnpm --filter @x1-wallet/mobile start",
+    "build:android": "pnpm --filter @x1-wallet/mobile android",
+    "build:ios": "pnpm --filter @x1-wallet/mobile ios"
+  },
+  "devDependencies": {
+    "pnpm": "^8.0.0"
+  }
+}

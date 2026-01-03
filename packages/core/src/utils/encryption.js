@@ -1,0 +1,156 @@
+// Wallet Encryption Utilities
+// Uses AES-GCM with PBKDF2 key derivation for secure storage
+// This is an OPTIONAL upgrade - existing unencrypted wallets continue to work
+
+// X1W-NEW-001 FIX: Increased to OWASP 2024 recommendation (600,000+ for PBKDF2-SHA256)
+// Version 2 uses legacy 100k iterations for backward compatibility
+// Version 3 uses modern 600k iterations for new wallets
+const PBKDF2_ITERATIONS_V2 = 100000;  // Legacy - for decrypting existing wallets
+const PBKDF2_ITERATIONS_V3 = 600000;  // Current - OWASP 2024 compliant
+const CURRENT_VERSION = 3;
+const SALT_LENGTH = 16;
+const IV_LENGTH = 12;
+const VERSION_BYTE_LENGTH = 1;
+
+async function deriveKey(password, salt, iterations = PBKDF2_ITERATIONS_V3) {
+  const encoder = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits', 'deriveKey']
+  );
+  
+  return crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt: salt,
+      iterations: iterations,
+      hash: 'SHA-256'
+    },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+export async function encryptData(plaintext, password) {
+  if (!password || password.length < 1) {
+    throw new Error('Password is required for encryption');
+  }
+  
+  const encoder = new TextEncoder();
+  const data = encoder.encode(plaintext);
+  const salt = crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
+  const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
+  const key = await deriveKey(password, salt, PBKDF2_ITERATIONS_V3);
+  
+  const encryptedBuffer = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: iv },
+    key,
+    data
+  );
+  
+  const encrypted = new Uint8Array(encryptedBuffer);
+  // Version 3 format: [version byte][salt][iv][ciphertext]
+  const combined = new Uint8Array(VERSION_BYTE_LENGTH + SALT_LENGTH + IV_LENGTH + encrypted.length);
+  combined[0] = CURRENT_VERSION; // Version byte
+  combined.set(salt, VERSION_BYTE_LENGTH);
+  combined.set(iv, VERSION_BYTE_LENGTH + SALT_LENGTH);
+  combined.set(encrypted, VERSION_BYTE_LENGTH + SALT_LENGTH + IV_LENGTH);
+  
+  return btoa(String.fromCharCode(...combined));
+}
+
+export async function decryptData(encryptedBase64, password) {
+  if (!password) throw new Error('Password is required for decryption');
+  if (!encryptedBase64) throw new Error('No encrypted data provided');
+  
+  try {
+    const combined = Uint8Array.from(atob(encryptedBase64), c => c.charCodeAt(0));
+    
+    // Detect version based on format
+    // Version 3: first byte is 3, then salt, iv, ciphertext
+    // Version 2 (legacy): no version byte, starts directly with salt
+    let salt, iv, encrypted, iterations;
+    
+    if (combined[0] === 3) {
+      // Version 3 format with 600k iterations
+      salt = combined.slice(VERSION_BYTE_LENGTH, VERSION_BYTE_LENGTH + SALT_LENGTH);
+      iv = combined.slice(VERSION_BYTE_LENGTH + SALT_LENGTH, VERSION_BYTE_LENGTH + SALT_LENGTH + IV_LENGTH);
+      encrypted = combined.slice(VERSION_BYTE_LENGTH + SALT_LENGTH + IV_LENGTH);
+      iterations = PBKDF2_ITERATIONS_V3;
+    } else {
+      // Legacy version 2 format with 100k iterations (no version byte)
+      salt = combined.slice(0, SALT_LENGTH);
+      iv = combined.slice(SALT_LENGTH, SALT_LENGTH + IV_LENGTH);
+      encrypted = combined.slice(SALT_LENGTH + IV_LENGTH);
+      iterations = PBKDF2_ITERATIONS_V2;
+    }
+    
+    const key = await deriveKey(password, salt, iterations);
+    
+    const decryptedBuffer = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: iv },
+      key,
+      encrypted
+    );
+    
+    return new TextDecoder().decode(decryptedBuffer);
+  } catch (error) {
+    throw new Error('Decryption failed - incorrect password or corrupted data');
+  }
+}
+
+export async function hashPassword(password, existingSalt = null) {
+  const encoder = new TextEncoder();
+  const salt = existingSalt || crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
+  
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits']
+  );
+  
+  const hashBuffer = await crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      salt: salt,
+      iterations: PBKDF2_ITERATIONS_V3, // Use modern iteration count
+      hash: 'SHA-256'
+    },
+    keyMaterial,
+    256
+  );
+  
+  return {
+    hash: btoa(String.fromCharCode(...new Uint8Array(hashBuffer))),
+    salt: btoa(String.fromCharCode(...salt))
+  };
+}
+
+export async function verifyPassword(password, storedHash, storedSalt) {
+  try {
+    const salt = Uint8Array.from(atob(storedSalt), c => c.charCodeAt(0));
+    const { hash } = await hashPassword(password, salt);
+    return hash === storedHash;
+  } catch {
+    return false;
+  }
+}
+
+export function isEncrypted(data) {
+  if (!data || typeof data !== 'string') return false;
+  try {
+    const decoded = atob(data);
+    return decoded.length >= SALT_LENGTH + IV_LENGTH + 16;
+  } catch {
+    return false;
+  }
+}
+
+export default { encryptData, decryptData, hashPassword, verifyPassword, isEncrypted };
