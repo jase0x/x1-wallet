@@ -40,6 +40,7 @@ export default function TokenDetail({
   const [currentPrice, setCurrentPrice] = useState(null);
   const [priceChange24h, setPriceChange24h] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [mintCopied, setMintCopied] = useState(false);
 
   // Network config
   const network = wallet?.network || 'X1 Mainnet';
@@ -173,6 +174,15 @@ export default function TokenDetail({
         //   const oraclePrice = await fetchOraclePrice('XNT');
         //   price = oraclePrice;
         // =======================================================
+        price = getXNTPrice();
+      } else if (symbol === 'USDC.X' || symbol === 'USDC' || symbol === 'USDT') {
+        // Stablecoins are pegged to $1.00
+        price = 1.00;
+      } else if (symbol === 'pXNT') {
+        // pXNT (staked XNT) is pegged 1:1 with XNT
+        price = getXNTPrice();
+      } else if (symbol === 'WXNT') {
+        // Wrapped XNT is pegged 1:1 with XNT
         price = getXNTPrice();
       } else if (mint) {
         // For other X1 tokens, try to get price from XDEX pools
@@ -425,10 +435,28 @@ export default function TokenDetail({
               </div>
             )}
             {mint && (
-              <div className="token-info-row">
-                <span className="token-info-label">Contract</span>
-                <span className="token-info-value token-info-address">
+              <div 
+                className="token-info-row" 
+                onClick={() => {
+                  navigator.clipboard.writeText(mint);
+                  setMintCopied(true);
+                  setTimeout(() => setMintCopied(false), 2000);
+                }} 
+                style={{ cursor: 'pointer' }}
+              >
+                <span className="token-info-label">Mint</span>
+                <span className="token-info-value token-info-address" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   {mint.slice(0, 8)}...{mint.slice(-8)}
+                  {mintCopied ? (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="2">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  ) : (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                      <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                    </svg>
+                  )}
                 </span>
               </div>
             )}

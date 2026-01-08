@@ -1,9 +1,11 @@
 // Stake Screen - X1 Stake Pool Integration with On-Chain Staking
+// Updated with Ledger Hardware Wallet Support
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import X1Logo from './X1Logo';
 import { NETWORKS, getTxExplorerUrl } from '@x1-wallet/core/services/networks';
 import { decodeBase58, encodeBase58 } from '@x1-wallet/core/utils/base58';
 import { logger, getUserFriendlyError, ErrorMessages } from '@x1-wallet/core';
+import { hardwareWallet } from '../services/hardware';
 
 // Constants
 const LAMPORTS_PER_SOL = 1_000_000_000;
@@ -209,6 +211,7 @@ export default function StakeScreen({ wallet, onBack, onRefreshBalance }) {
   const [success, setSuccess] = useState('');
   const [txSignature, setTxSignature] = useState('');
   const [localBalance, setLocalBalance] = useState(null); // Local balance state for immediate updates
+  const [hwStatus, setHwStatus] = useState(''); // Hardware wallet status messages
   
   // Ref to prevent duplicate fetches
   const isFetchingRef = useRef(false);
@@ -220,6 +223,9 @@ export default function StakeScreen({ wallet, onBack, onRefreshBalance }) {
   const propBalance = wallet?.balance || 0;
   const balance = localBalance !== null ? localBalance : propBalance; // Use local balance if available
   const privateKey = wallet?.wallet?.privateKey;
+  
+  // Hardware wallet detection
+  const isHardwareWallet = wallet?.wallet?.isHardware || wallet?.activeWallet?.isHardware || false;
   
   // Sync localBalance with propBalance when it changes externally
   useEffect(() => {
@@ -418,6 +424,7 @@ export default function StakeScreen({ wallet, onBack, onRefreshBalance }) {
     logger.log('[Stake] amount:', amount);
     logger.log('[Stake] balance:', balance);
     logger.log('[Stake] privateKey exists:', !!privateKey);
+    logger.log('[Stake] isHardwareWallet:', isHardwareWallet);
     logger.log('[Stake] walletAddress:', walletAddress);
     logger.log('[Stake] poolData:', poolData);
     logger.log('[Stake] poolData?.poolMint:', poolData?.poolMint);
@@ -437,8 +444,15 @@ export default function StakeScreen({ wallet, onBack, onRefreshBalance }) {
       return;
     }
     
-    if (!privateKey || !walletAddress) {
-      logger.log('[Stake] FAIL: No wallet');
+    // Updated wallet check - allow hardware wallets without privateKey
+    if (!walletAddress) {
+      logger.log('[Stake] FAIL: No wallet address');
+      setError('Wallet not available');
+      return;
+    }
+    
+    if (!isHardwareWallet && !privateKey) {
+      logger.log('[Stake] FAIL: No private key for software wallet');
       setError('Wallet not available');
       return;
     }
@@ -451,11 +465,10 @@ export default function StakeScreen({ wallet, onBack, onRefreshBalance }) {
     
     logger.log('[Stake] All checks PASSED, starting transaction...');
     setTxSignature('');
+    setHwStatus('');
     
     try {
       logger.log('[Stake] Building transaction for', stakeAmount, 'XNT');
-      logger.log('[Stake] privateKey type:', typeof privateKey);
-      logger.log('[Stake] privateKey length:', privateKey?.length);
       
       // Import transaction builder
       const { buildTransaction, signTransaction, sendTransaction } = await import('@x1-wallet/core/utils/transaction');
@@ -616,12 +629,68 @@ export default function StakeScreen({ wallet, onBack, onRefreshBalance }) {
       });
       logger.log('[Stake] Transaction built, tx length:', tx?.length);
       
-      // Sign transaction
-      const signedTx = await signTransaction(tx, privateKey);
+      let signature;
       
-      // Send transaction
-      logger.log('[Stake] Sending transaction...');
-      const signature = await sendTransaction(signedTx, networkConfig.rpcUrl);
+      // Hardware wallet signing path
+      if (isHardwareWallet) {
+        logger.log('[Stake] Using hardware wallet for signing');
+        setHwStatus('Connecting to Ledger...');
+        
+        try {
+          // Connect to Ledger if not ready
+          if (!hardwareWallet.isReady()) {
+            await hardwareWallet.connect('hid');
+            await hardwareWallet.openApp();
+          }
+          
+          setHwStatus('Please confirm on your Ledger...');
+          
+          // buildTransaction returns the message (Uint8Array)
+          // signAndSendExternalTransactionHardware expects a base64-encoded transaction
+          // with format: [numSignatures, ...signatures(64 bytes each), ...message]
+          // Create unsigned transaction with signature placeholder
+          const unsignedTx = new Uint8Array(1 + 64 + tx.length);
+          unsignedTx[0] = 1; // 1 signature required
+          // Leave bytes 1-64 as zeros (signature placeholder)
+          unsignedTx.set(tx, 65); // message starts at byte 65
+          
+          // Convert to base64
+          const txBase64 = btoa(String.fromCharCode(...unsignedTx));
+          logger.log('[Stake] Transaction base64 length:', txBase64.length);
+          
+          // Import hardware signing function
+          const { signAndSendExternalTransactionHardware } = await import('@x1-wallet/core/utils/transaction');
+          
+          // Sign and send with hardware wallet
+          signature = await signAndSendExternalTransactionHardware(
+            txBase64,
+            hardwareWallet,
+            networkConfig.rpcUrl
+          );
+          
+          setHwStatus('');
+        } catch (hwErr) {
+          setHwStatus('');
+          logger.error('[Stake] Hardware wallet error:', hwErr);
+          
+          // Provide user-friendly error messages
+          if (hwErr.message?.includes('0x6a81') || hwErr.message?.includes('Solana app')) {
+            throw new Error('Please open the Solana app on your Ledger');
+          } else if (hwErr.message?.includes('denied') || hwErr.message?.includes('rejected')) {
+            throw new Error('Transaction rejected on Ledger');
+          } else if (hwErr.message?.includes('not connected') || hwErr.message?.includes('Could not connect')) {
+            throw new Error('Ledger not connected. Please connect and try again.');
+          }
+          throw hwErr;
+        }
+      } else {
+        // Software wallet signing path
+        const signedTx = await signTransaction(tx, privateKey);
+        
+        // Send transaction
+        logger.log('[Stake] Sending transaction...');
+        signature = await sendTransaction(signedTx, networkConfig.rpcUrl);
+      }
       
       logger.log('[Stake] Transaction sent:', signature);
       setTxSignature(signature);
@@ -675,6 +744,7 @@ export default function StakeScreen({ wallet, onBack, onRefreshBalance }) {
       
     } catch (err) {
       logger.error('[Stake] Transaction failed:', err);
+      setHwStatus('');
       throw err; // Re-throw for button handler
     }
   };
@@ -682,6 +752,7 @@ export default function StakeScreen({ wallet, onBack, onRefreshBalance }) {
   // Build and send unstake (WithdrawSol) transaction
   const handleUnstake = async () => {
     logger.log('[Unstake] ===== handleUnstake START =====');
+    logger.log('[Unstake] isHardwareWallet:', isHardwareWallet);
     
     const unstakeAmount = parseFloat(amount);
     if (!amount || unstakeAmount <= 0) {
@@ -705,12 +776,19 @@ export default function StakeScreen({ wallet, onBack, onRefreshBalance }) {
       return;
     }
     
-    if (!privateKey || !walletAddress || !poolData) {
+    // Updated wallet check - allow hardware wallets without privateKey
+    if (!walletAddress || !poolData) {
       setError('Wallet or pool data not loaded');
       return;
     }
     
+    if (!isHardwareWallet && !privateKey) {
+      setError('Wallet not available');
+      return;
+    }
+    
     setTxSignature('');
+    setHwStatus('');
     
     try {
       logger.log('[Unstake] Withdrawing', unstakeAmount, 'XNT (~', poolTokensToWithdraw, 'pool tokens)');
@@ -779,10 +857,67 @@ export default function StakeScreen({ wallet, onBack, onRefreshBalance }) {
         instructions: [withdrawSolInstruction],
       });
       
-      const signedTx = await signTransaction(tx, privateKey);
+      let signature;
       
-      logger.log('[Unstake] Sending transaction...');
-      const signature = await sendTransaction(signedTx, networkConfig.rpcUrl);
+      // Hardware wallet signing path
+      if (isHardwareWallet) {
+        logger.log('[Unstake] Using hardware wallet for signing');
+        setHwStatus('Connecting to Ledger...');
+        
+        try {
+          // Connect to Ledger if not ready
+          if (!hardwareWallet.isReady()) {
+            await hardwareWallet.connect('hid');
+            await hardwareWallet.openApp();
+          }
+          
+          setHwStatus('Please confirm on your Ledger...');
+          
+          // buildTransaction returns the message (Uint8Array)
+          // signAndSendExternalTransactionHardware expects a base64-encoded transaction
+          // with format: [numSignatures, ...signatures(64 bytes each), ...message]
+          // Create unsigned transaction with signature placeholder
+          const unsignedTx = new Uint8Array(1 + 64 + tx.length);
+          unsignedTx[0] = 1; // 1 signature required
+          // Leave bytes 1-64 as zeros (signature placeholder)
+          unsignedTx.set(tx, 65); // message starts at byte 65
+          
+          // Convert to base64
+          const txBase64 = btoa(String.fromCharCode(...unsignedTx));
+          logger.log('[Unstake] Transaction base64 length:', txBase64.length);
+          
+          // Import hardware signing function
+          const { signAndSendExternalTransactionHardware } = await import('@x1-wallet/core/utils/transaction');
+          
+          // Sign and send with hardware wallet
+          signature = await signAndSendExternalTransactionHardware(
+            txBase64,
+            hardwareWallet,
+            networkConfig.rpcUrl
+          );
+          
+          setHwStatus('');
+        } catch (hwErr) {
+          setHwStatus('');
+          logger.error('[Unstake] Hardware wallet error:', hwErr);
+          
+          // Provide user-friendly error messages
+          if (hwErr.message?.includes('0x6a81') || hwErr.message?.includes('Solana app')) {
+            throw new Error('Please open the Solana app on your Ledger');
+          } else if (hwErr.message?.includes('denied') || hwErr.message?.includes('rejected')) {
+            throw new Error('Transaction rejected on Ledger');
+          } else if (hwErr.message?.includes('not connected') || hwErr.message?.includes('Could not connect')) {
+            throw new Error('Ledger not connected. Please connect and try again.');
+          }
+          throw hwErr;
+        }
+      } else {
+        // Software wallet signing path
+        const signedTx = await signTransaction(tx, privateKey);
+        
+        logger.log('[Unstake] Sending transaction...');
+        signature = await sendTransaction(signedTx, networkConfig.rpcUrl);
+      }
       
       logger.log('[Unstake] Transaction sent:', signature);
       setTxSignature(signature);
@@ -836,6 +971,7 @@ export default function StakeScreen({ wallet, onBack, onRefreshBalance }) {
       
     } catch (err) {
       logger.error('[Unstake] Transaction failed:', err);
+      setHwStatus('');
       throw err; // Re-throw for button handler
     }
   };
@@ -965,6 +1101,24 @@ export default function StakeScreen({ wallet, onBack, onRefreshBalance }) {
             >
               Max: {formatNum(balance)} XNT
             </button>
+
+            {/* Hardware Wallet Status */}
+            {hwStatus && (
+              <div className="hw-status" style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+                padding: '12px 16px',
+                background: 'var(--bg-tertiary)',
+                borderRadius: 8,
+                marginBottom: 12,
+                color: 'var(--x1-blue)'
+              }}>
+                <div className="spinner-small" />
+                <span>{hwStatus}</span>
+              </div>
+            )}
 
             {/* Action Buttons - moved above messages */}
             <div className="send-confirm-actions stake-actions">

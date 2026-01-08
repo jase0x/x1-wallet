@@ -29,13 +29,39 @@ export const LEDGER_STATES = {
 
 // Hardware wallet types
 export const HW_TYPES = {
-  LEDGER: 'ledger'
+  LEDGER: 'ledger',
+  TREZOR: 'trezor'  // Keep for compatibility, but not implemented
 };
 
 // Connection types
 export const CONNECTION_TYPES = {
   USB: 'usb',
   BLUETOOTH: 'bluetooth'
+};
+
+// Derivation path schemes supported by different wallets
+export const DERIVATION_SCHEMES = {
+  // Standard BIP44: m/44'/501'/{account}'
+  BIP44_STANDARD: {
+    id: 'bip44_standard',
+    name: 'Standard (BIP44)',
+    description: "m/44'/501'/<account>'",
+    getPath: (index) => `44'/501'/${index}'`
+  },
+  // Extended BIP44: m/44'/501'/{account}'/0'
+  BIP44_EXTENDED: {
+    id: 'bip44_extended',
+    name: 'Extended (BIP44)',
+    description: "m/44'/501'/<account>'/0'",
+    getPath: (index) => `44'/501'/${index}'/0'`
+  },
+  // Legacy BIP44 Change: m/44'/501'/0'/{account}'
+  BIP44_LEGACY: {
+    id: 'bip44_legacy',
+    name: 'Legacy',
+    description: "m/44'/501'/0'/<account>'",
+    getPath: (index) => `44'/501'/0'/${index}'`
+  }
 };
 
 class HardwareWalletService {
@@ -47,6 +73,7 @@ class HardwareWalletService {
     this.state = LEDGER_STATES.DISCONNECTED;
     this.publicKey = null;
     this.derivationPath = "44'/501'/0'/0'"; // Solana default, works for X1 too
+    this.currentScheme = DERIVATION_SCHEMES.BIP44_EXTENDED; // Default scheme
   }
 
   // Check if WebUSB/WebHID is supported
@@ -67,10 +94,41 @@ class HardwareWalletService {
     return null;
   }
 
+  // Get all supported derivation schemes
+  getDerivationSchemes() {
+    return Object.values(DERIVATION_SCHEMES);
+  }
+
+  // Set the current derivation scheme
+  setDerivationScheme(schemeId) {
+    const scheme = Object.values(DERIVATION_SCHEMES).find(s => s.id === schemeId);
+    if (scheme) {
+      this.currentScheme = scheme;
+      logger.log('Derivation scheme set to:', scheme.name);
+    }
+  }
+
+  // Get current derivation scheme
+  getCurrentScheme() {
+    return this.currentScheme;
+  }
+
   // Connect to Ledger device via USB or Bluetooth
   async connect(connectionType = CONNECTION_TYPES.USB) {
     if (!this.isSupported()) {
       throw new Error('WebUSB/WebHID not supported in this browser');
+    }
+
+    // If already connected with a transport, close it first
+    if (this.transport) {
+      logger.log('Transport already exists, closing it first...');
+      try {
+        await this.transport.close();
+      } catch (e) {
+        logger.warn('Error closing existing transport:', e);
+      }
+      this.transport = null;
+      this.solanaApp = null;
     }
 
     this.state = LEDGER_STATES.CONNECTING;
@@ -209,7 +267,13 @@ class HardwareWalletService {
           const Transport = TransportModule.default;
           
           // Try to open already connected device
-          this.transport = await Transport.openConnected();
+          try {
+            this.transport = await Transport.openConnected();
+          } catch (e) {
+            logger.log('[Hardware] openConnected failed:', e.message);
+            this.transport = null;
+          }
+          
           if (!this.transport) {
             // Fall back to create (will prompt if needed)
             this.transport = await Transport.create();
@@ -274,6 +338,54 @@ class HardwareWalletService {
     }
   }
 
+  // Get accounts for a specific derivation scheme
+  async getAccountsForScheme(scheme, startIndex = 0, count = 5) {
+    const accounts = [];
+    
+    for (let i = startIndex; i < startIndex + count; i++) {
+      const path = scheme.getPath(i);
+      try {
+        const address = await this.getPublicKey(path, false);
+        accounts.push({
+          index: i,
+          path,
+          address,
+          scheme: scheme.id,
+          schemeName: scheme.name,
+          label: `Account ${i + 1}`
+        });
+      } catch (e) {
+        logger.warn(`Could not get account ${i} for scheme ${scheme.id}:`, e);
+        break;
+      }
+    }
+    
+    return accounts;
+  }
+
+  // Get accounts from all schemes (for discovery)
+  async discoverAccounts(count = 5) {
+    const allAccounts = [];
+    const seenAddresses = new Set();
+    
+    for (const scheme of Object.values(DERIVATION_SCHEMES)) {
+      try {
+        const accounts = await this.getAccountsForScheme(scheme, 0, count);
+        for (const account of accounts) {
+          // Avoid duplicates (same address from different paths)
+          if (!seenAddresses.has(account.address)) {
+            seenAddresses.add(account.address);
+            allAccounts.push(account);
+          }
+        }
+      } catch (e) {
+        logger.warn(`Failed to get accounts for scheme ${scheme.id}:`, e);
+      }
+    }
+    
+    return allAccounts;
+  }
+
   // Sign transaction with Ledger
   async signTransaction(transaction, path = null) {
     if (!this.solanaApp) {
@@ -320,6 +432,15 @@ class HardwareWalletService {
       return result.signature;
     } catch (error) {
       logger.error('Sign message error:', error);
+      
+      // Handle Ledger v1.4+ off-chain message signing restrictions
+      if (error.statusCode === 0x6a81) {
+        throw new Error(
+          'Ledger cannot sign this message. The updated Ledger Solana app (v1.4+) has stricter requirements for off-chain message signing. ' +
+          'This dApp may not be compatible with Ledger hardware wallets. Try using a software wallet instead.'
+        );
+      }
+      
       throw error;
     }
   }
@@ -342,7 +463,7 @@ class HardwareWalletService {
     this.publicKey = null;
   }
 
-  // Get different derivation paths
+  // Get different derivation paths (legacy method for compatibility)
   getDerivationPaths() {
     return [
       { path: "44'/501'/0'/0'", label: "Default (m/44'/501'/0'/0')" },
@@ -399,4 +520,14 @@ class HardwareWalletService {
 
 // Export singleton instance
 export const hardwareWallet = new HardwareWalletService();
+
+// Trezor placeholder (not implemented in this version)
+export const trezorWallet = null;
+
+// Factory function for compatibility
+export function getHardwareWallet(type) {
+  // Only Ledger is supported in this version
+  return hardwareWallet;
+}
+
 export default hardwareWallet;

@@ -70,8 +70,25 @@ function ActivityList({ walletAddress, network, networkConfig, refreshKey }) {
       
       // Merge all transactions with normalized timestamps
       // Priority: blockchain > API > local (to ensure correct data overwrites stale local data)
+      // BUT: preserve transaction type from local history for stake/unstake/wrap/unwrap
       const allTxs = [];
       const seen = new Set();
+      
+      // Build a map of local transaction types by signature for preservation
+      const localTypeMap = new Map();
+      const preserveTypes = ['stake', 'unstake', 'wrap', 'unwrap'];
+      for (const tx of localHistory) {
+        if (tx.signature && preserveTypes.includes(tx.type)) {
+          localTypeMap.set(tx.signature, {
+            type: tx.type,
+            description: tx.description,
+            amount: tx.amount,
+            symbol: tx.symbol,
+            toAmount: tx.toAmount,
+            toSymbol: tx.toSymbol
+          });
+        }
+      }
       
       // Add blockchain transactions FIRST - they have the most accurate data
       for (const tx of blockchainTxs) {
@@ -84,9 +101,15 @@ function ActivityList({ walletAddress, network, networkConfig, refreshKey }) {
           if (isX1Network && txSymbol === 'SOL') {
             txSymbol = 'XNT';
           }
+          
+          // Check if we have a preserved type from local history
+          const localData = localTypeMap.get(tx.signature);
+          
           const formatted = formatTransaction({
             ...tx,
-            symbol: txSymbol || networkConfig?.symbol || (isX1Network ? 'XNT' : 'SOL'),
+            // Preserve local type if it's a stake/unstake/wrap/unwrap
+            ...(localData ? localData : {}),
+            symbol: localData?.symbol || txSymbol || networkConfig?.symbol || (isX1Network ? 'XNT' : 'SOL'),
             network
           });
           allTxs.push({
@@ -230,13 +253,14 @@ function ActivityList({ walletAddress, network, networkConfig, refreshKey }) {
           // Get display title
           const getTitle = () => {
             if (isDapp) return 'dApp Interaction';
+            // Check stake/unstake BEFORE swap (stake transactions may have isSwap flag from blockchain parsing)
+            if (isStake) return `Staked ${tx.symbol || 'XNT'}`;
+            if (isUnstake) return `Unstaked ${tx.symbol || 'XNT'}`;
             if (isSwap) {
               if (tx.type === 'wrap') return `Wrapped ${tx.symbol || 'XNT'}`;
               if (tx.type === 'unwrap') return `Unwrapped ${tx.symbol || 'wXNT'}`;
               return `Swapped ${tx.symbol || tx.token}`;
             }
-            if (isStake) return `Staked ${tx.symbol || 'XNT'}`;
-            if (isUnstake) return `Unstaked ${tx.symbol || 'pXNT'}`;
             if (isSend) return `Sent ${tx.token || tx.symbol}`;
             return `Received ${tx.token || tx.symbol}`;
           };
@@ -250,7 +274,7 @@ function ActivityList({ walletAddress, network, networkConfig, refreshKey }) {
               }
               return isSend ? 'Outgoing' : 'Incoming';
             }
-            if (isSwap) return `→ ${tx.toSymbol || tx.toToken || 'Token'}`;
+            // Check stake/unstake BEFORE swap
             if (isStake) {
               const match = tx.description?.match(/([\d.]+)\s*pXNT/);
               return match ? `→ ${match[1]} pXNT` : '→ pXNT';
@@ -259,6 +283,7 @@ function ActivityList({ walletAddress, network, networkConfig, refreshKey }) {
               const match = tx.description?.match(/([\d.]+)\s*XNT/);
               return match ? `→ ${match[1]} XNT` : '→ XNT';
             }
+            if (isSwap) return `→ ${tx.toSymbol || tx.toToken || 'Token'}`;
             if (isSend) return `To: ${tx.shortTo || (tx.to ? tx.to.slice(0,4) + '...' + tx.to.slice(-4) : '...')}`;
             return `From: ${tx.shortFrom || (tx.from ? tx.from.slice(0,4) + '...' + tx.from.slice(-4) : '...')}`;
           };
@@ -280,6 +305,9 @@ function ActivityList({ walletAddress, network, networkConfig, refreshKey }) {
             if (isDapp) {
               return isSend ? `-${amount} ${symbol}` : `+${amount} ${symbol}`;
             }
+            // Check stake/unstake BEFORE swap
+            if (isStake) return `${amount} ${tx.symbol || 'XNT'}`;
+            if (isUnstake) return `+${amount} ${tx.symbol || 'XNT'}`;
             if (isSwap) {
               // Show full swap format when we have both amounts
               if (tx.toAmount && tx.toSymbol) {
@@ -289,8 +317,6 @@ function ActivityList({ walletAddress, network, networkConfig, refreshKey }) {
               // Show just the from amount if we don't have to details yet
               return `${amount} ${symbol}`;
             }
-            if (isStake) return `${amount} ${tx.symbol || 'XNT'}`;
-            if (isUnstake) return `+${amount} ${tx.symbol || 'XNT'}`;
             if (isSend) return `-${amount} ${symbol}`;
             return `+${amount} ${symbol}`;
           };
@@ -551,6 +577,78 @@ function NFTsTab({ wallet, networkConfig }) {
       setError('');
       
       try {
+        const isSolana = network?.includes('Solana');
+        const isHelius = rpcUrl?.includes('helius');
+        
+        // For Solana with Helius RPC, use DAS API (much more reliable)
+        if (isSolana && isHelius) {
+          logger.log('[NFT] Using Helius DAS API for Solana NFTs, wallet:', walletAddress);
+          
+          try {
+            const dasResponse = await fetch(rpcUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'getAssetsByOwner',
+                params: {
+                  ownerAddress: walletAddress,
+                  page: 1,
+                  limit: 1000
+                }
+              })
+            });
+            
+            const dasData = await dasResponse.json();
+            logger.log('[NFT] DAS raw response:', dasData);
+            
+            if (dasData?.result?.items && dasData.result.items.length > 0) {
+              // Log all interface types found
+              const interfaces = [...new Set(dasData.result.items.map(i => i.interface))];
+              logger.log('[NFT] Interface types found:', interfaces);
+              
+              // Filter for NFTs - be more permissive
+              // Exclude fungible tokens but include everything else
+              const nftItems = dasData.result.items
+                .filter(item => {
+                  const iface = item.interface;
+                  // Exclude fungible tokens
+                  if (iface === 'FungibleToken' || iface === 'FungibleAsset') return false;
+                  // Include NFT types
+                  return true;
+                })
+                .map(item => ({
+                  mint: item.id,
+                  address: item.id,
+                  name: item.content?.metadata?.name || `NFT ${item.id?.slice(0, 8)}...`,
+                  symbol: item.content?.metadata?.symbol || '',
+                  image: item.content?.links?.image || item.content?.files?.[0]?.uri || item.content?.json_uri || null,
+                  description: item.content?.metadata?.description || '',
+                  attributes: item.content?.metadata?.attributes || [],
+                  isToken2022: item.interface === 'ProgrammableNFT',
+                  loading: false
+                }));
+              
+              logger.log('[NFT] Found', nftItems.length, 'NFTs via DAS API');
+              
+              if (nftItems.length > 0) {
+                setNfts(nftItems);
+                setLoading(false);
+                return;
+              }
+            }
+            
+            logger.log('[NFT] DAS returned no items, falling back to standard method');
+          } catch (dasError) {
+            logger.error('[NFT] DAS API error:', dasError);
+            // Fall through to standard method
+          }
+        }
+        
+        // Fallback: Standard method for X1 or non-Helius RPCs
+        logger.log('[NFT] Using standard token account method');
+        
         // Fetch both token programs in PARALLEL
         const [tokenResponse, token2022Response] = await Promise.all([
           fetch(rpcUrl, {
@@ -638,6 +736,39 @@ function NFTsTab({ wallet, networkConfig }) {
         const nftsWithMetadata = await Promise.all(
           allNftMints.map(async (nft) => {
             try {
+              // For Solana with Helius, try DAS getAsset first
+              if (isSolana && isHelius) {
+                try {
+                  const assetResponse = await fetch(rpcUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      jsonrpc: '2.0',
+                      id: 1,
+                      method: 'getAsset',
+                      params: { id: nft.mint }
+                    })
+                  });
+                  
+                  const assetData = await assetResponse.json();
+                  if (assetData?.result) {
+                    const item = assetData.result;
+                    return {
+                      ...nft,
+                      name: item.content?.metadata?.name || `NFT ${nft.mint?.slice(0, 8)}...`,
+                      symbol: item.content?.metadata?.symbol || '',
+                      image: item.content?.links?.image || item.content?.files?.[0]?.uri || null,
+                      description: item.content?.metadata?.description || '',
+                      attributes: item.content?.metadata?.attributes || [],
+                      loading: false
+                    };
+                  }
+                } catch (dasErr) {
+                  logger.warn('[NFT] DAS getAsset failed for', nft.mint, dasErr);
+                }
+              }
+              
+              // Fallback: Metaplex on-chain metadata
               const METADATA_PROGRAM_ID = 'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s';
               
               // Try to find metadata using getProgramAccounts with timeout
@@ -1231,7 +1362,7 @@ function NetworkPanel({ network, networks, onSelect, onClose, onCustomRpc }) {
         </div>
         <div className="slide-panel-content">
           <div className="network-section-label">Networks</div>
-          {mainnets.map(net => (
+          {mainnets.map((net, index) => (
             <div 
               key={net}
               className={`network-option ${network === net ? 'active' : ''}`}
@@ -1253,7 +1384,6 @@ function NetworkPanel({ network, networks, onSelect, onClose, onCustomRpc }) {
             padding: '12px 16px', 
             fontSize: '12px', 
             color: 'var(--text-muted)',
-            borderTop: '1px solid var(--border-color)',
             marginTop: '12px'
           }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6, verticalAlign: -2 }}>
@@ -1269,10 +1399,82 @@ function NetworkPanel({ network, networks, onSelect, onClose, onCustomRpc }) {
 }
 
 // Wallet Selector - Slide Up Panel
-function WalletPanel({ wallets, activeId, onSelect, onManage, onClose, onEditWallet, onShowAddWallet, onReorderWallets }) {
+function WalletPanel({ wallets, activeId, network, onSelect, onManage, onClose, onEditWallet, onShowAddWallet, onReorderWallets }) {
   const [copiedId, setCopiedId] = useState(null);
   const [draggedId, setDraggedId] = useState(null);
   const [dragOverId, setDragOverId] = useState(null);
+  const [balances, setBalances] = useState({});
+  const [loadingBalances, setLoadingBalances] = useState(true);
+
+  // Fetch balances for all wallets when panel opens
+  useEffect(() => {
+    let isMounted = true;
+    
+    const fetchBalances = async () => {
+      if (!isMounted) return;
+      setLoadingBalances(true);
+      const newBalances = {};
+      
+      // Get RPC URL from network config
+      const networkConfig = NETWORKS[network] || NETWORKS['X1 Mainnet'];
+      const rpcUrl = networkConfig?.rpcUrl || 'https://rpc.mainnet.x1.xyz';
+      
+      // Fetch all balances in parallel
+      const promises = wallets.map(async (w) => {
+        try {
+          const address = w.publicKey || w.addresses?.[w.activeAddressIndex || 0]?.publicKey || w.addresses?.[0]?.publicKey;
+          if (!address) return { id: w.id, balance: null };
+          
+          const response = await fetch(rpcUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              jsonrpc: '2.0',
+              id: 1,
+              method: 'getBalance',
+              params: [address]
+            })
+          });
+          
+          const data = await response.json();
+          if (data.result?.value !== undefined) {
+            return { id: w.id, balance: data.result.value / 1e9 };
+          }
+          return { id: w.id, balance: null };
+        } catch (err) {
+          return { id: w.id, balance: null };
+        }
+      });
+      
+      const results = await Promise.all(promises);
+      results.forEach(r => { newBalances[r.id] = r.balance; });
+      
+      if (isMounted) {
+        setBalances(newBalances);
+        setLoadingBalances(false);
+      }
+    };
+
+    if (wallets?.length > 0) {
+      fetchBalances();
+    }
+    
+    return () => { isMounted = false; };
+  }, []); // Only run once on mount
+
+  // Format balance for display
+  const formatBalance = (balance) => {
+    if (balance === null || balance === undefined) return '...';
+    if (balance === 0) return '0';
+    if (balance < 0.0001) return '<0.0001';
+    if (balance < 1) return balance.toFixed(4);
+    if (balance < 1000) return balance.toFixed(2);
+    if (balance < 1000000) return (balance / 1000).toFixed(1) + 'K';
+    return (balance / 1000000).toFixed(1) + 'M';
+  };
+
+  // Get token symbol
+  const tokenSymbol = network?.includes('Solana') ? 'SOL' : 'XNT';
   
   const copyAddress = (e, walletId, address) => {
     e.stopPropagation();
@@ -1381,15 +1583,23 @@ function WalletPanel({ wallets, activeId, onSelect, onManage, onClose, onEditWal
                   )}
                 </div>
                 <div className="wallet-item-info">
-                  <div className="wallet-item-row1">
+                  <div className="wallet-item-row1" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <span className="wallet-item-name">{w.name}</span>
                     {activeId === w.id && (
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--x1-blue)" strokeWidth="3">
                         <polyline points="20 6 9 17 4 12" />
                       </svg>
                     )}
+                    <span style={{ 
+                      fontSize: 12, 
+                      fontWeight: 600, 
+                      color: balances[w.id] > 0 ? 'var(--success)' : 'var(--text-muted)',
+                      marginLeft: 'auto'
+                    }}>
+                      {loadingBalances ? '...' : `${formatBalance(balances[w.id])} ${tokenSymbol}`}
+                    </span>
                   </div>
-                  <div className="wallet-item-row2">
+                  <div className="wallet-item-row2" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                     <span className="wallet-item-address">{formatAddress(activeAddr.publicKey)}</span>
                     <button 
                       className="wallet-item-copy"
@@ -1412,6 +1622,7 @@ function WalletPanel({ wallets, activeId, onSelect, onManage, onClose, onEditWal
                   className="wallet-item-edit"
                   onClick={(e) => { e.stopPropagation(); onClose(); onEditWallet(w); }}
                   title="Edit wallet"
+                  style={{ alignSelf: 'flex-start', marginTop: 2 }}
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
@@ -1478,7 +1689,7 @@ function AddWalletPanel({ onClose, onCreateNew, onImport, onHardware }) {
               </div>
               <div className="add-wallet-text">
                 <span className="add-wallet-title">Import Wallet</span>
-                <span className="add-wallet-desc">Use existing seed phrase</span>
+                <span className="add-wallet-desc">Seed phrase or private key</span>
               </div>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M9 18l6-6-6-6" />
@@ -1508,13 +1719,118 @@ function AddWalletPanel({ onClose, onCreateNew, onImport, onHardware }) {
   );
 }
 
+// Private Key Byte Array Display Component
+function PrivateKeyByteArray({ privateKey }) {
+  const [copied, setCopied] = useState(false);
+  const [byteArray, setByteArray] = useState('');
+  
+  React.useEffect(() => {
+    const convertToByteArray = async () => {
+      try {
+        const { decodeBase58 } = await import('@x1-wallet/core/utils/base58');
+        const bytes = decodeBase58(privateKey);
+        const arrayStr = '[' + Array.from(bytes).join(',') + ']';
+        setByteArray(arrayStr);
+      } catch (e) {
+        setByteArray('Error converting key');
+      }
+    };
+    if (privateKey) {
+      convertToByteArray();
+    }
+  }, [privateKey]);
+  
+  const copyByteArray = () => {
+    navigator.clipboard.writeText(byteArray);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  
+  if (!byteArray) return null;
+  
+  return (
+    <div style={{
+      marginTop: 12,
+      padding: 12,
+      background: 'rgba(255, 59, 48, 0.1)',
+      border: '1px solid rgba(255, 59, 48, 0.3)',
+      borderRadius: 8
+    }}>
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        marginBottom: 10,
+        color: '#ff3b30',
+        fontSize: 11,
+        fontWeight: 600
+      }}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+          <line x1="12" y1="9" x2="12" y2="13" />
+          <line x1="12" y1="17" x2="12.01" y2="17" />
+        </svg>
+        Never share this with anyone!
+      </div>
+      <div style={{
+        fontSize: 9,
+        fontFamily: 'monospace',
+        color: 'var(--text-primary)',
+        wordBreak: 'break-all',
+        lineHeight: 1.3,
+        padding: '8px',
+        background: 'var(--bg-secondary)',
+        borderRadius: 6,
+        marginBottom: 8
+      }}>
+        {byteArray}
+      </div>
+      <button
+        onClick={copyByteArray}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 6,
+          width: '100%',
+          padding: '8px 10px',
+          background: 'var(--bg-tertiary)',
+          border: '1px solid var(--border-color)',
+          borderRadius: 6,
+          color: copied ? 'var(--success)' : 'var(--text-primary)',
+          fontSize: 12,
+          fontWeight: 500,
+          cursor: 'pointer'
+        }}
+      >
+        {copied ? (
+          <>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+            Copied!
+          </>
+        ) : (
+          <>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
+            Copy Byte Array
+          </>
+        )}
+      </button>
+    </div>
+  );
+}
+
 // Edit Wallet Panel with Address Management
 function EditWalletPanel({ walletData, onSave, onClose, onRemove }) {
   const [name, setName] = useState(walletData.name || '');
   const [avatar, setAvatar] = useState(walletData.avatar || '');
   const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
   const [copiedAddress, setCopiedAddress] = useState(false);
-  const [showPrivateKey, setShowPrivateKey] = useState(false);
+  const [showPrivateKey, setShowPrivateKey] = useState(null); // null, 'base58', or 'bytes'
   const [copiedKey, setCopiedKey] = useState(false);
   const fileInputRef = React.useRef(null);
   
@@ -1578,7 +1894,8 @@ function EditWalletPanel({ walletData, onSave, onClose, onRemove }) {
     privateKey: walletData.privateKey,
     name: 'Address 1' 
   }];
-  const hasMnemonic = walletData.hasMnemonic || !!walletData.mnemonic;
+  // Show seed phrase button unless explicitly marked as private-key-only or hardware wallet
+  const hasMnemonic = !walletData.isPrivateKeyOnly && !walletData.isHardware && walletData.type !== 'privatekey';
   const primaryAddress = addresses[0]?.publicKey || '';
   const privateKey = addresses[0]?.privateKey || '';
 
@@ -1704,7 +2021,7 @@ function EditWalletPanel({ walletData, onSave, onClose, onRemove }) {
             {/* Action buttons */}
             <div style={{
               display: 'flex',
-              gap: 10,
+              gap: 8,
               marginTop: 12
             }}>
               {hasMnemonic && (
@@ -1715,54 +2032,83 @@ function EditWalletPanel({ walletData, onSave, onClose, onRemove }) {
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    gap: 8,
-                    padding: '10px 12px',
+                    gap: 5,
+                    padding: '10px 6px',
                     background: 'var(--bg-tertiary)',
                     border: '1px solid var(--border-color)',
                     borderRadius: 8,
                     color: 'var(--text-primary)',
-                    fontSize: 13,
+                    fontSize: 11,
                     fontWeight: 500,
                     cursor: 'pointer'
                   }}
                 >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                     <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                   </svg>
-                  Seed Phrase
+                  Seed
                 </button>
               )}
               
               {privateKey && (
                 <button
-                  onClick={() => setShowPrivateKey(!showPrivateKey)}
+                  onClick={() => setShowPrivateKey(showPrivateKey === 'base58' ? null : 'base58')}
                   style={{
                     flex: 1,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    gap: 8,
-                    padding: '10px 12px',
-                    background: 'var(--bg-tertiary)',
-                    border: '1px solid var(--border-color)',
+                    gap: 5,
+                    padding: '10px 6px',
+                    background: showPrivateKey === 'base58' ? 'rgba(0, 122, 255, 0.15)' : 'var(--bg-tertiary)',
+                    border: showPrivateKey === 'base58' ? '1px solid var(--x1-blue)' : '1px solid var(--border-color)',
                     borderRadius: 8,
-                    color: 'var(--text-primary)',
-                    fontSize: 13,
+                    color: showPrivateKey === 'base58' ? 'var(--x1-blue)' : 'var(--text-primary)',
+                    fontSize: 11,
                     fontWeight: 500,
                     cursor: 'pointer'
                   }}
                 >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
                   </svg>
-                  Private Key
+                  Key
+                </button>
+              )}
+              
+              {privateKey && (
+                <button
+                  onClick={() => setShowPrivateKey(showPrivateKey === 'bytes' ? null : 'bytes')}
+                  style={{
+                    flex: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 5,
+                    padding: '10px 6px',
+                    background: showPrivateKey === 'bytes' ? 'rgba(0, 122, 255, 0.15)' : 'var(--bg-tertiary)',
+                    border: showPrivateKey === 'bytes' ? '1px solid var(--x1-blue)' : '1px solid var(--border-color)',
+                    borderRadius: 8,
+                    color: showPrivateKey === 'bytes' ? 'var(--x1-blue)' : 'var(--text-primary)',
+                    fontSize: 11,
+                    fontWeight: 500,
+                    cursor: 'pointer'
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <rect x="3" y="3" width="7" height="7" />
+                    <rect x="14" y="3" width="7" height="7" />
+                    <rect x="14" y="14" width="7" height="7" />
+                    <rect x="3" y="14" width="7" height="7" />
+                  </svg>
+                  Bytes
                 </button>
               )}
             </div>
             
-            {/* Private Key Display */}
-            {showPrivateKey && privateKey && (
+            {/* Private Key Display - Base58 */}
+            {showPrivateKey === 'base58' && privateKey && (
               <div style={{
                 marginTop: 12,
                 padding: 12,
@@ -1774,12 +2120,12 @@ function EditWalletPanel({ walletData, onSave, onClose, onRemove }) {
                   display: 'flex',
                   alignItems: 'center',
                   gap: 6,
-                  marginBottom: 8,
+                  marginBottom: 10,
                   color: '#ff3b30',
-                  fontSize: 12,
+                  fontSize: 11,
                   fontWeight: 600
                 }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
                     <line x1="12" y1="9" x2="12" y2="13" />
                     <line x1="12" y1="17" x2="12.01" y2="17" />
@@ -1787,12 +2133,15 @@ function EditWalletPanel({ walletData, onSave, onClose, onRemove }) {
                   Never share this with anyone!
                 </div>
                 <div style={{
-                  fontSize: 11,
+                  fontSize: 10,
                   fontFamily: 'monospace',
                   color: 'var(--text-primary)',
                   wordBreak: 'break-all',
                   lineHeight: 1.4,
-                  marginBottom: 10
+                  padding: '8px',
+                  background: 'var(--bg-secondary)',
+                  borderRadius: 6,
+                  marginBottom: 8
                 }}>
                   {privateKey}
                 </div>
@@ -1804,9 +2153,9 @@ function EditWalletPanel({ walletData, onSave, onClose, onRemove }) {
                     justifyContent: 'center',
                     gap: 6,
                     width: '100%',
-                    padding: '8px 12px',
-                    background: 'var(--bg-secondary)',
-                    border: 'none',
+                    padding: '8px 10px',
+                    background: 'var(--bg-tertiary)',
+                    border: '1px solid var(--border-color)',
                     borderRadius: 6,
                     color: copiedKey ? 'var(--success)' : 'var(--text-primary)',
                     fontSize: 12,
@@ -1832,6 +2181,11 @@ function EditWalletPanel({ walletData, onSave, onClose, onRemove }) {
                   )}
                 </button>
               </div>
+            )}
+            
+            {/* Private Key Display - Byte Array */}
+            {showPrivateKey === 'bytes' && privateKey && (
+              <PrivateKeyByteArray privateKey={privateKey} />
             )}
           </div>
 
@@ -2085,9 +2439,9 @@ function BrowserScreen({ wallet, onBack }) {
     },
     { 
       name: 'Explorer', 
-      url: 'https://explorer.fortiblox.com/', 
-      logo: 'https://explorer.fortiblox.com/fortiblox-32x32.png',
-      desc: 'FortiBlox X1 Explorer',
+      url: 'https://explorer.mainnet.x1.xyz/', 
+      logo: 'https://x1logos.s3.us-east-1.amazonaws.com/48.png',
+      desc: 'X1 Mainnet Explorer',
       color: '#00d26a' 
     },
   ];
@@ -2266,6 +2620,7 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
   const [bottomNav, setBottomNav] = useState('assets');
   const [showNetworkPanel, setShowNetworkPanel] = useState(false);
   const [showWalletPanel, setShowWalletPanel] = useState(false);
+  const [walletPanelKey, setWalletPanelKey] = useState(0);
   const [showAddWalletPanel, setShowAddWalletPanel] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -2316,6 +2671,10 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
     else if (token.symbol === 'pXNT') {
       price = 1;
     }
+    // WXNT is wrapped XNT, same price as XNT ($1.00)
+    else if (token.symbol === 'WXNT') {
+      price = 1;
+    }
     
     const tokenValue = (token.uiAmount || 0) * price;
     logger.log('[Portfolio] Token:', token.symbol, 'uiAmount:', token.uiAmount, 'price:', price, 'value:', tokenValue);
@@ -2338,11 +2697,15 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
     return '$' + value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
   
-  // Format balance - show minimal decimals, no trailing zeros
+  // Format balance - show minimal decimals, no trailing zeros, with commas
   const formatBalance = (balance, maxDecimals = 6) => {
     if (balance === 0 || balance === null || balance === undefined) return '0';
     if (balance < 0.000001) return balance.toExponential(2);
-    // Remove trailing zeros
+    // For large numbers, use commas
+    if (balance >= 1000) {
+      return balance.toLocaleString(undefined, { maximumFractionDigits: maxDecimals });
+    }
+    // For smaller numbers, remove trailing zeros
     const fixed = balance.toFixed(maxDecimals);
     return parseFloat(fixed).toString();
   };
@@ -2365,7 +2728,19 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
     setTokensLoading(true);
     try {
       const { fetchTokenAccounts } = await import('@x1-wallet/core/services/tokens');
-      const allTokens = await fetchTokenAccounts(networkConfig.rpcUrl, wallet.wallet.publicKey, wallet.network);
+      
+      // Callback for background metadata updates
+      const handleTokenUpdate = (updatedTokens) => {
+        const tokenList = updatedTokens.filter(token => {
+          const isNFT = token.decimals === 0 && token.uiAmount === 1;
+          return !isNFT;
+        });
+        logger.log('[WalletMain] Background token update:', tokenList.length, 'tokens');
+        setTokens(tokenList);
+        if (onTokensUpdate) onTokensUpdate(tokenList);
+      };
+      
+      const allTokens = await fetchTokenAccounts(networkConfig.rpcUrl, wallet.wallet.publicKey, wallet.network, handleTokenUpdate);
       
       // Filter out NFTs (decimals=0 and amount=1) - they belong in NFTs tab only
       const tokenList = allTokens.filter(token => {
@@ -2524,7 +2899,7 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
         
         <div className="header-center-area">
           {/* Single field: Copy | Wallet Name | Network */}
-          <button className="wallet-selector-btn" onClick={() => setShowWalletPanel(true)}>
+          <button className="wallet-selector-btn" onClick={() => { setWalletPanelKey(k => k + 1); setShowWalletPanel(true); }}>
             {/* Copy Button */}
             <div 
               className="header-copy-icon"
@@ -2781,14 +3156,14 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
                     </button>
                   </div>
                   <span className="token-amount-sub">
-                    {token.uiAmount?.toLocaleString(undefined, { maximumFractionDigits: 6 })} {token.symbol}
+                    {(token.uiAmount || 0).toLocaleString(undefined, { maximumFractionDigits: 6 })} {token.symbol}
                   </span>
                 </div>
                 <div className="token-balance">
                   <span className="token-usd">
                     {(() => {
                       // Calculate USD price based on token type
-                      let price = token.price || 0;
+                      let price = token.price;
                       
                       // Stablecoins
                       if (token.symbol === 'USDC' || token.symbol === 'USDT' || token.symbol === 'USDC.X') {
@@ -2797,6 +3172,15 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
                       // pXNT is staked XNT, same price as XNT
                       else if (token.symbol === 'pXNT') {
                         price = 1; // XNT is pegged at $1.00
+                      }
+                      // WXNT is wrapped XNT, same price as XNT
+                      else if (token.symbol === 'WXNT') {
+                        price = 1; // XNT is pegged at $1.00
+                      }
+                      
+                      // If no price available, show --
+                      if (price === undefined || price === null) {
+                        return '--';
                       }
                       
                       const value = (token.uiAmount || 0) * price;
@@ -2847,8 +3231,10 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
 
       {showWalletPanel && (
         <WalletPanel
+          key={walletPanelKey}
           wallets={wallet.wallets}
           activeId={wallet.activeWalletId}
+          network={wallet.network}
           onSelect={wallet.switchWallet}
           onClose={() => setShowWalletPanel(false)}
           onEditWallet={(w) => setEditingWalletId(w.id)}

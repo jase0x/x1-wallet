@@ -1,8 +1,9 @@
 // DAppApproval.jsx - Handle dApp connection and signing requests
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import * as crypto from '@x1-wallet/core/utils/crypto';
 import * as base58 from '@x1-wallet/core/utils/base58';
 import { logger, getUserFriendlyError, ErrorMessages } from '@x1-wallet/core';
+import { hardwareWallet } from '../services/hardware';
 
 // Transaction priority options (same as SendFlow)
 const PRIORITY_OPTIONS = [
@@ -410,6 +411,11 @@ export default function DAppApproval({ wallet, onComplete }) {
   const [decodedTx, setDecodedTx] = useState(null); // X1W-003: Transaction details
   const [priority, setPriority] = useState('auto');
   const [customFee, setCustomFee] = useState('');
+  const [hwStatus, setHwStatus] = useState(''); // Hardware wallet status
+  const [ledgerPopupError, setLedgerPopupError] = useState(false); // Ledger popup limitation
+  
+  // Ref to prevent re-entry into signing functions
+  const signingInProgress = useRef(false);
 
   // Load network from chrome.storage for accuracy
   useEffect(() => {
@@ -435,15 +441,17 @@ export default function DAppApproval({ wallet, onComplete }) {
     const checkPendingRequest = async () => {
       try {
         const response = await chrome.runtime.sendMessage({ type: 'get-pending-request' });
-        logger.log('[DAppApproval] Pending request type:', response?.type);
+        // Handle new response format: { request, approvalWindowId }
+        const request = response?.request || response;
+        logger.log('[DAppApproval] Pending request type:', request?.type);
         
-        if (response && response.type) {
-          setPendingRequest(response);
+        if (request && request.type) {
+          setPendingRequest(request);
           
           // X1W-003: Decode transaction for display
-          if (response.transaction) {
+          if (request.transaction) {
             try {
-              const txBytes = Uint8Array.from(atob(response.transaction), c => c.charCodeAt(0));
+              const txBytes = Uint8Array.from(atob(request.transaction), c => c.charCodeAt(0));
               const decoded = decodeTransaction(txBytes);
               setDecodedTx(decoded);
               logger.log('[DAppApproval] Decoded transaction:', decoded);
@@ -451,15 +459,15 @@ export default function DAppApproval({ wallet, onComplete }) {
               logger.error('[DAppApproval] Failed to decode transaction');
               setDecodedTx({ success: false, raw: true });
             }
-          } else if (response.transactions && response.transactions.length > 0) {
+          } else if (request.transactions && request.transactions.length > 0) {
             // Decode first transaction for preview
             try {
-              const txBytes = Uint8Array.from(atob(response.transactions[0]), c => c.charCodeAt(0));
+              const txBytes = Uint8Array.from(atob(request.transactions[0]), c => c.charCodeAt(0));
               const decoded = decodeTransaction(txBytes);
-              decoded.totalTransactions = response.transactions.length;
+              decoded.totalTransactions = request.transactions.length;
               setDecodedTx(decoded);
             } catch (e) {
-              setDecodedTx({ success: false, raw: true, totalTransactions: response.transactions.length });
+              setDecodedTx({ success: false, raw: true, totalTransactions: request.transactions.length });
             }
           }
         } else {
@@ -478,8 +486,16 @@ export default function DAppApproval({ wallet, onComplete }) {
     return () => clearInterval(interval);
   }, []);
 
-  // Get secret key from wallet
+  // Check if hardware wallet
+  const isHardwareWallet = wallet?.wallet?.isHardware || 
+                           wallet?.activeWallet?.isHardware || 
+                           wallet?.isHardware || false;
+
+  // Get secret key from wallet (software wallets only)
   const getSecretKey = () => {
+    if (isHardwareWallet) {
+      throw new Error('Hardware wallet - use signWithHardware instead');
+    }
     const privateKey = wallet.wallet?.privateKey;
     if (!privateKey) throw new Error('No private key');
     
@@ -497,14 +513,130 @@ export default function DAppApproval({ wallet, onComplete }) {
     }
   };
 
+  // Sign with hardware wallet
+  const signWithHardware = async (message) => {
+    try {
+      setHwStatus('Connecting to Ledger...');
+      
+      // In popup context, try to use openConnected first (reuse authorized device)
+      // This avoids the device picker which can be problematic in popups
+      if (!hardwareWallet.isReady()) {
+        logger.log('[DAppApproval] Hardware wallet not ready, attempting connection...');
+        
+        // First, try openConnected to reuse previously authorized device
+        try {
+          const TransportModule = await import('@ledgerhq/hw-transport-webhid');
+          const Transport = TransportModule.default;
+          
+          // Try to get already connected/authorized device
+          let transport = null;
+          try {
+            transport = await Transport.openConnected();
+            logger.log('[DAppApproval] openConnected succeeded');
+          } catch (e) {
+            logger.log('[DAppApproval] openConnected failed:', e.message);
+          }
+          
+          if (!transport) {
+            // No previously connected device - in popup context, this won't work
+            // WebHID permissions don't transfer to popup windows
+            throw new Error('LEDGER_POPUP_LIMITATION');
+          }
+          
+          // Manually set the transport on hardwareWallet service
+          hardwareWallet.transport = transport;
+          hardwareWallet.state = 'connected';
+        } catch (connectErr) {
+          logger.error('[DAppApproval] Transport connection failed:', connectErr);
+          
+          // Check if this is the popup limitation
+          if (connectErr.message === 'LEDGER_POPUP_LIMITATION' || 
+              connectErr.message?.includes('Access denied') ||
+              connectErr.message?.includes('cancelled') ||
+              connectErr.name === 'TransportOpenUserCancelled') {
+            throw new Error('LEDGER_POPUP_LIMITATION');
+          }
+          throw connectErr;
+        }
+        
+        // Now open the Solana app
+        await hardwareWallet.openApp();
+      }
+      
+      setHwStatus('Please confirm transaction on Ledger...');
+      const signature = await hardwareWallet.signTransaction(message);
+      return signature;
+    } catch (err) {
+      logger.error('[DAppApproval] Hardware signing error:', err);
+      
+      // Special handling for popup limitation
+      if (err.message === 'LEDGER_POPUP_LIMITATION') {
+        throw new Error('LEDGER_POPUP_LIMITATION');
+      }
+      
+      if (err.message?.includes('rejected')) {
+        throw new Error('Transaction rejected on Ledger');
+      }
+      if (err.message?.includes('cancelled') || err.message?.includes('No device') || err.message?.includes('Access denied')) {
+        throw new Error('LEDGER_POPUP_LIMITATION');
+      }
+      
+      // Session expired - need to reconnect
+      if (err.message?.includes('session expired') || err.message?.includes('Ledger session')) {
+        throw new Error('LEDGER_POPUP_LIMITATION');
+      }
+      
+      // Disconnect and reset transport on errors that indicate corrupted state
+      // This prevents 0x6a81 errors on retry
+      const shouldDisconnect = 
+        err.message?.includes('already open') ||
+        err.message?.includes('0x6a81') ||
+        err.message?.includes('UNKNOWN_ERROR') ||
+        err.message?.includes('Could not connect') ||
+        err.message?.includes('Solana app') ||
+        err.message?.includes('not ready') ||
+        err.statusCode === 27265 || // 0x6a81
+        err.statusCode === 0x6a81 ||
+        err.name === 'TransportStatusError';
+      
+      if (shouldDisconnect) {
+        logger.log('[DAppApproval] Disconnecting Ledger due to transport error');
+        try { await hardwareWallet.disconnect(); } catch (e) {}
+        
+        if (err.message?.includes('already open')) {
+          throw new Error('Ledger connection conflict. Please try again.');
+        }
+        
+        // For session/transport errors, trigger reconnection flow
+        throw new Error('LEDGER_POPUP_LIMITATION');
+      }
+      
+      throw new Error(`Ledger signing failed: ${err.message}`);
+    } finally {
+      setHwStatus('');
+    }
+  };
+
   // Handle reject
   const handleReject = async () => {
     setProcessing(true);
     try {
-      await chrome.runtime.sendMessage({
-        type: 'approve-sign',
-        error: 'User rejected the request'
-      });
+      const reqType = pendingRequest?.type;
+
+      // Send the correct rejection message type so background can resolve the right pending request.
+      // signMessage expects approve-sign-message, connect expects approve-connect.
+      let message = { error: 'User rejected the request' };
+
+      if (reqType === 'signMessage') {
+        message = { ...message, type: 'approve-sign-message' };
+      } else if (reqType === 'connect') {
+        message = { ...message, type: 'approve-connect' };
+      } else {
+        // Covers signTransaction, signAllTransactions, signAndSendTransaction, etc.
+        message = { ...message, type: 'approve-sign' };
+      }
+
+      await chrome.runtime.sendMessage(message);
     } catch (e) {}
     if (onComplete) onComplete();
     setTimeout(() => window.close(), 300);
@@ -590,8 +722,20 @@ export default function DAppApproval({ wallet, onComplete }) {
     setProcessing(true);
     setError(null);
     
+    // Notify background that Ledger is busy (prevents wallet switching during signing)
+    if (isHardwareWallet) {
+      try {
+        await chrome.runtime.sendMessage({ 
+          type: 'ledger-busy', 
+          busy: true, 
+          origin: pendingRequest?.origin 
+        });
+      } catch (e) {
+        logger.warn('[DAppApproval] Failed to set ledger-busy:', e);
+      }
+    }
+    
     try {
-      const secretKey = getSecretKey();
       const txBytes = Uint8Array.from(atob(pendingRequest.transaction), c => c.charCodeAt(0));
       
       logger.log('[DAppApproval] Transaction length:', txBytes.length);
@@ -609,8 +753,14 @@ export default function DAppApproval({ wallet, onComplete }) {
       
       logger.log('[DAppApproval] Num sig slots:', numSigSlots, 'Message start:', messageStart);
       
-      // Sign the message
-      const signature = await crypto.sign(message, secretKey);
+      // Sign the message - hardware or software wallet
+      let signature;
+      if (isHardwareWallet) {
+        signature = await signWithHardware(message);
+      } else {
+        const secretKey = getSecretKey();
+        signature = await crypto.sign(message, secretKey);
+      }
       
       // Build signed transaction - preserve original structure
       const signedTx = new Uint8Array(txBytes.length);
@@ -630,9 +780,36 @@ export default function DAppApproval({ wallet, onComplete }) {
       if (onComplete) onComplete();
       setTimeout(() => window.close(), 300);
     } catch (err) {
-      logger.error('[DAppApproval] Sign error');
+      logger.error('[DAppApproval] Sign error:', err);
+      
+      // Special handling for Ledger popup limitation
+      if (err.message === 'LEDGER_POPUP_LIMITATION') {
+        setLedgerPopupError(true);
+        setProcessing(false);
+        return;
+      }
+      
+      // Send error back to background so it can clear queue and stop retries
+      try {
+        await chrome.runtime.sendMessage({
+          type: 'approve-sign',
+          error: err?.message || 'Transaction signing failed'
+        });
+      } catch (e) {
+        logger.warn('[DAppApproval] Failed to send error to background:', e);
+      }
+      
       setError(getUserFriendlyError(err, ErrorMessages.transaction.signFailed));
       setProcessing(false);
+    } finally {
+      // ALWAYS clear Ledger busy state when done (success or failure)
+      if (isHardwareWallet) {
+        try {
+          await chrome.runtime.sendMessage({ type: 'ledger-busy', busy: false });
+        } catch (e) {
+          logger.warn('[DAppApproval] Failed to clear ledger-busy:', e);
+        }
+      }
     }
   };
 
@@ -641,11 +818,25 @@ export default function DAppApproval({ wallet, onComplete }) {
     setProcessing(true);
     setError(null);
     
+    // Notify background that Ledger is busy (prevents wallet switching during signing)
+    if (isHardwareWallet) {
+      try {
+        await chrome.runtime.sendMessage({ 
+          type: 'ledger-busy', 
+          busy: true, 
+          origin: pendingRequest?.origin 
+        });
+      } catch (e) {
+        logger.warn('[DAppApproval] Failed to set ledger-busy:', e);
+      }
+    }
+    
     try {
-      const secretKey = getSecretKey();
       const signedTxs = [];
+      const secretKey = isHardwareWallet ? null : getSecretKey();
       
-      for (const tx of pendingRequest.transactions) {
+      for (let i = 0; i < pendingRequest.transactions.length; i++) {
+        const tx = pendingRequest.transactions[i];
         const txBytes = Uint8Array.from(atob(tx), c => c.charCodeAt(0));
         
         // Parse using compact-u16 for signature count
@@ -655,7 +846,18 @@ export default function DAppApproval({ wallet, onComplete }) {
         const messageStart = sigSlotsStart + (numSigSlots * 64);
         const message = txBytes.slice(messageStart);
         
-        const signature = await crypto.sign(message, secretKey);
+        // Sign - hardware or software
+        let signature;
+        if (isHardwareWallet) {
+          if (i === 0) {
+            setHwStatus(`Please confirm transaction ${i + 1} of ${pendingRequest.transactions.length} on Ledger...`);
+          } else {
+            setHwStatus(`Signing transaction ${i + 1} of ${pendingRequest.transactions.length}...`);
+          }
+          signature = await signWithHardware(message);
+        } else {
+          signature = await crypto.sign(message, secretKey);
+        }
         
         // Build signed transaction - preserve original structure
         const signedTx = new Uint8Array(txBytes.length);
@@ -665,6 +867,8 @@ export default function DAppApproval({ wallet, onComplete }) {
         signedTxs.push(btoa(String.fromCharCode(...signedTx)));
       }
       
+      setHwStatus('');
+      
       await chrome.runtime.sendMessage({
         type: 'approve-sign',
         signedTransactions: signedTxs
@@ -673,9 +877,36 @@ export default function DAppApproval({ wallet, onComplete }) {
       if (onComplete) onComplete();
       setTimeout(() => window.close(), 300);
     } catch (err) {
-      logger.error('[DAppApproval] Sign all error');
+      logger.error('[DAppApproval] Sign all error:', err);
+      
+      // Special handling for Ledger popup limitation
+      if (err.message === 'LEDGER_POPUP_LIMITATION') {
+        setLedgerPopupError(true);
+        setProcessing(false);
+        return;
+      }
+      
+      // Send error back to background so it can clear queue and stop retries
+      try {
+        await chrome.runtime.sendMessage({
+          type: 'approve-sign',
+          error: err?.message || 'Transaction signing failed'
+        });
+      } catch (e) {
+        logger.warn('[DAppApproval] Failed to send error to background:', e);
+      }
+      
       setError(getUserFriendlyError(err, ErrorMessages.transaction.signFailed));
       setProcessing(false);
+    } finally {
+      // ALWAYS clear Ledger busy state when done (success or failure)
+      if (isHardwareWallet) {
+        try {
+          await chrome.runtime.sendMessage({ type: 'ledger-busy', busy: false });
+        } catch (e) {
+          logger.warn('[DAppApproval] Failed to clear ledger-busy:', e);
+        }
+      }
     }
   };
 
@@ -684,8 +915,20 @@ export default function DAppApproval({ wallet, onComplete }) {
     setProcessing(true);
     setError(null);
     
+    // Notify background that Ledger is busy (prevents wallet switching during signing)
+    if (isHardwareWallet) {
+      try {
+        await chrome.runtime.sendMessage({ 
+          type: 'ledger-busy', 
+          busy: true, 
+          origin: pendingRequest?.origin 
+        });
+      } catch (e) {
+        logger.warn('[DAppApproval] Failed to set ledger-busy:', e);
+      }
+    }
+    
     try {
-      const secretKey = getSecretKey();
       const txBytes = Uint8Array.from(atob(pendingRequest.transaction), c => c.charCodeAt(0));
       
       // Log selected priority for reference
@@ -788,9 +1031,15 @@ export default function DAppApproval({ wallet, onComplete }) {
         logger.warn('[DAppApproval] Fee payer mismatch! Wallet:', walletPubKey, 'Fee payer:', feePayerKey);
       }
       
-      // Sign the message
-      logger.log('[DAppApproval] Signing message...');
-      const signature = await crypto.sign(message, secretKey);
+      // Sign the message - hardware or software wallet
+      logger.log('[DAppApproval] Signing message... isHardware:', isHardwareWallet);
+      let signature;
+      if (isHardwareWallet) {
+        signature = await signWithHardware(message);
+      } else {
+        const secretKey = getSecretKey();
+        signature = await crypto.sign(message, secretKey);
+      }
       logger.log('[DAppApproval] Signature generated, length:', signature.length);
       
       // Build signed transaction - copy original and insert signature
@@ -892,22 +1141,78 @@ export default function DAppApproval({ wallet, onComplete }) {
       setTimeout(() => window.close(), 300);
     } catch (err) {
       logger.error('[DAppApproval] Send error:', err.message || err);
+      
+      // Special handling for Ledger popup limitation
+      if (err.message === 'LEDGER_POPUP_LIMITATION') {
+        setLedgerPopupError(true);
+        setProcessing(false);
+        return;
+      }
+      
+      // Send error back to background so it can clear queue and stop retries
+      try {
+        await chrome.runtime.sendMessage({
+          type: 'approve-sign',
+          error: err?.message || 'Transaction failed'
+        });
+      } catch (e) {
+        logger.warn('[DAppApproval] Failed to send error to background:', e);
+      }
+      
       setError(getUserFriendlyError(err, ErrorMessages.transaction.failed));
       setProcessing(false);
+    } finally {
+      // ALWAYS clear Ledger busy state when done (success or failure)
+      if (isHardwareWallet) {
+        try {
+          await chrome.runtime.sendMessage({ type: 'ledger-busy', busy: false });
+        } catch (e) {
+          logger.warn('[DAppApproval] Failed to clear ledger-busy:', e);
+        }
+      }
     }
   };
 
   // Handle sign message
   const handleSignMessage = async () => {
+    // Prevent re-entry - don't allow multiple concurrent sign attempts
+    if (signingInProgress.current) {
+      logger.warn('[DAppApproval] Sign already in progress, ignoring duplicate call');
+      return;
+    }
+    signingInProgress.current = true;
+    
     setProcessing(true);
     setError(null);
     
+    // Notify background that Ledger is busy (prevents wallet switching during signing)
+    if (isHardwareWallet) {
+      try {
+        await chrome.runtime.sendMessage({ 
+          type: 'ledger-busy', 
+          busy: true, 
+          origin: pendingRequest?.origin 
+        });
+      } catch (e) {
+        logger.warn('[DAppApproval] Failed to set ledger-busy:', e);
+      }
+    }
+    
     try {
-      const secretKey = getSecretKey();
       const messageBytes = Uint8Array.from(atob(pendingRequest.message), c => c.charCodeAt(0));
       
-      // Sign the message directly
-      const signature = await crypto.sign(messageBytes, secretKey);
+      let signature;
+      if (isHardwareWallet) {
+        // Sign with hardware wallet
+        logger.log('[DAppApproval] Signing message with hardware wallet, bytes:', messageBytes.length);
+        signature = await hardwareWallet.signMessage(messageBytes, wallet?.activeWallet?.derivationPath);
+        logger.log('[DAppApproval] Hardware signature received:', signature?.length || 'null');
+      } else {
+        // Sign with software wallet
+        const secretKey = getSecretKey();
+        signature = await crypto.sign(messageBytes, secretKey);
+      }
+      
       const signatureBase64 = btoa(String.fromCharCode(...signature));
       
       await chrome.runtime.sendMessage({
@@ -918,9 +1223,78 @@ export default function DAppApproval({ wallet, onComplete }) {
       if (onComplete) onComplete();
       setTimeout(() => window.close(), 300);
     } catch (err) {
-      logger.error('[DAppApproval] Sign message error');
+      // Log full error details
+      logger.error('[DAppApproval] Sign message error:', {
+        message: err?.message,
+        name: err?.name,
+        stack: err?.stack,
+        statusCode: err?.statusCode
+      });
+
+// IMPORTANT: always notify background so it can close the approval window and clear the queue.
+const errorMsg = err?.message || err?.toString?.() || 'Unknown error';
+try {
+  await chrome.runtime.sendMessage({
+    type: 'approve-sign-message',
+    error: errorMsg
+  });
+} catch (e) {
+  // ignore - background may already be unavailable
+}
+      
+      // Check if this is a Ledger error that needs reconnection
+      // If so, show the "Connect Ledger" UI instead of closing
+      const isLedgerReconnectError = isHardwareWallet && (
+        err.message?.includes('Could not connect') ||
+        err.message?.includes('Solana app') ||
+        err.message?.includes('session expired') ||
+        err.message?.includes('Ledger session') ||
+        err.message?.includes('not ready') ||
+        err.message?.includes('0x6a81') ||
+        err.message?.includes('UNKNOWN_ERROR') ||
+        err.message?.includes('Please open') ||
+        err.message?.includes('unlock') ||
+        err.message?.includes('Ledger not connected') ||
+        err.statusCode === 27265 || // 0x6a81
+        err.statusCode === 0x6a81 ||
+        err.name === 'TransportStatusError'
+      );
+      
+      if (isLedgerReconnectError) {
+        logger.log('[DAppApproval] Ledger needs reconnection, showing connect UI');
+        // Disconnect to force clean reconnection
+        try { await hardwareWallet.disconnect(); } catch (e) {}
+        // Show the "Connect Ledger" button UI
+        setLedgerPopupError(true);
+        setProcessing(false);
+        // DON'T send error to background - keep window open for retry
+        return;
+      }
+      
+      // For non-recoverable errors (like user rejection), send to background and close
+      try {
+        await chrome.runtime.sendMessage({
+          type: 'approve-sign-message',
+          error: err?.message || 'Signing failed'
+        });
+      } catch (e) {
+        logger.warn('[DAppApproval] Failed to send error to background:', e);
+      }
+      
       setError(getUserFriendlyError(err, ErrorMessages.transaction.signFailed));
       setProcessing(false);
+    } finally {
+      // ALWAYS clear signing state when done (success or failure)
+      signingInProgress.current = false;
+      
+      // ALWAYS clear Ledger busy state when done (success or failure)
+      if (isHardwareWallet) {
+        try {
+          await chrome.runtime.sendMessage({ type: 'ledger-busy', busy: false });
+        } catch (e) {
+          logger.warn('[DAppApproval] Failed to clear ledger-busy:', e);
+        }
+      }
     }
   };
 
@@ -954,6 +1328,20 @@ export default function DAppApproval({ wallet, onComplete }) {
   const iconUrl = getIconUrl();
   
   // Get action handler
+  // Click handler with debouncing - prevents multiple clicks before React re-renders
+  const handleApproveClick = async () => {
+    // Immediately check if already processing (before React state updates)
+    if (processing || signingInProgress.current) {
+      console.log('[DAppApproval] Ignoring click - already processing');
+      return;
+    }
+    
+    const handler = getHandler();
+    if (handler) {
+      await handler();
+    }
+  };
+  
   const getHandler = () => {
     switch (pendingRequest.type) {
       case 'connect': return handleApproveConnect;
@@ -1245,12 +1633,137 @@ export default function DAppApproval({ wallet, onComplete }) {
         
         {error && <div className="error-message">{error}</div>}
         
+        {/* Ledger popup limitation message */}
+        {ledgerPopupError && (
+          <div style={{
+            background: 'rgba(255, 193, 7, 0.1)',
+            border: '1px solid rgba(255, 193, 7, 0.3)',
+            borderRadius: 12,
+            padding: 16,
+            marginBottom: 16
+          }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#FFC107" strokeWidth="2" style={{ flexShrink: 0, marginTop: 2 }}>
+                <circle cx="12" cy="12" r="10" />
+                <path d="M12 8v4M12 16h.01" />
+              </svg>
+              <div>
+                <div style={{ fontWeight: 600, marginBottom: 8, color: 'var(--text-primary)' }}>
+                  Ledger Authorization Required
+                </div>
+                <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                  Your Ledger needs to be authorized in Chrome. Click below to connect your Ledger, then click Approve again.
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+              <button 
+                onClick={async () => {
+                  try {
+                    setError(null);
+                    setHwStatus('Select your Ledger device...');
+                    setProcessing(true);
+                    
+                    // First disconnect any existing connection to ensure clean state
+                    try { await hardwareWallet.disconnect(); } catch (e) {}
+                    
+                    // Clear session invalid flag
+                    hardwareWallet.sessionInvalid = false;
+                    
+                    // Request device authorization - this shows the browser device picker
+                    const TransportModule = await import('@ledgerhq/hw-transport-webhid');
+                    const Transport = TransportModule.default;
+                    
+                    // This will show the device picker dialog
+                    const transport = await Transport.create();
+                    
+                    if (transport) {
+                      // Successfully authorized - set up hardware wallet
+                      hardwareWallet.transport = transport;
+                      hardwareWallet.state = 'connected';
+                      
+                      setHwStatus('Opening Solana app...');
+                      await hardwareWallet.openApp();
+                      
+                      setHwStatus('');
+                      setProcessing(false);
+                      
+                      // Hide the connect UI - user can now click Approve
+                      setLedgerPopupError(false);
+                      
+                      // DON'T auto-retry - let user click Approve again
+                      // This prevents loops if signing keeps failing
+                    }
+                  } catch (err) {
+                    logger.error('[DAppApproval] Ledger authorization failed:', err);
+                    setHwStatus('');
+                    setProcessing(false);
+                    
+                    if (err.name === 'TransportOpenUserCancelled' || err.message?.includes('cancelled')) {
+                      setError('Ledger connection was cancelled. Please try again.');
+                    } else if (err.message?.includes('No device')) {
+                      setError('No Ledger device found. Make sure it is connected and unlocked.');
+                    } else if (err.message?.includes('Solana app') || err.message?.includes('open the')) {
+                      setError('Please open the Solana app on your Ledger, then try again.');
+                    } else {
+                      setError(`Failed to connect: ${err.message}`);
+                    }
+                    // Keep ledgerPopupError true so user can retry
+                  }
+                }}
+                disabled={processing}
+                style={{
+                  flex: 1,
+                  padding: '12px 16px',
+                  background: 'var(--x1-blue)',
+                  border: 'none',
+                  borderRadius: 8,
+                  color: '#ffffff',
+                  fontSize: 14,
+                  fontWeight: 500,
+                  cursor: processing ? 'not-allowed' : 'pointer',
+                  opacity: processing ? 0.7 : 1
+                }}
+              >
+                {processing ? 'Connecting...' : 'Connect Ledger'}
+              </button>
+              <button 
+                onClick={handleReject}
+                disabled={processing}
+                style={{
+                  flex: 1,
+                  padding: '12px 16px',
+                  background: 'var(--bg-secondary)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: 8,
+                  color: 'var(--text-primary)',
+                  fontSize: 14,
+                  fontWeight: 500,
+                  cursor: processing ? 'not-allowed' : 'pointer',
+                  opacity: processing ? 0.7 : 1
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+        
+        {/* Hardware wallet status */}
+        {hwStatus && (
+          <div className="send-hw-status" style={{ marginBottom: 16 }}>
+            <div className="spinner" style={{ width: 20, height: 20 }} />
+            <span>{hwStatus}</span>
+          </div>
+        )}
+        
         {/* Actions */}
+        {!ledgerPopupError && (
         <div className="dapp-approval-actions">
           <button className="dapp-btn-reject" onClick={handleReject} disabled={processing}>
             {pendingRequest.type === 'connect' ? 'Cancel' : 'Deny'}
           </button>
-          <button className="dapp-btn-approve" onClick={getHandler()} disabled={processing}>
+          <button className="dapp-btn-approve" onClick={handleApproveClick} disabled={processing}>
             {processing ? (
               <>
                 <span className="btn-spinner"></span>
@@ -1261,6 +1774,7 @@ export default function DAppApproval({ wallet, onComplete }) {
             )}
           </button>
         </div>
+        )}
       </div>
     </div>
   );

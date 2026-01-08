@@ -1,4 +1,4 @@
-import { T as TransportError } from "./index2.js";
+import { a as TransportError } from "./index2.js";
 const Tag = 5;
 function asUInt16BE(value) {
   const b = Buffer.alloc(2);

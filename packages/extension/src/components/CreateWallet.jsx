@@ -226,8 +226,7 @@ export default function CreateWallet({ onComplete, onBack }) {
   const copyMnemonic = () => {
     // Normalize the mnemonic: trim, lowercase, single spaces
     const cleanMnemonic = mnemonic.trim().toLowerCase().split(/\s+/).join(' ');
-    logger.log('Copying mnemonic:', cleanMnemonic);
-    logger.log('Word count:', cleanMnemonic.split(' ').length);
+    logger.log('Copying mnemonic: [REDACTED]', cleanMnemonic.split(' ').length, 'words');
     navigator.clipboard.writeText(cleanMnemonic);
     setCopied(true);
     

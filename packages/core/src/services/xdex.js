@@ -13,6 +13,7 @@ const XDEX_LOGOS = {
   WXNT: 'https://x1logos.s3.us-east-1.amazonaws.com/48.png',
   SOL: 'https://xdex.s3.us-east-2.amazonaws.com/vimages/solana.png',
   USDC: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png',
+  USDC_X: 'https://x1logos.s3.us-east-1.amazonaws.com/48-usdcx.png',
 };
 
 // Known tokens registry by network (for immediate recognition)
@@ -22,8 +23,9 @@ const KNOWN_TOKENS = {
       symbol: 'USDC.X',
       name: 'USD Coin (X1)',
       decimals: 6,
-      logoURI: XDEX_LOGOS.USDC,
-      isToken2022: true
+      logoURI: XDEX_LOGOS.USDC_X,
+      isToken2022: true,
+      price: 1
     },
     'AvNDf423kEmWNP6AZHFV7DkNG4YRgt6qbdyyryjaa4PQ': {
       symbol: 'XNM',
@@ -39,8 +41,9 @@ const KNOWN_TOKENS = {
       symbol: 'USDC.X',
       name: 'USD Coin (X1)',
       decimals: 6,
-      logoURI: XDEX_LOGOS.USDC,
-      isToken2022: true
+      logoURI: XDEX_LOGOS.USDC_X,
+      isToken2022: true,
+      price: 1
     },
     'AvNDf423kEmWNP6AZHFV7DkNG4YRgt6qbdyyryjaa4PQ': {
       symbol: 'XNM',
@@ -492,7 +495,7 @@ export async function getSwapTokens(network) {
         symbol: 'USDC.X', 
         name: 'USD Coin (X1)', 
         mint: 'B69chRzqzDCmdB5WYB8NRu5Yv5ZA95ABiZcdzCgGm9Tq', 
-        logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png',
+        logoURI: XDEX_LOGOS.USDC_X,
         decimals: 6,
         isToken2022: true
       },
@@ -809,7 +812,7 @@ export async function fetchTokenMetadata(rpcUrl, mintAddress, network = null) {
     // Try to get from X1 explorer API or known token list
     try {
       logger.log('[XDEX] Trying explorer API...');
-      const explorerResponse = await fetch(`https://explorer.fortiblox.com/api/tokens/${mintAddress}`);
+      const explorerResponse = await fetch(`https://explorer.mainnet.x1.xyz/api/v2/tokens/${mintAddress}`);
       if (explorerResponse.ok) {
         const explorerData = await explorerResponse.json();
         logger.log('[XDEX] Explorer API response:', explorerData);

@@ -446,6 +446,15 @@ export function useWallet() {
   const addHardwareWallet = useCallback(async (walletDataOrPublicKey) => {
     // Support both object format and legacy (publicKey, name, derivationPath) format
     const isObject = typeof walletDataOrPublicKey === 'object' && walletDataOrPublicKey.publicKey;
+    const publicKey = isObject ? walletDataOrPublicKey.publicKey : walletDataOrPublicKey;
+    
+    // Check if this wallet already exists (same public key)
+    const existingWallet = wallets.find(w => 
+      w.addresses?.some(a => a.publicKey === publicKey)
+    );
+    if (existingWallet) {
+      throw new Error(`This wallet has already been imported as "${existingWallet.name}"`);
+    }
     
     const newWallet = {
       id: Date.now().toString(),
@@ -455,9 +464,11 @@ export function useWallet() {
       mnemonic: null,
       createdAt: new Date().toISOString(),
       derivationPath: isObject ? walletDataOrPublicKey.derivationPath : "44'/501'/0'/0'",
+      derivationScheme: isObject ? walletDataOrPublicKey.derivationScheme : null,
+      connectionType: isObject ? walletDataOrPublicKey.connectionType : null,
       addresses: [{
         index: 0,
-        publicKey: isObject ? walletDataOrPublicKey.publicKey : walletDataOrPublicKey,
+        publicKey,
         privateKey: null,
         name: 'Address 1'
       }],
@@ -467,7 +478,7 @@ export function useWallet() {
     logger.log('Adding hardware wallet:', newWallet);
 
     const newWallets = [...wallets, newWallet];
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(newWallets));
+    await saveWalletsToStorage(newWallets);
     localStorage.setItem(ACTIVE_KEY, newWallet.id);
     setWallets(newWallets);
     setActiveWalletId(newWallet.id);
@@ -475,15 +486,41 @@ export function useWallet() {
     return new Promise((resolve) => {
       setTimeout(() => resolve(newWallet), 100);
     });
-  }, [wallets]);
+  }, [wallets, saveWalletsToStorage]);
 
   // Switch active wallet
   const switchWallet = useCallback((walletId) => {
     setActiveWalletId(walletId);
     localStorage.setItem(ACTIVE_KEY, walletId);
+    
+    // Also sync to chrome.storage for background script storage listener
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.set({ [ACTIVE_KEY]: walletId });
+    }
   }, []);
 
   const selectWallet = switchWallet;
+
+  // Notify connected dApps when wallet/account changes
+  useEffect(() => {
+    if (!activeAddress?.publicKey) return;
+    
+    // Don't send account-changed from approval popups - it causes infinite loops
+    // Approval popups have URLs like index.html?request=sign
+    if (typeof window !== 'undefined' && window.location.search.includes('request=')) {
+      return;
+    }
+    
+    // Send account change notification to background script
+    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+      chrome.runtime.sendMessage({
+        type: 'account-changed',
+        publicKey: activeAddress.publicKey
+      }).catch(err => {
+        logger.warn('[useWallet] Failed to notify account change:', err);
+      });
+    }
+  }, [activeAddress?.publicKey]);
 
   // Update wallet
   const updateWallet = useCallback(async (walletId, updates) => {

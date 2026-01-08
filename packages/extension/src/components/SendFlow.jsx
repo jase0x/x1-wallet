@@ -368,8 +368,20 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
     try {
       setHwStatus('Connecting to Ledger...');
       
+      // Always try to ensure fresh connection
       if (!hardwareWallet.isReady()) {
-        await hardwareWallet.connect();
+        try {
+          await hardwareWallet.connect();
+        } catch (connectErr) {
+          // If device is already open, disconnect and retry
+          if (connectErr.message?.includes('already open')) {
+            logger.log('[SendFlow] Device already open, disconnecting and retrying...');
+            await hardwareWallet.disconnect();
+            await hardwareWallet.connect();
+          } else {
+            throw connectErr;
+          }
+        }
         await hardwareWallet.openApp();
       }
       
@@ -383,6 +395,11 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
       }
       if (err.message?.includes('cancelled') || err.message?.includes('No device')) {
         throw new Error('Ledger connection failed. Please make sure your Ledger is connected and the Solana app is open.');
+      }
+      if (err.message?.includes('already open')) {
+        // Try to disconnect for next attempt
+        try { await hardwareWallet.disconnect(); } catch (e) {}
+        throw new Error('Ledger connection conflict. Please try again.');
       }
       throw new Error(`Ledger signing failed: ${err.message}`);
     }
@@ -512,7 +529,27 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
   };
 
   // Send SPL token
-  const sendSPLToken = async (sendAmount) => {
+  const sendSPLToken = async (sendAmount, privateKey) => {
+    // Debug logging
+    console.log('[SendFlow] sendSPLToken called');
+    console.log('[SendFlow] isHardwareWallet:', isHardwareWallet);
+    console.log('[SendFlow] wallet.wallet:', wallet?.wallet);
+    console.log('[SendFlow] wallet.wallet.isHardware:', wallet?.wallet?.isHardware);
+    console.log('[SendFlow] currentToken:', currentToken);
+    console.log('[SendFlow] network:', network);
+    
+    // Validate token has required fields
+    if (!currentToken.mint) {
+      throw new Error('Token mint address is required');
+    }
+    if (!currentToken.address) {
+      throw new Error('Token account address not found. Please refresh your wallet.');
+    }
+    // Only require privateKey for non-hardware wallets
+    if (!isHardwareWallet && !privateKey) {
+      throw new Error('Wallet is locked. Please unlock your wallet first.');
+    }
+    
     const tokenAmount = Math.floor(sendAmount * Math.pow(10, currentToken.decimals));
     
     const response = await fetch(networkConfig.rpcUrl, {
@@ -532,20 +569,62 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
     const blockhash = data.result?.value?.blockhash;
     if (!blockhash) throw new Error('Failed to get blockhash');
 
-    const { createTokenTransferTransaction } = await import('@x1-wallet/core/utils/transaction');
+    let tx;
     
-    const tx = await createTokenTransferTransaction({
-      fromPubkey: wallet.wallet.publicKey,
-      toPubkey: recipient.trim(),
-      mint: currentToken.mint,
-      amount: tokenAmount,
-      decimals: currentToken.decimals,
-      fromTokenAccount: currentToken.address,
-      recentBlockhash: blockhash,
-      privateKey: wallet.wallet.privateKey,
-      programId: currentToken.programId,
-      rpcUrl: networkConfig.rpcUrl
-    });
+    if (isHardwareWallet) {
+      // Hardware wallet flow - build message, sign with device
+      const { buildTokenTransferMessageForHardware, serializeTransaction, findExistingATA, deriveATAAddressStandard } = await import('@x1-wallet/core/utils/transaction');
+      
+      // Determine destination token account
+      let toTokenAccount = await findExistingATA(networkConfig.rpcUrl, recipient.trim(), currentToken.mint);
+      let needsCreateATA = false;
+      
+      if (!toTokenAccount) {
+        // Need to create ATA for recipient - use RPC validation
+        toTokenAccount = await deriveATAAddressStandard(
+          recipient.trim(), 
+          currentToken.mint, 
+          currentToken.programId,
+          networkConfig.rpcUrl,
+          wallet.wallet.publicKey // Use sender as payer for simulation
+        );
+        needsCreateATA = true;
+      }
+      
+      setHwStatus('Please confirm on your Ledger...');
+      
+      const message = buildTokenTransferMessageForHardware({
+        fromPubkey: wallet.wallet.publicKey,
+        toPubkey: recipient.trim(),
+        fromTokenAccount: currentToken.address,
+        toTokenAccount,
+        mint: currentToken.mint,
+        amount: tokenAmount,
+        recentBlockhash: blockhash,
+        tokenProgramId: currentToken.programId,
+        needsCreateATA
+      });
+      
+      const signature = await signWithHardware(message);
+      const serializedTx = serializeTransaction(signature, message);
+      tx = btoa(String.fromCharCode(...serializedTx));
+    } else {
+      // Software wallet flow
+      const { createTokenTransferTransaction } = await import('@x1-wallet/core/utils/transaction');
+      
+      tx = await createTokenTransferTransaction({
+        fromPubkey: wallet.wallet.publicKey,
+        toPubkey: recipient.trim(),
+        mint: currentToken.mint,
+        amount: tokenAmount,
+        decimals: currentToken.decimals,
+        fromTokenAccount: currentToken.address,
+        recentBlockhash: blockhash,
+        privateKey: privateKey,
+        programId: currentToken.programId,
+        rpcUrl: networkConfig.rpcUrl
+      });
+    }
 
     const sendResponse = await fetch(networkConfig.rpcUrl, {
       method: 'POST',
@@ -568,8 +647,10 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
   const handleSend = async () => {
     setError('');
     
-    if (!isHardwareWallet && !wallet?.wallet?.privateKey) {
-      setError('Wallet not available for signing');
+    // Validate wallet is unlocked and has private key
+    const privateKey = wallet?.wallet?.privateKey;
+    if (!isHardwareWallet && (!privateKey || typeof privateKey !== 'string' || privateKey.length < 32)) {
+      setError('Wallet is locked or not available. Please unlock your wallet first.');
       return;
     }
 
@@ -584,7 +665,7 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
       let signature;
       
       if (isTokenSend) {
-        signature = await sendSPLToken(sendAmount);
+        signature = await sendSPLToken(sendAmount, privateKey);
       } else {
         signature = await sendNative(sendAmount);
       }

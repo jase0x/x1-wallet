@@ -2529,6 +2529,10 @@ body {
   cursor: pointer;
 }
 
+.network-option.last {
+  border-bottom: none;
+}
+
 .network-option:hover {
   background: var(--bg-secondary);
   margin: 0 -20px;
@@ -4770,8 +4774,11 @@ body {
   font-weight: 600;
   color: var(--text-primary);
   outline: none;
-  width: 120px;
+  width: 140px;
+  min-width: 100px;
+  max-width: 160px;
   caret-color: var(--x1-blue);
+  text-overflow: ellipsis;
 }
 
 .swap-input-area input:focus {
@@ -4982,7 +4989,57 @@ body {
 }
 
 .swap-screen .slide-panel-content {
-  padding-top: 16px;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 180px);
+  overflow-x: hidden;
+}
+
+/* Swap confirm screen - consistent width for all elements */
+.swap-screen .send-step-content {
+  overflow-y: visible;
+  overflow-x: hidden;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 12px;
+}
+
+.swap-screen .send-summary-card,
+.swap-screen .send-priority-section,
+.swap-screen .send-confirm-actions {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.swap-screen .send-summary-card {
+  padding: 10px 14px;
+  margin-bottom: 10px;
+}
+
+.swap-screen .send-summary-row {
+  padding: 8px 0;
+}
+
+.swap-screen .send-priority-section {
+  padding: 10px 14px;
+  margin-top: 10px;
+}
+
+.swap-screen .send-priority-label {
+  margin-bottom: 10px;
+}
+
+.swap-screen .send-priority-selector {
+  justify-content: space-between;
+  flex-wrap: nowrap;
+}
+
+.swap-screen .send-priority-btn {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
 }
 
 /* Stake Screen Styles */
@@ -5027,7 +5084,7 @@ body {
 
 .stake-screen .screen-content {
   padding: 12px 20px;
-  overflow: hidden;
+  overflow-y: auto;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -5040,7 +5097,7 @@ body {
 }
 
 .stake-screen .send-step-content {
-  overflow: hidden;
+  overflow-y: auto;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -6706,7 +6763,7 @@ body {
 
 /* Hardware Wallet Styles */
 .hardware-screen {
-  padding: 20px 24px 24px;
+  padding: 20px 24px 32px;
   display: flex;
   flex-direction: column;
   min-height: 100%;
@@ -6934,6 +6991,9 @@ body {
   flex-direction: column;
   gap: 10px;
   margin-bottom: 20px;
+  max-height: 300px;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .hardware-account {
@@ -8016,10 +8076,16 @@ details[open] .dapp-tx-row-arrow {
   background: var(--bg-tertiary) !important;
   border: 1px solid var(--border-color) !important;
   border-radius: 8px !important;
-  padding: 6px 10px !important;
+  padding: 6px 28px 6px 10px !important;
   color: var(--text-primary) !important;
   font-size: 13px !important;
   cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") !important;
+  background-repeat: no-repeat !important;
+  background-position: right 8px center !important;
+  -webkit-appearance: none !important;
+  -moz-appearance: none !important;
+  appearance: none !important;
 }
 
 .dapp-network-select:focus {
@@ -8817,12 +8883,15 @@ details[open] .dapp-tx-details-summary svg {
   border-radius: 12px;
   padding: 16px;
   margin-bottom: 16px;
+  overflow: hidden;
 }
 
 .send-summary-row {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   padding: 10px 0;
+  gap: 16px;
 }
 
 .send-summary-row:not(:last-child) {
@@ -8832,11 +8901,14 @@ details[open] .dapp-tx-details-summary svg {
 .send-summary-label {
   color: var(--text-muted);
   font-size: 14px;
+  flex-shrink: 0;
 }
 
 .send-summary-value {
   color: var(--text-secondary);
   font-size: 14px;
+  text-align: right;
+  word-break: break-word;
 }
 
 .send-summary-total {
@@ -8893,7 +8965,7 @@ details[open] .dapp-tx-details-summary svg {
 
 .stake-screen .send-step-content {
   padding: 12px 20px;
-  overflow: hidden;
+  overflow-y: auto;
 }
 
 .stake-screen .send-amount-section {
@@ -8914,7 +8986,7 @@ details[open] .dapp-tx-details-summary svg {
   display: flex;
   flex-direction: column;
   flex: 1;
-  overflow: hidden;
+  overflow-y: auto;
 }
 
 /* Success State */
@@ -9389,6 +9461,8 @@ details[open] .dapp-tx-details-summary svg {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .stake-success .tx-link {
@@ -9523,12 +9597,11 @@ details[open] .dapp-tx-details-summary svg {
 .send-priority-selector {
   display: flex;
   gap: 8px;
-  margin-top: 16px;
-  justify-content: center;
+  margin-top: 12px;
 }
 
 .send-priority-btn {
-  padding: 8px 14px;
+  padding: 8px 12px;
   border-radius: 8px;
   border: 1px solid var(--border-color);
   background: transparent;
@@ -9566,12 +9639,6 @@ details[open] .dapp-tx-details-summary svg {
   overflow-x: hidden;
 }
 
-.send-step-content {
-  min-height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
 .send-bottom-action {
   margin-top: auto;
   padding-top: 20px;
@@ -9580,17 +9647,19 @@ details[open] .dapp-tx-details-summary svg {
 
 /* Priority Section */
 .send-priority-section {
-  margin-top: 20px;
+  margin-top: 16px;
   padding: 16px;
   background: var(--bg-secondary);
   border-radius: 12px;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
 .send-priority-label {
   font-size: 12px;
   color: var(--text-muted);
   text-transform: uppercase;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 /* Send Token Balance Column */

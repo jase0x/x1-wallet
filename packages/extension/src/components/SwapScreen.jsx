@@ -3,9 +3,10 @@ import React, { useState, useEffect, useCallback } from 'react';
 import X1Logo from './X1Logo';
 import { NETWORKS } from '@x1-wallet/core/services/networks';
 import { getQuote, prepareSwap, getSwapTokens, getSwapProvider, isSolanaNetwork, XDEX_LOGOS, searchXDEXTokens, fetchTokenMetadata } from '@x1-wallet/core/services/xdex';
-import { signAndSendExternalTransaction, addTransaction, createWrapTransaction, createUnwrapTransaction } from '@x1-wallet/core/utils/transaction';
+import { signAndSendExternalTransaction, addTransaction, createWrapTransaction, createUnwrapTransaction, signAndSendExternalTransactionHardware, createWrapTransactionHardware, createUnwrapTransactionHardware } from '@x1-wallet/core/utils/transaction';
 import { trackSwapXP } from '@x1-wallet/core/services/xp';
 import { logger, getUserFriendlyError, ErrorMessages } from '@x1-wallet/core';
+import { hardwareWallet } from '../services/hardware';
 
 // Priority fee options for transaction speed
 const PRIORITY_OPTIONS = [
@@ -156,15 +157,24 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
   const [inputMode, setInputMode] = useState('from'); // 'from' | 'to' - which field user is editing
   const [selectingToken, setSelectingToken] = useState(null); // 'from' | 'to' | null
   const [slippage, setSlippage] = useState(0.5);
+  const [showSlippageSettings, setShowSlippageSettings] = useState(false);
+  const [customSlippage, setCustomSlippage] = useState('');
+  const slippageOptions = [0.1, 0.5, 1.0, 3.0];
   const [loading, setLoading] = useState(false);
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [quote, setQuote] = useState(null);
   const [error, setError] = useState('');
   const [swapStatus, setSwapStatus] = useState(''); // '' | 'confirming' | 'success' | 'error'
+  const [hwStatus, setHwStatus] = useState(''); // Hardware wallet status message
   const [showConfirm, setShowConfirm] = useState(false); // Show confirmation screen
   const [txHash, setTxHash] = useState(''); // Transaction hash for success screen
   const [swapPriority, setSwapPriority] = useState('auto'); // Transaction priority
   const [customFee, setCustomFee] = useState(''); // Custom fee amount
+  
+  // Check if hardware wallet
+  const isHardwareWallet = wallet?.wallet?.isHardware || 
+                           wallet?.activeWallet?.isHardware || 
+                           wallet?.isHardware || false;
   
   // Token management state
   const [showManageTokens, setShowManageTokens] = useState(false);
@@ -548,16 +558,16 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
         ) || tokensWithBalances[0];
         
         // Find default "to" token based on network
-        // X1: WXNT, Solana: USDC
+        // X1: USDC.X, Solana: USDC
         const isX1Network = currentNetwork?.startsWith('X1');
         
         let otherToken;
         if (isX1Network) {
-          // For X1, default to WXNT
-          otherToken = tokensWithBalances.find(t => t.symbol === 'WXNT');
+          // For X1, default to USDC.X
+          otherToken = tokensWithBalances.find(t => t.symbol === 'USDC.X');
         }
         
-        // Fallback to USDC if not X1 or WXNT not found
+        // Fallback to USDC if not X1 or USDC.X not found
         if (!otherToken) {
           const usdcToken = tokensWithBalances.find(t => 
             t.symbol === 'USDC' || 
@@ -687,6 +697,33 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
           }
         }
         
+        // Fallback: search local tokens list AND pool tokens by name/symbol
+        const query = tokenSearchQuery.toLowerCase();
+        const seen = new Set();
+        const localResults = [];
+        
+        // Search local tokens (user's holdings + base tokens)
+        for (const t of tokens) {
+          if ((t.symbol?.toLowerCase().includes(query) || t.name?.toLowerCase().includes(query)) && !seen.has(t.mint)) {
+            seen.add(t.mint);
+            localResults.push(enrichWithUserData(t));
+          }
+        }
+        
+        // Also search pool tokens (DEX tokens)
+        for (const t of poolTokens) {
+          if ((t.symbol?.toLowerCase().includes(query) || t.name?.toLowerCase().includes(query)) && !seen.has(t.mint)) {
+            seen.add(t.mint);
+            localResults.push(enrichWithUserData(t));
+          }
+        }
+        
+        if (localResults.length > 0) {
+          setSearchResults(localResults);
+          setSearching(false);
+          return;
+        }
+        
         // No results found
         setSearchResults([]);
       } catch (err) {
@@ -700,7 +737,7 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
     // Debounce search
     const timeoutId = setTimeout(searchTokens, 300);
     return () => clearTimeout(timeoutId);
-  }, [tokenSearchQuery, currentNetwork, networkConfig.rpcUrl, isSolana, filteredUserTokens, tokens]);
+  }, [tokenSearchQuery, currentNetwork, networkConfig.rpcUrl, isSolana, filteredUserTokens, tokens, poolTokens]);
 
   // WXNT uses the same underlying mint as Wrapped SOL (So111...)
   // Detection must be symbol-based, not mint-based
@@ -791,10 +828,10 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
         
         if (outputAmount !== undefined && outputAmount !== null) {
           if (inputMode === 'from') {
-            setToAmount(parseFloat(outputAmount).toFixed(6));
+            setToAmount(parseFloat(parseFloat(outputAmount).toFixed(4)).toString());
           } else {
             // Reverse mode - the output is actually what we need to put in fromAmount
-            setFromAmount(parseFloat(outputAmount).toFixed(6));
+            setFromAmount(parseFloat(parseFloat(outputAmount).toFixed(4)).toString());
           }
         } else {
           // Try to calculate from rate if available
@@ -803,9 +840,9 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
             const calculated = quoteAmount * rate;
             logger.log('[Swap] Calculated from rate:', calculated);
             if (inputMode === 'from') {
-              setToAmount(calculated.toFixed(6));
+              setToAmount(parseFloat(calculated.toFixed(4)).toString());
             } else {
-              setFromAmount(calculated.toFixed(6));
+              setFromAmount(parseFloat(calculated.toFixed(4)).toString());
             }
           }
         }
@@ -1029,13 +1066,20 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
   // Execute the actual swap after user confirms
   const handleSwap = async () => {
     logger.log('[Swap] Executing swap...');
+    logger.log('[Swap] isHardwareWallet:', isHardwareWallet);
+    logger.log('[Swap] wallet?.wallet?.isHardware:', wallet?.wallet?.isHardware);
+    logger.log('[Swap] wallet?.activeWallet?.isHardware:', wallet?.activeWallet?.isHardware);
+    logger.log('[Swap] wallet?.isHardware:', wallet?.isHardware);
+    logger.log('[Swap] wallet structure:', JSON.stringify(Object.keys(wallet || {})));
+    logger.log('[Swap] wallet.wallet structure:', JSON.stringify(Object.keys(wallet?.wallet || {})));
 
     setLoading(true);
     setSwapStatus('confirming');
     setError('');
+    setHwStatus('');
 
     // Debug: Log wallet structure (keys only, no values)
-    logger.log('[Swap] === BUILD VERSION: 2025-12-15-v3 ===');
+    logger.log('[Swap] === BUILD VERSION: 2025-01-05-hw-v2 ===');
     logger.log('[Swap] Wallet object keys:', Object.keys(wallet || {}));
     logger.log('[Swap] wallet.wallet keys:', Object.keys(wallet?.wallet || {}));
 
@@ -1045,6 +1089,8 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
       const privateKey = wallet?.wallet?.privateKey || wallet?.activeAddress?.privateKey;
       
       logger.log('[Swap] Found publicKey:', walletPublicKey ? walletPublicKey.slice(0, 8) + '...' : 'null');
+      logger.log('[Swap] privateKey available:', !!privateKey);
+      logger.log('[Swap] Final isHardwareWallet check:', isHardwareWallet);
       
       // Validate wallet public key
       if (!walletPublicKey || typeof walletPublicKey !== 'string') {
@@ -1063,7 +1109,10 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
         throw new Error('Invalid wallet address');
       }
       
-      if (!privateKey) {
+      // For software wallets, require private key
+      // For hardware wallets, we don't need private key
+      if (!isHardwareWallet && !privateKey) {
+        logger.error('[Swap] No private key and not hardware wallet!');
         throw new Error('Wallet private key not available');
       }
 
@@ -1071,39 +1120,65 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
       if (isWrapOperation) {
         console.log('[Swap] Starting wrap operation:', wrapDirection);
         console.log('[Swap] networkConfig.rpcUrl:', networkConfig?.rpcUrl);
+        console.log('[Swap] isHardwareWallet:', isHardwareWallet);
         
         try {
           let signature;
           
-          // Decode private key if needed
-          let secretKey = privateKey;
-          console.log('[Swap] privateKey type:', typeof privateKey);
-          
-          if (typeof privateKey === 'string') {
-            console.log('[Swap] Decoding base58 private key...');
-            const { decodeBase58 } = await import('@x1-wallet/core/utils/base58');
-            secretKey = decodeBase58(privateKey);
-            console.log('[Swap] Decoded key length:', secretKey?.length);
-          }
-          
-          console.log('[Swap] Calling create transaction function...');
-          
-          if (wrapDirection === 'wrap') {
-            // Wrap: native XNT -> WXNT
-            signature = await createWrapTransaction({
-              owner: walletPublicKey,
-              amount: parseFloat(fromAmount),
-              rpcUrl: networkConfig.rpcUrl,
-              privateKey: secretKey
-            });
+          if (isHardwareWallet) {
+            // Hardware wallet wrap/unwrap
+            setHwStatus('Connecting to Ledger...');
+            
+            if (!hardwareWallet.isReady()) {
+              await hardwareWallet.connect('hid');
+              await hardwareWallet.openApp();
+            }
+            
+            setHwStatus('Please confirm on your Ledger...');
+            
+            if (wrapDirection === 'wrap') {
+              signature = await createWrapTransactionHardware({
+                owner: walletPublicKey,
+                amount: parseFloat(fromAmount),
+                rpcUrl: networkConfig.rpcUrl,
+                hardwareWallet
+              });
+            } else {
+              signature = await createUnwrapTransactionHardware({
+                owner: walletPublicKey,
+                amount: parseFloat(fromAmount),
+                rpcUrl: networkConfig.rpcUrl,
+                hardwareWallet
+              });
+            }
+            setHwStatus('');
           } else {
-            // Unwrap: WXNT -> native XNT
-            signature = await createUnwrapTransaction({
-              owner: walletPublicKey,
-              amount: parseFloat(fromAmount),
-              rpcUrl: networkConfig.rpcUrl,
-              privateKey: secretKey
-            });
+            // Software wallet wrap/unwrap
+            // Decode private key if needed
+            let secretKey = privateKey;
+            
+            if (typeof privateKey === 'string') {
+              const { decodeBase58 } = await import('@x1-wallet/core/utils/base58');
+              secretKey = decodeBase58(privateKey);
+            }
+            
+            if (wrapDirection === 'wrap') {
+              // Wrap: native XNT -> WXNT
+              signature = await createWrapTransaction({
+                owner: walletPublicKey,
+                amount: parseFloat(fromAmount),
+                rpcUrl: networkConfig.rpcUrl,
+                privateKey: secretKey
+              });
+            } else {
+              // Unwrap: WXNT -> native XNT
+              signature = await createUnwrapTransaction({
+                owner: walletPublicKey,
+                amount: parseFloat(fromAmount),
+                rpcUrl: networkConfig.rpcUrl,
+                privateKey: secretKey
+              });
+            }
           }
           
           console.log('[Swap] Transaction sent:', signature);
@@ -1141,12 +1216,8 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
           
           setLoading(false);
           
+          // Trigger parent refresh and update balances after a short delay
           setTimeout(() => {
-            setFromAmount('');
-            setToAmount('');
-            setQuote(null);
-            setSwapStatus('');
-            
             // Trigger parent refresh
             if (onSwapComplete) onSwapComplete();
             
@@ -1275,39 +1346,83 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
       }
       
       logger.log('[Swap] Processing', transactions.length, 'transaction(s)');
+      logger.log('[Swap] isHardwareWallet:', isHardwareWallet);
       logger.log('[Swap] Private key available:', !!privateKey);
 
       // Sign and send all transactions in order
       let lastSignature = null;
-      for (let i = 0; i < transactions.length; i++) {
-        const tx = transactions[i];
-        logger.log(`[Swap] Signing transaction ${i + 1}/${transactions.length}, length:`, tx.length);
-        logger.log('[Swap] Transaction preview:', tx.substring(0, 80) + '...');
+      
+      if (isHardwareWallet) {
+        // Hardware wallet signing
+        setHwStatus('Connecting to Ledger...');
         
-        try {
-          const signature = await signAndSendExternalTransaction(
-            tx,
-            privateKey,
-            networkConfig.rpcUrl
-          );
+        if (!hardwareWallet.isReady()) {
+          await hardwareWallet.connect('hid');
+          await hardwareWallet.openApp();
+        }
+        
+        for (let i = 0; i < transactions.length; i++) {
+          const tx = transactions[i];
+          logger.log(`[Swap] Signing transaction ${i + 1}/${transactions.length} with Ledger`);
           
-          logger.log(`[Swap] Transaction ${i + 1} sent! Signature:`, signature);
-          lastSignature = signature;
+          setHwStatus(`Please confirm transaction ${i + 1}/${transactions.length} on your Ledger...`);
           
-          // If there are more transactions, wait a bit for the first one to be confirmed
-          if (i < transactions.length - 1) {
-            logger.log('[Swap] Waiting for transaction to be processed before next...');
-            await new Promise(resolve => setTimeout(resolve, 2000));
+          try {
+            const signature = await signAndSendExternalTransactionHardware(
+              tx,
+              hardwareWallet,
+              networkConfig.rpcUrl
+            );
+            
+            logger.log(`[Swap] Transaction ${i + 1} sent! Signature:`, signature);
+            lastSignature = signature;
+            
+            if (i < transactions.length - 1) {
+              setHwStatus('Waiting for confirmation...');
+              await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+          } catch (txErr) {
+            logger.error(`[Swap] Transaction ${i + 1} failed:`, txErr);
+            if (i === 0 && transactions.length > 1) {
+              logger.log('[Swap] ATA creation may have failed (account might exist), trying swap transaction...');
+              continue;
+            }
+            throw txErr;
           }
-        } catch (txErr) {
-          logger.error(`[Swap] Transaction ${i + 1} failed:`, txErr);
-          // If it's the ATA creation tx and it fails, the account might already exist
-          // Try to continue with the next transaction
-          if (i === 0 && transactions.length > 1) {
-            logger.log('[Swap] ATA creation may have failed (account might exist), trying swap transaction...');
-            continue;
+        }
+        setHwStatus('');
+      } else {
+        // Software wallet signing
+        for (let i = 0; i < transactions.length; i++) {
+          const tx = transactions[i];
+          logger.log(`[Swap] Signing transaction ${i + 1}/${transactions.length}, length:`, tx.length);
+          logger.log('[Swap] Transaction preview:', tx.substring(0, 80) + '...');
+          
+          try {
+            const signature = await signAndSendExternalTransaction(
+              tx,
+              privateKey,
+              networkConfig.rpcUrl
+            );
+            
+            logger.log(`[Swap] Transaction ${i + 1} sent! Signature:`, signature);
+            lastSignature = signature;
+            
+            // If there are more transactions, wait a bit for the first one to be confirmed
+            if (i < transactions.length - 1) {
+              logger.log('[Swap] Waiting for transaction to be processed before next...');
+              await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+          } catch (txErr) {
+            logger.error(`[Swap] Transaction ${i + 1} failed:`, txErr);
+            // If it's the ATA creation tx and it fails, the account might already exist
+            // Try to continue with the next transaction
+            if (i === 0 && transactions.length > 1) {
+              logger.log('[Swap] ATA creation may have failed (account might exist), trying swap transaction...');
+              continue;
+            }
+            throw txErr;
           }
-          throw txErr;
         }
       }
       
@@ -1368,11 +1483,6 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
       
       // Reset form after success and trigger refresh
       setTimeout(() => {
-        setFromAmount('');
-        setToAmount('');
-        setQuote(null);
-        setSwapStatus('');
-        
         // Trigger parent refresh (fetches new token balances)
         if (onSwapComplete) {
           onSwapComplete();
@@ -2283,7 +2393,27 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
     <div className="screen swap-screen">
       <div className="page-header">
         <h2 className="header-title">Swap</h2>
-        <div className="header-right">
+        <div className="header-right" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button 
+            onClick={() => setShowSlippageSettings(!showSlippageSettings)}
+            title="Slippage Settings"
+            style={{
+              background: 'transparent',
+              border: 'none',
+              padding: 4,
+              cursor: 'pointer',
+              opacity: showSlippageSettings ? 1 : 0.5,
+              color: 'var(--text-muted)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
           <button 
             className="header-btn primary"
             onClick={() => setShowManageTokens(true)}
@@ -2295,6 +2425,86 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
           </button>
         </div>
       </div>
+
+      {/* Slippage Settings Dropdown */}
+      {showSlippageSettings && (
+        <div style={{
+          background: 'var(--bg-secondary)',
+          border: '1px solid var(--border-color)',
+          borderRadius: 12,
+          padding: 16,
+          marginBottom: 16
+        }}>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Slippage Tolerance</div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+            {slippageOptions.map(opt => (
+              <button
+                key={opt}
+                onClick={() => {
+                  setSlippage(opt);
+                  setCustomSlippage('');
+                }}
+                style={{
+                  flex: 1,
+                  padding: '8px 12px',
+                  borderRadius: 8,
+                  border: slippage === opt && !customSlippage ? '2px solid var(--x1-blue)' : '1px solid var(--border-color)',
+                  background: slippage === opt && !customSlippage ? 'rgba(2, 116, 251, 0.1)' : 'var(--bg-tertiary)',
+                  color: 'var(--text-primary)',
+                  fontSize: 13,
+                  fontWeight: 500,
+                  cursor: 'pointer'
+                }}
+              >
+                {opt}%
+              </button>
+            ))}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Custom:</span>
+            <input
+              type="number"
+              value={customSlippage}
+              onChange={(e) => {
+                const val = e.target.value;
+                setCustomSlippage(val);
+                if (val && parseFloat(val) > 0 && parseFloat(val) <= 50) {
+                  setSlippage(parseFloat(val));
+                }
+              }}
+              placeholder="0.5"
+              style={{
+                flex: 1,
+                padding: '8px 12px',
+                borderRadius: 8,
+                border: customSlippage ? '2px solid var(--x1-blue)' : '1px solid var(--border-color)',
+                background: 'var(--bg-tertiary)',
+                color: 'var(--text-primary)',
+                fontSize: 13,
+                outline: 'none'
+              }}
+            />
+            <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>%</span>
+          </div>
+          {slippage > 5 && (
+            <div style={{ 
+              marginTop: 8, 
+              fontSize: 12, 
+              color: '#ff9500',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4
+            }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                <line x1="12" y1="9" x2="12" y2="13" />
+                <line x1="12" y1="17" x2="12.01" y2="17" />
+              </svg>
+              High slippage may result in unfavorable trades
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="slide-panel-content">
         {/* Loading state when wallet is not ready */}
@@ -2436,28 +2646,9 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
           </div>
         </div>
 
-        <button 
-          className="btn-primary"
-          onClick={showSwapConfirm}
-          disabled={loading || quoteLoading || !fromAmount || parseFloat(fromAmount) <= 0 || (!isWrapOperation && !quote)}
-          style={{ marginTop: 20, marginBottom: 16, width: '100%' }}
-        >
-          {loading ? (
-            swapStatus === 'confirming' ? 'Confirming...' : 'Processing...'
-          ) : quoteLoading ? (
-            'Getting Quote...'
-          ) : !quote && !isWrapOperation && fromAmount ? (
-            'No Route Found'
-          ) : isWrapOperation ? (
-            `${wrapDirection === 'wrap' ? 'Wrap' : 'Unwrap'} XNT`
-          ) : (
-            'Review Swap'
-          )}
-        </button>
-
-        {/* Swap Details - Below button */}
+        {/* Swap Details - Above button */}
         {quote && fromAmount && toAmount && (
-          <div className="swap-details">
+          <div className="swap-details" style={{ marginTop: 16 }}>
             {/* Stats Row */}
             <div style={{
               display: 'grid',
@@ -2483,18 +2674,95 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
                 <div style={{ 
                   fontSize: 11, 
                   fontWeight: 500,
-                  color: isWrapOperation ? '#34c759' : (quote?.data?.priceImpactPct || quote?.priceImpact || 0) > 0.03 ? '#ff3b30' : '#34c759'
+                  color: (() => {
+                    if (isWrapOperation) return '#34c759';
+                    
+                    // Only calculate 1:1 impact for pegged pairs (XNT/WXNT, XNT/pXNT, WXNT/pXNT)
+                    const xntVariants = ['XNT', 'WXNT', 'pXNT'];
+                    const fromIsXntVariant = xntVariants.includes(fromToken?.symbol);
+                    const toIsXntVariant = xntVariants.includes(toToken?.symbol);
+                    const isPeggedPair = fromIsXntVariant && toIsXntVariant;
+                    
+                    let impact = 0;
+                    if (isPeggedPair) {
+                      // For pegged pairs, impact is deviation from 1:1
+                      const actualRate = parseFloat(toAmount) / parseFloat(fromAmount);
+                      if (actualRate > 0) {
+                        impact = Math.abs(1 - actualRate);
+                      }
+                    } else {
+                      // For non-pegged pairs, use API price impact (includes fees/slippage)
+                      let apiImpact = quote?.data?.priceImpactPct || quote?.priceImpact || quote?.data?.price_impact || 0;
+                      // API returns as percentage (e.g., 2.38 for 2.38%)
+                      if (apiImpact > 0) {
+                        impact = apiImpact / 100;
+                      }
+                    }
+                    
+                    // Green (<1%), orange (1-5%), red (>5%)
+                    if (impact < 0.01) return '#34c759';
+                    if (impact < 0.05) return '#ff9500';
+                    return '#ff3b30';
+                  })()
                 }}>
-                  {isWrapOperation ? '0%' : `${((quote?.data?.priceImpactPct || quote?.priceImpact || 0) * 100).toFixed(2)}%`}
+                  {(() => {
+                    if (isWrapOperation) return '0%';
+                    
+                    // Only calculate 1:1 impact for pegged pairs (XNT/WXNT, XNT/pXNT, WXNT/pXNT)
+                    const xntVariants = ['XNT', 'WXNT', 'pXNT'];
+                    const fromIsXntVariant = xntVariants.includes(fromToken?.symbol);
+                    const toIsXntVariant = xntVariants.includes(toToken?.symbol);
+                    const isPeggedPair = fromIsXntVariant && toIsXntVariant;
+                    
+                    let impact = 0;
+                    if (isPeggedPair) {
+                      // For pegged pairs, impact is deviation from 1:1
+                      const actualRate = parseFloat(toAmount) / parseFloat(fromAmount);
+                      if (actualRate > 0) {
+                        impact = Math.abs(1 - actualRate);
+                      }
+                    } else {
+                      // For non-pegged pairs, use API price impact (includes fees/slippage)
+                      let apiImpact = quote?.data?.priceImpactPct || quote?.priceImpact || quote?.data?.price_impact || 0;
+                      // API returns as percentage (e.g., 2.38 for 2.38%)
+                      if (apiImpact > 0) {
+                        impact = apiImpact / 100;
+                      }
+                    }
+                    
+                    return `${(impact * 100).toFixed(2)}%`;
+                  })()}
                 </div>
               </div>
               <div style={{ textAlign: 'center', borderLeft: '1px solid var(--border-color)' }}>
                 <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>Est. Gas</div>
                 <div style={{ fontSize: 11, fontWeight: 500 }}>~0.0002 {nativeSymbol}</div>
               </div>
-              <div style={{ textAlign: 'center', borderLeft: '1px solid var(--border-color)' }}>
+              <div 
+                style={{ 
+                  textAlign: 'center', 
+                  borderLeft: '1px solid var(--border-color)',
+                  cursor: isWrapOperation ? 'default' : 'pointer'
+                }}
+                onClick={() => !isWrapOperation && setShowSlippageSettings(true)}
+                title={isWrapOperation ? '' : 'Click to change slippage'}
+              >
                 <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>Slippage</div>
-                <div style={{ fontSize: 11, fontWeight: 500 }}>{isWrapOperation ? 'N/A' : `${slippage}%`}</div>
+                <div style={{ 
+                  fontSize: 11, 
+                  fontWeight: 500,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 4
+                }}>
+                  {isWrapOperation ? 'N/A' : `${slippage}%`}
+                  {!isWrapOperation && (
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                    </svg>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -2557,9 +2825,25 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
           </div>
         )}
 
-        {/* Powered by */}
-        <div style={{ textAlign: 'center', marginTop: 16, fontSize: 12, color: 'var(--text-muted)' }}>
-          Powered by {provider}
+        {/* Review Button */}
+        <div className="send-bottom-action">
+          <button 
+            className="btn-primary"
+            onClick={showSwapConfirm}
+            disabled={loading || quoteLoading || !fromAmount || parseFloat(fromAmount) <= 0 || (!isWrapOperation && !quote)}
+          >
+            {loading ? (
+              swapStatus === 'confirming' ? 'Confirming...' : 'Processing...'
+            ) : quoteLoading ? (
+              'Getting Quote...'
+            ) : !quote && !isWrapOperation && fromAmount ? (
+              'No Route Found'
+            ) : isWrapOperation ? (
+              `${wrapDirection === 'wrap' ? 'Wrap' : 'Unwrap'} XNT`
+            ) : (
+              'Review Swap'
+            )}
+          </button>
         </div>
           </>
         )}

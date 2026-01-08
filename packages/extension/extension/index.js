@@ -2,7 +2,7 @@ var __defProp = Object.defineProperty;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 import { g as getDefaultExportFromCjs } from "./popup.js";
-import { S as StatusCodes, T as TransportError, e as TransportStatusError, f as TransportRaceCondition } from "./index2.js";
+import { S as StatusCodes, a as TransportError, e as TransportStatusError, f as TransportRaceCondition } from "./index2.js";
 var events = { exports: {} };
 var R = typeof Reflect === "object" ? Reflect : null;
 var ReflectApply = R && typeof R.apply === "function" ? R.apply : function ReflectApply2(target, receiver, args) {
@@ -2578,8 +2578,8 @@ const getBluetoothServiceUuids = () => bluetoothServices;
 const getInfosForServiceUuid = (uuid) => serviceUuidToInfos[uuid.toLowerCase()];
 export {
   Transport as T,
-  getInfosForServiceUuid as a,
-  ledgerUSBVendorId as b,
+  ledgerUSBVendorId as a,
+  getInfosForServiceUuid as b,
   getBluetoothServiceUuids as g,
   identifyUSBProductId as i,
   log as l,

@@ -10,12 +10,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@x1-wallet/core": "workspace:*",
-    "@ledgerhq/hw-app-solana": "^7.6.0",
+    "@ledgerhq/hw-app-solana": "^7.6.2",
     "@ledgerhq/hw-transport-web-ble": "^6.29.13",
     "@ledgerhq/hw-transport-webhid": "^6.29.13",
     "@ledgerhq/hw-transport-webusb": "^6.29.13",
+    "@x1-wallet/core": "workspace:*",
     "buffer": "^6.0.3",
+    "qrcode": "^1.5.4",
     "qrcode-generator": "^2.0.4",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"

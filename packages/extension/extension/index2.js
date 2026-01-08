@@ -168,11 +168,11 @@ class LockedDeviceError extends TransportStatusError {
 }
 addCustomErrorDeserializer("TransportStatusError", (e) => new TransportStatusError(e.statusCode));
 export {
-  DisconnectedDevice as D,
+  DisconnectedDeviceDuringOperation as D,
   StatusCodes as S,
-  TransportError as T,
-  TransportOpenUserCancelled as a,
-  DisconnectedDeviceDuringOperation as b,
+  TransportOpenUserCancelled as T,
+  TransportError as a,
+  DisconnectedDevice as b,
   TransportWebUSBGestureRequired as c,
   TransportInterfaceNotAvailable as d,
   TransportStatusError as e,

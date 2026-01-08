@@ -1,15 +1,15 @@
 import { l as logger } from "./popup.js";
-const API_SERVER = "https://mobile-api.x1.xyz";
-const TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
-const TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
-const METADATA_PROGRAM_ID = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
+const XDEX_LP_MINT_AUTHORITY = "9Dpjw2pB5kXJr6ZTHiqzEMfJPic3om9jgNacnwpLCoaU";
+const XLP_LOGO_URL = "https://xdex.s3.us-east-2.amazonaws.com/tokens/48-xlp.png";
 const KNOWN_TOKENS = {
+  // === Native/Wrapped Tokens ===
   "So11111111111111111111111111111111111111112": {
     symbol: "SOL",
     name: "Wrapped SOL",
     decimals: 9,
     logoURI: "https://xdex.s3.us-east-2.amazonaws.com/vimages/solana.png"
   },
+  // === Stablecoins ===
   "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
     symbol: "USDC",
     name: "USD Coin",
@@ -22,12 +22,31 @@ const KNOWN_TOKENS = {
     decimals: 6,
     logoURI: "https://cryptologos.cc/logos/tether-usdt-logo.png"
   },
+  "B69chRzqzDCmdB5WYB8NRu5Yv5ZA95ABiZcdzCgGm9Tq": {
+    symbol: "USDC.X",
+    name: "USDC X1",
+    decimals: 6,
+    logoURI: "https://x1logos.s3.us-east-1.amazonaws.com/48-usdcx.png",
+    isToken2022: true,
+    price: 1
+  },
+  // === Liquid Staking Tokens ===
   "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So": {
     symbol: "mSOL",
     name: "Marinade staked SOL",
     decimals: 9,
     logoURI: "https://raw.githubusercontent.com/marinade-finance/msol-logo/main/msol-logo.png"
   },
+  "pXNTyoqQsskHdZ7Q1rnP25FEyHHjissbs7n6RRN2nP5": {
+    symbol: "pXNT",
+    name: "Staked XNT",
+    decimals: 9,
+    logoURI: "https://x1logos.s3.us-east-1.amazonaws.com/48-pxnt.png",
+    isToken2022: false,
+    isStakePoolToken: true,
+    price: 1
+  },
+  // === Popular Tokens ===
   "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263": {
     symbol: "BONK",
     name: "Bonk",
@@ -46,21 +65,12 @@ const KNOWN_TOKENS = {
     decimals: 8,
     logoURI: "https://cryptologos.cc/logos/ethereum-eth-logo.png"
   },
-  "B69chRzqzDCmdB5WYB8NRu5Yv5ZA95ABiZcdzCgGm9Tq": {
-    symbol: "USDC.X",
-    name: "USDC X1",
-    decimals: 6,
-    logoURI: "https://cryptologos.cc/logos/usd-coin-usdc-logo.png",
-    isToken2022: true,
-    price: 1
-  },
-  "pXNTyoqQsskHdZ7Q1rnP25FEyHHjissbs7n6RRN2nP5": {
-    symbol: "pXNT",
-    name: "Staked XNT",
+  // === X1 Ecosystem Tokens ===
+  "DohWBfvXER6qs8zFGtdZRDpgbHmm97ZZwgCUTCdtHQNT": {
+    symbol: "MIND",
+    name: "Mind",
     decimals: 9,
-    logoURI: "https://x1logos.s3.us-east-1.amazonaws.com/48-pxnt.png",
-    isToken2022: false,
-    isStakePoolToken: true
+    logoURI: "https://xdex.s3.us-east-2.amazonaws.com/tokens/mind-48.png"
   }
 };
 const NETWORK_TOKEN_OVERRIDES = {
@@ -146,6 +156,99 @@ function getKnownTokenMetadata(mint, network) {
   }
   return KNOWN_TOKENS[mint] || null;
 }
+const API_SERVER = "https://mobile-api.x1.xyz";
+const TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+const METADATA_PROGRAM_ID = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
+class RateLimiter {
+  constructor(maxRequests = 5, windowMs = 1e3) {
+    this.maxRequests = maxRequests;
+    this.windowMs = windowMs;
+    this.requests = [];
+  }
+  async acquire() {
+    const now = Date.now();
+    this.requests = this.requests.filter((time) => now - time < this.windowMs);
+    if (this.requests.length >= this.maxRequests) {
+      const waitTime = this.windowMs - (now - this.requests[0]) + 10;
+      await new Promise((resolve) => setTimeout(resolve, waitTime));
+      return this.acquire();
+    }
+    this.requests.push(now);
+    return true;
+  }
+}
+const xdexRateLimiter = new RateLimiter(5, 1e3);
+const failedRequestsCache = /* @__PURE__ */ new Map();
+const FAILED_CACHE_TTL = 5 * 60 * 1e3;
+function hasRecentlyFailed(key) {
+  const failedAt = failedRequestsCache.get(key);
+  if (!failedAt) return false;
+  if (Date.now() - failedAt > FAILED_CACHE_TTL) {
+    failedRequestsCache.delete(key);
+    return false;
+  }
+  return true;
+}
+function markFailed(key) {
+  failedRequestsCache.set(key, Date.now());
+}
+function clearFailed(key) {
+  failedRequestsCache.delete(key);
+}
+async function fetchWithRateLimit(url, options = {}) {
+  await xdexRateLimiter.acquire();
+  return fetch(url, options);
+}
+const mintAuthorityCache = /* @__PURE__ */ new Map();
+const MINT_AUTHORITY_CACHE_TTL = 30 * 60 * 1e3;
+async function fetchMintAuthority(rpcUrl, mintAddress) {
+  var _a, _b, _c, _d, _e;
+  const cacheKey = `${rpcUrl}:${mintAddress}`;
+  const cached = mintAuthorityCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < MINT_AUTHORITY_CACHE_TTL) {
+    return cached.authority;
+  }
+  try {
+    const response = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getAccountInfo",
+        params: [
+          mintAddress,
+          { encoding: "jsonParsed" }
+        ]
+      })
+    });
+    const data = await response.json();
+    const mintAuthority = ((_e = (_d = (_c = (_b = (_a = data == null ? void 0 : data.result) == null ? void 0 : _a.value) == null ? void 0 : _b.data) == null ? void 0 : _c.parsed) == null ? void 0 : _d.info) == null ? void 0 : _e.mintAuthority) || null;
+    mintAuthorityCache.set(cacheKey, { authority: mintAuthority, timestamp: Date.now() });
+    return mintAuthority;
+  } catch (e) {
+    logger.warn("[Tokens] Failed to fetch mint authority:", e.message);
+    return null;
+  }
+}
+async function checkAndApplyLPBranding(rpcUrl, token, network) {
+  if (!(network == null ? void 0 : network.includes("X1"))) return false;
+  try {
+    const mintAuthority = await fetchMintAuthority(rpcUrl, token.mint);
+    if (mintAuthority === XDEX_LP_MINT_AUTHORITY) {
+      token.symbol = "XLP";
+      token.name = "XDEX LP Token";
+      token.logoURI = XLP_LOGO_URL;
+      token.isLPToken = true;
+      logger.log(`[Tokens] Detected XDEX LP token: ${token.mint}`);
+      return true;
+    }
+  } catch (e) {
+    logger.warn("[Tokens] LP token check failed:", e.message);
+  }
+  return false;
+}
 const metadataCache = /* @__PURE__ */ new Map();
 async function fetchTokenMetadataFromAPI(mint) {
   try {
@@ -227,21 +330,28 @@ async function fetchFromDAS(rpcUrl, mint) {
     return null;
   }
 }
-async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null) {
+async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null, onUpdate = null) {
+  var _a, _b;
   const tokens = [];
   const startTime = Date.now();
   try {
-    logger.log("[Tokens] Starting token fetch for:", ownerAddress);
-    const [splTokens, token2022] = await Promise.all([
+    logger.log("[Tokens] Starting token fetch for:", ownerAddress, "on network:", network);
+    const [splTokens, token2022, xdexPrices] = await Promise.all([
       fetchTokenAccountsByProgram(rpcUrl, ownerAddress, TOKEN_PROGRAM_ID),
-      fetchTokenAccountsByProgram(rpcUrl, ownerAddress, TOKEN_2022_PROGRAM_ID)
+      fetchTokenAccountsByProgram(rpcUrl, ownerAddress, TOKEN_2022_PROGRAM_ID),
+      fetchXDEXWalletTokens(ownerAddress, network)
     ]);
     logger.log("[Tokens] RPC done in", Date.now() - startTime, "ms - SPL:", splTokens.length, "Token2022:", token2022.length);
+    logger.log("[Tokens] XDEX prices received for", Object.keys(xdexPrices).length, "tokens");
     tokens.push(...splTokens, ...token2022);
     for (const token of tokens) {
       const cacheKey = network ? `${network}:${token.mint}` : token.mint;
       if (metadataCache.has(cacheKey)) {
-        Object.assign(token, metadataCache.get(cacheKey));
+        const cached = metadataCache.get(cacheKey);
+        Object.assign(token, cached);
+        if (((_a = xdexPrices[token.mint]) == null ? void 0 : _a.price) !== void 0) {
+          token.price = parseFloat(xdexPrices[token.mint].price);
+        }
         continue;
       }
       const known = getKnownTokenMetadata(token.mint, network);
@@ -249,8 +359,30 @@ async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null) {
         token.symbol = known.symbol;
         token.name = known.name;
         token.logoURI = known.logoURI;
-        metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI });
+        token.price = known.price;
+        if (((_b = xdexPrices[token.mint]) == null ? void 0 : _b.price) !== void 0) {
+          token.price = parseFloat(xdexPrices[token.mint].price);
+        }
+        metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
         continue;
+      }
+      if (xdexPrices[token.mint]) {
+        const xdexData = xdexPrices[token.mint];
+        if (xdexData.price !== void 0 && xdexData.price !== null) {
+          token.price = parseFloat(xdexData.price);
+        }
+        if (xdexData.symbol) token.symbol = xdexData.symbol;
+        if (xdexData.name) token.name = xdexData.name;
+        if (xdexData.image) token.logoURI = xdexData.image;
+        if (xdexData.symbol && xdexData.name && xdexData.image) {
+          metadataCache.set(cacheKey, {
+            symbol: token.symbol,
+            name: token.name,
+            logoURI: token.logoURI,
+            price: token.price
+          });
+          continue;
+        }
       }
       if (!token.symbol) {
         token.symbol = token.mint ? token.mint.slice(0, 4).toUpperCase() : "UNK";
@@ -259,22 +391,115 @@ async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null) {
         token.name = token.isToken2022 ? "Token-2022" : "SPL Token";
       }
     }
-    logger.log("[Tokens] Cache pass done in", Date.now() - startTime, "ms");
-    const tokensNeedingMetadata = tokens.filter((t) => !metadataCache.has(network ? `${network}:${t.mint}` : t.mint));
+    logger.log("[Tokens] Quick pass done in", Date.now() - startTime, "ms - RETURNING IMMEDIATELY");
+    const tokensNeedingMetadata = tokens.filter((t) => {
+      const cacheKey = network ? `${network}:${t.mint}` : t.mint;
+      if (!metadataCache.has(cacheKey)) return true;
+      const cached = metadataCache.get(cacheKey);
+      return !cached.logoURI;
+    });
     if (tokensNeedingMetadata.length > 0) {
-      logger.log("[Tokens] Fetching metadata for", tokensNeedingMetadata.length, "tokens");
-      await Promise.allSettled(tokensNeedingMetadata.map(async (token) => {
+      logger.log("[Tokens] Will enrich", tokensNeedingMetadata.length, "tokens in background");
+      (async () => {
         try {
-          await enrichTokenMetadata(rpcUrl, token, network);
+          const batchSize = 5;
+          let updated = false;
+          for (let i = 0; i < tokensNeedingMetadata.length; i += batchSize) {
+            const batch = tokensNeedingMetadata.slice(i, i + batchSize);
+            await Promise.allSettled(batch.map(async (token) => {
+              try {
+                await enrichTokenMetadata(rpcUrl, token, network);
+                updated = true;
+              } catch (e) {
+                logger.warn("[Tokens] Failed to enrich metadata for", token.mint, e.message);
+              }
+            }));
+            if (updated && onUpdate) {
+              onUpdate([...tokens]);
+              updated = false;
+            }
+            if (i + batchSize < tokensNeedingMetadata.length) {
+              await new Promise((r) => setTimeout(r, 100));
+            }
+          }
+          if (onUpdate) {
+            onUpdate([...tokens]);
+          }
+          logger.log("[Tokens] Background enrichment complete in", Date.now() - startTime, "ms");
         } catch (e) {
+          logger.warn("[Tokens] Background enrichment error:", e);
         }
-      }));
+      })();
     }
-    logger.log("[Tokens] Total time:", Date.now() - startTime, "ms");
+    logger.log("[Tokens] Returning", tokens.length, "tokens");
     return tokens;
   } catch (e) {
     logger.error("[Tokens] Error fetching token accounts:", e);
     return [];
+  }
+}
+async function fetchXDEXWalletTokens(walletAddress, network) {
+  var _a;
+  try {
+    const networkName = network || "X1 Mainnet";
+    const url = `https://devapi.xdex.xyz/api/xendex/wallet/tokens?wallet_address=${walletAddress}&network=${encodeURIComponent(networkName)}&price=true`;
+    logger.log("[XDEX] Fetching wallet tokens with prices:", url);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5e3);
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: { "Accept": "application/json" }
+    });
+    clearTimeout(timeout);
+    if (!response.ok) {
+      logger.warn("[XDEX] Wallet tokens API returned:", response.status);
+      return {};
+    }
+    const data = await response.json();
+    const tokenList = ((_a = data == null ? void 0 : data.data) == null ? void 0 : _a.tokens) || (data == null ? void 0 : data.tokens) || (Array.isArray(data) ? data : []);
+    logger.log("[XDEX] Wallet tokens response - count:", tokenList.length);
+    if (tokenList[0]) {
+      logger.log("[XDEX] Sample token fields:", Object.keys(tokenList[0]).join(", "));
+    }
+    const priceMap = {};
+    const extractPrice = (token) => {
+      const priceValue = token.price ?? token.priceUsd ?? token.price_usd ?? token.priceUSD ?? token.usdPrice ?? token.usd_price ?? token.tokenPrice ?? token.token_price ?? null;
+      if (priceValue !== null && priceValue !== void 0) {
+        const parsed = parseFloat(priceValue);
+        if (!isNaN(parsed) && parsed >= 0) {
+          return parsed;
+        }
+      }
+      return null;
+    };
+    for (const token of tokenList) {
+      if (token.mint || token.address) {
+        const mint = token.mint || token.address;
+        const price = extractPrice(token);
+        let imageUrl = token.imageUrl || token.image || token.logo || token.logoURI || token.icon;
+        if (imageUrl && !imageUrl.startsWith("http")) {
+          imageUrl = null;
+        }
+        priceMap[mint] = {
+          price,
+          symbol: token.symbol,
+          name: token.name,
+          image: imageUrl
+        };
+        if (price !== null) {
+          logger.log("[XDEX] Price found for", token.symbol || mint.slice(0, 8), ":", price);
+        }
+      }
+    }
+    logger.log("[XDEX] Total prices extracted:", Object.values(priceMap).filter((p) => p.price !== null).length);
+    return priceMap;
+  } catch (e) {
+    if (e.name === "AbortError") {
+      logger.warn("[XDEX] Wallet tokens request timeout");
+    } else {
+      logger.warn("[XDEX] Failed to fetch wallet tokens:", e.message);
+    }
+    return {};
   }
 }
 async function fetchTokenAccountsByProgram(rpcUrl, ownerAddress, programId) {
@@ -316,7 +541,6 @@ async function fetchTokenAccountsByProgram(rpcUrl, ownerAddress, programId) {
         return [];
       }
       const data = await response.json();
-      logger.log("[Tokens] RPC response:", JSON.stringify(data).slice(0, 500));
       if (data.error) {
         logger.warn("[Tokens] RPC error fetching tokens:", data.error, `(attempt ${attempt}/${maxRetries})`);
         lastError = data.error;
@@ -382,6 +606,11 @@ async function enrichTokenMetadata(rpcUrl, token, network = null) {
     metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
     return;
   }
+  const isLP = await checkAndApplyLPBranding(rpcUrl, token, network);
+  if (isLP) {
+    metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, isLPToken: true });
+    return;
+  }
   let apiMetadata = null;
   try {
     apiMetadata = await fetchTokenMetadataFromAPI(token.mint);
@@ -390,30 +619,13 @@ async function enrichTokenMetadata(rpcUrl, token, network = null) {
       token.name = apiMetadata.name;
       token.logoURI = apiMetadata.logoURI;
       token.price = apiMetadata.price || null;
-      metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
-      return;
-    }
-  } catch (e) {
-    logger.warn("Failed to fetch from X1 Mobile API:", e);
-  }
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 2e3);
-    const explorerResponse = await fetch("https://explorer.mainnet.x1.xyz/api/v2/addresses/" + token.mint, {
-      signal: controller.signal
-    });
-    clearTimeout(timeout);
-    if (explorerResponse.ok) {
-      const explorerData = await explorerResponse.json();
-      if (explorerData.token && explorerData.token.name) {
-        token.symbol = explorerData.token.symbol || token.mint.slice(0, 4);
-        token.name = explorerData.token.name;
-        token.logoURI = explorerData.token.icon_url || explorerData.token.image || null;
-        metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI });
+      if (token.price !== null && token.price !== void 0) {
+        metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
         return;
       }
     }
   } catch (e) {
+    logger.warn("Failed to fetch from X1 Mobile API:", e);
   }
   if (token.isToken2022) {
     try {
@@ -442,7 +654,7 @@ async function enrichTokenMetadata(rpcUrl, token, network = null) {
     if (metaplexData) {
       token.symbol = (apiMetadata == null ? void 0 : apiMetadata.symbol) || metaplexData.symbol || token.mint.slice(0, 4);
       token.name = (apiMetadata == null ? void 0 : apiMetadata.name) || metaplexData.name || "Unknown Token";
-      token.logoURI = metaplexData.uri || null;
+      token.logoURI = null;
       token.price = (apiMetadata == null ? void 0 : apiMetadata.price) || null;
       if (metaplexData.uri && metaplexData.uri.startsWith("http")) {
         try {
@@ -482,21 +694,70 @@ async function enrichTokenMetadata(rpcUrl, token, network = null) {
     logger.warn("Failed to fetch from DAS API:", e);
   }
   try {
-    logger.log("[Token API] Trying XDEX API for:", token.mint);
-    const xdexResponse = await fetch("https://api.xdex.xyz/api/xendex/tokens/" + token.mint);
-    if (xdexResponse.ok) {
-      const xdexData = await xdexResponse.json();
-      logger.log("[Token API] XDEX response:", xdexData);
-      if (xdexData.name) {
-        token.symbol = xdexData.symbol || token.mint.slice(0, 4);
-        token.name = xdexData.name;
-        token.logoURI = xdexData.image || xdexData.logo || xdexData.logoURI || xdexData.icon || null;
-        metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3e3);
+    const jupiterResponse = await fetch(`https://lite-api.jup.ag/tokens/v1/token/${token.mint}`, {
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    if (jupiterResponse.ok) {
+      const jupiterData = await jupiterResponse.json();
+      if (jupiterData && jupiterData.name) {
+        token.symbol = jupiterData.symbol || token.mint.slice(0, 4);
+        token.name = jupiterData.name;
+        token.logoURI = jupiterData.logoURI || null;
+        metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
         return;
       }
     }
   } catch (e) {
-    logger.warn("[Token API] XDEX API failed:", e.message);
+  }
+  const xdexCacheKey = `xdex:${token.mint}`;
+  if (!hasRecentlyFailed(xdexCacheKey)) {
+    try {
+      logger.log("[Token API] Trying XDEX API for:", token.mint);
+      const xdexResponse = await fetchWithRateLimit(
+        "https://api.xdex.xyz/api/xendex/tokens/" + token.mint,
+        { signal: AbortSignal.timeout(5e3) }
+      );
+      if (xdexResponse.status === 429) {
+        logger.warn("[Token API] XDEX rate limited for:", token.mint);
+        markFailed(xdexCacheKey);
+      } else if (xdexResponse.status === 404) {
+        markFailed(xdexCacheKey);
+      } else if (xdexResponse.ok) {
+        clearFailed(xdexCacheKey);
+        const xdexData = await xdexResponse.json();
+        logger.log("[Token API] XDEX response:", xdexData);
+        let xdexPrice = null;
+        if (xdexData.price !== void 0 && xdexData.price !== null) {
+          xdexPrice = parseFloat(xdexData.price);
+        } else if (xdexData.priceUsd !== void 0 && xdexData.priceUsd !== null) {
+          xdexPrice = parseFloat(xdexData.priceUsd);
+        }
+        if (token.name && token.name !== "Unknown Token" && token.logoURI) {
+          if (xdexPrice !== null && (token.price === null || token.price === void 0)) {
+            token.price = xdexPrice;
+            logger.log("[Token API] Got price from XDEX:", xdexPrice, "for", token.symbol);
+          }
+          metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
+          return;
+        }
+        if (xdexData.name) {
+          token.symbol = xdexData.symbol || token.symbol || token.mint.slice(0, 4);
+          token.name = xdexData.name;
+          token.logoURI = xdexData.image || xdexData.logo || xdexData.logoURI || xdexData.icon || token.logoURI || null;
+          if (xdexPrice !== null) {
+            token.price = xdexPrice;
+          }
+          metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
+          return;
+        }
+      }
+    } catch (e) {
+      logger.warn("[Token API] XDEX API failed:", e.message);
+      markFailed(xdexCacheKey);
+    }
   }
   if (apiMetadata && apiMetadata.name) {
     token.symbol = apiMetadata.symbol || token.mint.slice(0, 4);
@@ -510,44 +771,6 @@ async function enrichTokenMetadata(rpcUrl, token, network = null) {
   token.name = "Unknown Token";
   token.logoURI = null;
   metadataCache.set(token.mint, { symbol: token.symbol, name: token.name, logoURI: null });
-}
-async function fetchToken2022Metadata(rpcUrl, mint) {
-  var _a, _b, _c, _d;
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3e3);
-    const response = await fetch(rpcUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "getAccountInfo",
-        params: [mint, { encoding: "jsonParsed" }]
-      }),
-      signal: controller.signal
-    });
-    clearTimeout(timeout);
-    const data = await response.json();
-    if (!((_d = (_c = (_b = (_a = data.result) == null ? void 0 : _a.value) == null ? void 0 : _b.data) == null ? void 0 : _c.parsed) == null ? void 0 : _d.info)) return null;
-    const info = data.result.value.data.parsed.info;
-    if (info.extensions) {
-      for (const ext of info.extensions) {
-        if (ext.extension === "tokenMetadata") {
-          const state = ext.state;
-          return {
-            name: state.name || null,
-            symbol: state.symbol || null,
-            uri: state.uri || null
-          };
-        }
-      }
-    }
-    return null;
-  } catch (e) {
-    logger.warn("Error fetching Token-2022 metadata:", e);
-    return null;
-  }
 }
 async function fetchMetaplexMetadata(rpcUrl, mint) {
   var _a;
@@ -605,6 +828,44 @@ function parseMetaplexMetadata(data) {
     return { name, symbol, uri };
   } catch (e) {
     logger.warn("Error parsing metadata:", e);
+    return null;
+  }
+}
+async function fetchToken2022Metadata(rpcUrl, mint) {
+  var _a, _b, _c, _d;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3e3);
+    const response = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getAccountInfo",
+        params: [mint, { encoding: "jsonParsed" }]
+      }),
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    const data = await response.json();
+    if (!((_d = (_c = (_b = (_a = data.result) == null ? void 0 : _a.value) == null ? void 0 : _b.data) == null ? void 0 : _c.parsed) == null ? void 0 : _d.info)) return null;
+    const info = data.result.value.data.parsed.info;
+    if (info.extensions) {
+      for (const ext of info.extensions) {
+        if (ext.extension === "tokenMetadata") {
+          const state = ext.state;
+          return {
+            name: state.name || null,
+            symbol: state.symbol || null,
+            uri: state.uri || null
+          };
+        }
+      }
+    }
+    return null;
+  } catch (e) {
+    logger.warn("Error fetching Token-2022 metadata:", e);
     return null;
   }
 }

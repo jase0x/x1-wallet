@@ -40,21 +40,32 @@
     "storage",
     "clipboardWrite",
     "clipboardRead",
-    "sidePanel",
-    "activeTab"
+    "sidePanel"
   ],
   "host_permissions": [
     "https://rpc.mainnet.x1.xyz/*",
     "https://rpc.testnet.x1.xyz/*",
     "https://api.xdex.xyz/*",
+    "https://api.xdex.xyz/*",
+    "https://devapi.xdex.xyz/*",
     "https://devapi.xdex.xyz/*",
     "https://mobile-api.x1.xyz/*",
     "https://core.x1.xyz/*",
     "https://core.xdex.xyz/*",
+    "https://mint.xdex.xyz/*",
+    "https://ipfs.io/*",
+    "https://gateway.pinata.cloud/*",
     "https://api.mainnet-beta.solana.com/*",
     "https://api.devnet.solana.com/*",
     "https://jessamine-463apc-fast-mainnet.helius-rpc.com/*",
-    "https://rose-l3rk46-fast-devnet.helius-rpc.com/*"
+    "https://rose-l3rk46-fast-devnet.helius-rpc.com/*",
+    "https://lite-api.jup.ag/*",
+    "https://api.jup.ag/*",
+    "https://tokens.jup.ag/*",
+    "https://arweave.net/*",
+    "https://static.jup.ag/*",
+    "https://*.helius-rpc.com/*",
+    "https://raw.githubusercontent.com/*"
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"

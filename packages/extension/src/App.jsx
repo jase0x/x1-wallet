@@ -29,6 +29,99 @@ const storage = {
   set: (key, value) => localStorage.setItem(`x1wallet_${key}`, JSON.stringify(value))
 };
 
+// Alert Modal Component - Styled to match app design
+function AlertModal({ title, message, onClose, type = 'error' }) {
+  if (!message) return null;
+  
+  const iconColor = type === 'error' ? 'var(--error)' : type === 'warning' ? 'var(--warning)' : 'var(--x1-blue)';
+  
+  return (
+    <div className="alert-modal-overlay" onClick={onClose}>
+      <div className="alert-modal-content" onClick={e => e.stopPropagation()}>
+        <div className="alert-modal-icon">
+          {type === 'error' ? (
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke={iconColor} strokeWidth="2">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="15" y1="9" x2="9" y2="15" />
+              <line x1="9" y1="9" x2="15" y2="15" />
+            </svg>
+          ) : type === 'warning' ? (
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke={iconColor} strokeWidth="2">
+              <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+            </svg>
+          ) : (
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke={iconColor} strokeWidth="2">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="16" x2="12" y2="12" />
+              <line x1="12" y1="8" x2="12.01" y2="8" />
+            </svg>
+          )}
+        </div>
+        <h3 className="alert-modal-title">{title || (type === 'error' ? 'Error' : type === 'warning' ? 'Warning' : 'Notice')}</h3>
+        <p className="alert-modal-message">{message}</p>
+        <button className="btn-primary alert-modal-btn" onClick={onClose}>
+          OK
+        </button>
+      </div>
+      <style>{`
+        .alert-modal-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(0,0,0,0.75);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 9999;
+          padding: 20px;
+          animation: fadeIn 0.15s ease-out;
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes slideUp {
+          from { opacity: 0; transform: translateY(20px) scale(0.95); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        .alert-modal-content {
+          background: var(--bg-secondary);
+          border-radius: 20px;
+          width: 100%;
+          max-width: 320px;
+          padding: 32px 24px 24px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          text-align: center;
+          box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+          animation: slideUp 0.2s ease-out;
+        }
+        .alert-modal-icon {
+          margin-bottom: 16px;
+        }
+        .alert-modal-title {
+          margin: 0 0 8px 0;
+          font-size: 18px;
+          font-weight: 600;
+          color: var(--text-primary);
+        }
+        .alert-modal-message {
+          margin: 0 0 24px 0;
+          font-size: 14px;
+          line-height: 1.5;
+          color: var(--text-secondary);
+        }
+        .alert-modal-btn {
+          width: 100%;
+          padding: 14px 24px;
+          font-size: 15px;
+          font-weight: 600;
+        }
+      `}</style>
+    </div>
+  );
+}
+
 // Apply saved theme on startup
 const applySavedTheme = () => {
   try {
@@ -134,8 +227,18 @@ function App() {
   const [balanceRefreshKey, setBalanceRefreshKey] = useState(0);
   const [userTokens, setUserTokens] = useState([]);
   const [hasDAppRequest, setHasDAppRequest] = useState(false);
+  const [alertModal, setAlertModal] = useState({ show: false, title: '', message: '', type: 'error' });
   const lastActivityRef = useRef(Date.now());
   const lockTimerRef = useRef(null);
+  
+  // Show alert modal helper
+  const showAlert = useCallback((message, title = '', type = 'error') => {
+    setAlertModal({ show: true, title, message, type });
+  }, []);
+  
+  const closeAlert = useCallback(() => {
+    setAlertModal({ show: false, title: '', message: '', type: 'error' });
+  }, []);
   
   // Function to trigger activity refresh
   const triggerActivityRefresh = useCallback(() => {
@@ -148,12 +251,26 @@ function App() {
   }, []);
 
   // Check for pending dApp requests
+  // Only show approval UI if this window was opened AS an approval window (has URL params)
   useEffect(() => {
     const checkDAppRequest = async () => {
       try {
+        // Check if this popup was opened as an approval window (has request param in URL)
+        const urlParams = new URLSearchParams(window.location.search);
+        const isApprovalWindow = urlParams.has('request');
+        
+        // If this is not an approval window (user clicked extension icon), don't show approval UI
+        if (!isApprovalWindow) {
+          setHasDAppRequest(false);
+          return;
+        }
+        
+        // This IS an approval window, check for pending request
         if (typeof chrome !== 'undefined' && chrome.runtime) {
           const response = await chrome.runtime.sendMessage({ type: 'get-pending-request' });
-          setHasDAppRequest(response && response.type ? true : false);
+          // Handle new response format: { request, approvalWindowId }
+          const pendingReq = response?.request || response;
+          setHasDAppRequest(pendingReq && pendingReq.type ? true : false);
         }
       } catch (err) {
         setHasDAppRequest(false);
@@ -289,6 +406,7 @@ function App() {
       setScreen('main');
     } catch (err) {
       logger.error('Failed to create wallet:', err);
+      showAlert(err.message || 'Failed to create wallet', 'Wallet Already Exists', 'warning');
     }
   };
 
@@ -299,6 +417,7 @@ function App() {
       setScreen('main');
     } catch (err) {
       logger.error('Failed to import wallet:', err);
+      showAlert(err.message || 'Failed to import wallet', 'Wallet Already Exists', 'warning');
     }
   };
 
@@ -313,15 +432,26 @@ function App() {
         privateKey: walletData.privateKey,
         mnemonic: null, // No mnemonic for private key imports
         type: 'imported',
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        addresses: [{
+          index: 0,
+          publicKey: walletData.publicKey,
+          privateKey: walletData.privateKey,
+          name: 'Address 1'
+        }],
+        activeAddressIndex: 0
       };
       
       // Get existing wallets
       const existingWallets = JSON.parse(localStorage.getItem('x1wallet_wallets') || '[]');
       
-      // Check if already exists
-      if (existingWallets.some(w => w.publicKey === newWallet.publicKey)) {
-        alert('This wallet is already imported');
+      // Check if already exists (check both old format and new addresses array)
+      const existingMatch = existingWallets.find(w => 
+        w.publicKey === newWallet.publicKey || 
+        w.addresses?.some(a => a.publicKey === newWallet.publicKey)
+      );
+      if (existingMatch) {
+        showAlert(`This wallet has already been imported as "${existingMatch.name}"`, 'Wallet Already Exists', 'warning');
         return;
       }
       
@@ -336,7 +466,7 @@ function App() {
       setScreen('main');
     } catch (err) {
       logger.error('Failed to import private key wallet:', err);
-      alert('Failed to import wallet: ' + err.message);
+      showAlert('Failed to import wallet: ' + err.message, 'Import Failed', 'error');
     }
   };
 
@@ -371,6 +501,7 @@ function App() {
       setScreen('main');
     } catch (err) {
       logger.error('Failed to add hardware wallet:', err);
+      showAlert(err.message || 'Failed to add hardware wallet', 'Wallet Already Exists', 'warning');
     }
   };
 
@@ -442,6 +573,7 @@ function App() {
         <WelcomeScreen
           onCreateWallet={() => { setReturnScreen('main'); setScreen('create'); }}
           onImportWallet={() => { setReturnScreen('main'); setScreen('import'); }}
+          onHardwareWallet={() => { setReturnScreen('main'); setScreen('hardware'); }}
           onBack={wallet.wallets?.length > 0 ? () => setScreen('main') : null}
         />
       </div>
@@ -452,6 +584,14 @@ function App() {
   if (screen === 'create') {
     return (
       <div className="app">
+        {alertModal.show && (
+          <AlertModal
+            title={alertModal.title}
+            message={alertModal.message}
+            type={alertModal.type}
+            onClose={closeAlert}
+          />
+        )}
         <CreateWallet
           onComplete={handleCreateComplete}
           onBack={() => setScreen(returnScreen === 'manage' ? 'manage' : 'welcome')}
@@ -464,6 +604,14 @@ function App() {
   if (screen === 'import') {
     return (
       <div className="app">
+        {alertModal.show && (
+          <AlertModal
+            title={alertModal.title}
+            message={alertModal.message}
+            type={alertModal.type}
+            onClose={closeAlert}
+          />
+        )}
         <ImportWallet
           onComplete={handleImportComplete}
           onCompletePrivateKey={handleImportPrivateKey}
@@ -477,6 +625,14 @@ function App() {
   if (screen === 'hardware') {
     return (
       <div className="app">
+        {alertModal.show && (
+          <AlertModal
+            title={alertModal.title}
+            message={alertModal.message}
+            type={alertModal.type}
+            onClose={closeAlert}
+          />
+        )}
         <HardwareWallet
           onComplete={handleHardwareComplete}
           onBack={() => setScreen(returnScreen === 'manage' ? 'manage' : 'main')}
@@ -746,6 +902,14 @@ function App() {
   // Main wallet screen
   return (
     <div className="app">
+      {alertModal.show && (
+        <AlertModal
+          title={alertModal.title}
+          message={alertModal.message}
+          type={alertModal.type}
+          onClose={closeAlert}
+        />
+      )}
       {hasDAppRequest && wallet.wallet && (
         <DAppApproval 
           wallet={wallet} 

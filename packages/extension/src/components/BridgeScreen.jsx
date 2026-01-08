@@ -3,6 +3,7 @@ import { logger, getUserFriendlyError, ErrorMessages } from '@x1-wallet/core';
 // Redesigned to match X1 Bridge UI
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { getTxExplorerUrl } from '@x1-wallet/core/services/networks';
+import { hardwareWallet } from '../services/hardware';
 
 // Bridge API Configuration
 const BRIDGE_API_URL = 'https://bridge-alpha.x1.xyz';
@@ -262,6 +263,8 @@ export default function BridgeScreen({ wallet, onBack }) {
 
   const walletAddress = wallet?.wallet?.publicKey;
   const privateKey = wallet?.wallet?.privateKey;
+  const isHardwareWallet = wallet?.wallet?.isHardware || wallet?.activeWallet?.isHardware || false;
+  const derivationPath = wallet?.activeWallet?.derivationPath;
 
   // Calculate amounts
   const inputAmount = parseFloat(amount) || 0;
@@ -475,7 +478,7 @@ export default function BridgeScreen({ wallet, onBack }) {
 
   // Handle bridge - executes SPL token transfer to bridge deposit address
   const handleBridge = async () => {
-    if (!walletAddress || !privateKey) {
+    if (!walletAddress || (!privateKey && !isHardwareWallet)) {
       setError('Wallet not connected');
       return;
     }
@@ -561,18 +564,6 @@ export default function BridgeScreen({ wallet, onBack }) {
       const programBytes = decodeToFixedSize(TOKEN_PROGRAM_ID, 32);
       const blockhashBytes = decodeToFixedSize(blockhash, 32);
       
-      // Decode private key
-      let secretKey;
-      if (typeof privateKey === 'string') {
-        secretKey = decodeBase58Local(privateKey);
-      } else {
-        secretKey = privateKey;
-      }
-      
-      if (secretKey.length !== 64) {
-        throw new Error(`Invalid secret key length: ${secretKey.length}`);
-      }
-      
       // Message header: 1 signer, 0 readonly signed, 1 readonly unsigned
       const header = new Uint8Array([1, 0, 1]);
       
@@ -610,8 +601,29 @@ export default function BridgeScreen({ wallet, onBack }) {
       
       logger.log('[Bridge] Message built, length:', message.length);
       
-      // Sign the message
-      const ed25519Signature = await sign(message, secretKey);
+      // Sign the message - hardware wallet or software wallet
+      let ed25519Signature;
+      if (isHardwareWallet) {
+        logger.log('[Bridge] Signing with hardware wallet...');
+        setTxStatus({ stage: 'idle', message: 'Please confirm on your Ledger device...' });
+        
+        // Ledger expects just the message (transaction payload), not the full serialized tx
+        ed25519Signature = await hardwareWallet.signTransaction(message, derivationPath);
+      } else {
+        // Decode private key for software wallet
+        let secretKey;
+        if (typeof privateKey === 'string') {
+          secretKey = decodeBase58Local(privateKey);
+        } else {
+          secretKey = privateKey;
+        }
+        
+        if (secretKey.length !== 64) {
+          throw new Error(`Invalid secret key length: ${secretKey.length}`);
+        }
+        
+        ed25519Signature = await sign(message, secretKey);
+      }
       
       // Serialize: [1 byte: num_signatures] [64 bytes: signature] [message]
       const signedTx = new Uint8Array(1 + 64 + message.length);

@@ -106,7 +106,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
     onComplete(words.join(' '), walletName || 'Imported Wallet');
   };
   
-  // Private Key Import
+  // Private Key Import (handles base58 and byte array formats)
   const handlePrivateKeyImport = async () => {
     setError('');
     
@@ -116,44 +116,64 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
     }
     
     try {
-      const trimmedKey = privateKeyInput.trim();
+      const trimmedInput = privateKeyInput.trim();
+      let keyBytes = null;
       
-      // Base58 character set check
-      const base58Regex = /^[1-9A-HJ-NP-Za-km-z]+$/;
-      if (!base58Regex.test(trimmedKey)) {
-        setError('Invalid private key format (not base58)');
-        return;
+      // Check if it's a byte array format [1,2,3,...]
+      if (trimmedInput.startsWith('[') && trimmedInput.endsWith(']')) {
+        try {
+          const parsed = JSON.parse(trimmedInput);
+          if (Array.isArray(parsed) && parsed.every(n => typeof n === 'number' && n >= 0 && n <= 255)) {
+            keyBytes = new Uint8Array(parsed);
+          } else {
+            setError('Invalid byte array format');
+            return;
+          }
+        } catch (jsonErr) {
+          setError('Invalid byte array format');
+          return;
+        }
+      } else {
+        // Base58 format
+        const base58Regex = /^[1-9A-HJ-NP-Za-km-z]+$/;
+        if (!base58Regex.test(trimmedInput)) {
+          setError('Invalid private key format');
+          return;
+        }
+        
+        const { decodeBase58 } = await import('@x1-wallet/core/utils/base58');
+        keyBytes = decodeBase58(trimmedInput);
       }
       
-      // Decode to verify length
-      const { decodeBase58, encodeBase58 } = await import('@x1-wallet/core/utils/base58');
-      const decoded = decodeBase58(trimmedKey);
-      
-      // Solana private keys are 64 bytes (secret key) or 32 bytes (seed)
-      if (decoded.length !== 64 && decoded.length !== 32) {
-        setError(`Invalid key length: ${decoded.length} bytes (expected 32 or 64)`);
+      // Validate key length
+      if (keyBytes.length !== 64 && keyBytes.length !== 32) {
+        setError(`Invalid key length: ${keyBytes.length} bytes (expected 32 or 64)`);
         return;
       }
       
       // If 32 bytes, we need to derive the public key
-      let secretKey = decoded;
+      let secretKey = keyBytes;
       let publicKey;
       
-      if (decoded.length === 32) {
+      if (keyBytes.length === 32) {
         // Need to derive keypair from seed
         const { getPublicKey } = await import('@x1-wallet/core/utils/bip44');
-        publicKey = getPublicKey(decoded);
+        publicKey = getPublicKey(keyBytes);
         // Create full 64-byte secret key
         secretKey = new Uint8Array(64);
-        secretKey.set(decoded, 0);
+        secretKey.set(keyBytes, 0);
         secretKey.set(publicKey, 32);
       } else {
         // Already 64 bytes - extract public key
-        publicKey = decoded.slice(32);
+        publicKey = keyBytes.slice(32);
       }
       
+      const { encodeBase58 } = await import('@x1-wallet/core/utils/base58');
       const publicKeyBase58 = encodeBase58(publicKey);
       const privateKeyBase58 = encodeBase58(secretKey);
+      
+      // Store the base58 version for completion
+      setPrivateKeyInput(privateKeyBase58);
       
       // Move to naming step with private key data
       setStep('name-pk');
@@ -296,7 +316,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
             </svg>
-            Private Key
+            Private Key / Bytes
           </button>
         </div>
       
@@ -349,14 +369,14 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
         <>
           <div className="warning-box" style={{ marginTop: 16 }}>
             <span>⚠️</span>
-            <span>Enter your base58-encoded private key. Never share this with anyone.</span>
+            <span>Enter your private key. Never share this with anyone.</span>
           </div>
           
           <div className="form-group" style={{ marginTop: 16 }}>
             <label>Private Key</label>
             <textarea
               className="form-input private-key-input"
-              placeholder="Enter your private key (base58)"
+              placeholder="Paste private key (base58 or byte array)"
               value={privateKeyInput}
               onChange={(e) => { setPrivateKeyInput(e.target.value); setError(''); }}
               rows={4}
@@ -365,7 +385,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
           
           <div className="info-box" style={{ marginTop: 12 }}>
             <span>ℹ️</span>
-            <span>Accepts 64-byte secret keys (88 chars) or 32-byte seeds (44 chars) in base58 format.</span>
+            <span>Accepts base58 format or byte array [1,2,3,...] format.</span>
           </div>
           
           {error && <div className="error-message" style={{ marginTop: 16 }}>{error}</div>}

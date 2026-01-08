@@ -1,8 +1,8 @@
 var __defProp = Object.defineProperty;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
-import { t as trace, l as log, T as Transport, g as getBluetoothServiceUuids, a as getInfosForServiceUuid } from "./index.js";
-import { T as TransportError, D as DisconnectedDevice, a as TransportOpenUserCancelled } from "./index2.js";
+import { t as trace, l as log, T as Transport, g as getBluetoothServiceUuids, b as getInfosForServiceUuid } from "./index.js";
+import { a as TransportError, b as DisconnectedDevice, T as TransportOpenUserCancelled } from "./index2.js";
 import "./popup.js";
 var extendStatics = function(d, b) {
   extendStatics = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d2, b2) {

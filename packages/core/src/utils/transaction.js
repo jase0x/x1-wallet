@@ -87,6 +87,13 @@ export async function createTokenTransferTransaction({
     logger.log('Provided to token account:', providedToTokenAccount);
     logger.log('Token program:', programId);
     
+    // Validate required fields
+    if (!fromPubkey) throw new Error('From wallet address is required');
+    if (!toPubkey) throw new Error('To wallet address is required');
+    if (!mint) throw new Error('Token mint address is required');
+    if (!fromTokenAccount) throw new Error('Source token account address is required');
+    if (!privateKey) throw new Error('Wallet is locked. Please unlock your wallet to sign transactions.');
+    
     // Check for self-transfer - token transfers to same wallet use the same ATA
     // which is not allowed by the SPL Token program
     if (fromPubkey === toPubkey) {
@@ -101,8 +108,8 @@ export async function createTokenTransferTransaction({
       secretKey = privateKey;
     }
     
-    if (secretKey.length !== 64) {
-      throw new Error(`Invalid secret key length: ${secretKey.length}, expected 64`);
+    if (!secretKey || secretKey.length !== 64) {
+      throw new Error(`Invalid secret key length: ${secretKey?.length || 0}, expected 64`);
     }
 
     // Use the program ID from the token data, or default
@@ -320,7 +327,7 @@ async function verifyATADerivation(rpcUrl, owner, mint, existingTokenAccount, to
 }
 
 // Find existing ATA for an owner/mint combination
-async function findExistingATA(rpcUrl, owner, mint) {
+export async function findExistingATA(rpcUrl, owner, mint) {
   try {
     const response = await fetch(rpcUrl, {
       method: 'POST',
@@ -360,32 +367,41 @@ async function findExistingATA(rpcUrl, owner, mint) {
  * @param payer - The account that will pay for simulation (must have funds)
  */
 async function deriveATAAddressWithValidation(rpcUrl, owner, mint, tokenProgramId, payer) {
-  logger.log('Deriving ATA for owner:', owner);
-  logger.log('Mint:', mint);
-  logger.log('Token program:', tokenProgramId);
-  logger.log('Using payer for simulation:', payer);
+  logger.log('[ATA-RPC] Deriving ATA for owner:', owner);
+  logger.log('[ATA-RPC] Mint:', mint);
+  logger.log('[ATA-RPC] Token program:', tokenProgramId);
+  logger.log('[ATA-RPC] Using payer for simulation:', payer);
   
   // Try bump seeds from 255 down to find valid PDA
   // We'll try each bump and verify using RPC simulation
-  for (let bump = 255; bump >= 0; bump--) {
+  for (let bump = 255; bump >= 250; bump--) {
     const address = await computeATAAddress(owner, mint, tokenProgramId, bump);
     
-    if (bump >= 250) {
-      logger.log(`Testing bump ${bump}: ${address}`);
-    }
+    logger.log(`[ATA-RPC] Testing bump ${bump}: ${address}`);
     
     // Validate by checking if this address would be accepted
     const isValid = await validateATAWithRPC(rpcUrl, owner, mint, address, tokenProgramId, bump, payer);
     
     if (isValid) {
-      logger.log(`✓ Found valid ATA with bump ${bump}: ${address}`);
+      logger.log(`[ATA-RPC] ✓ Found valid ATA with bump ${bump}: ${address}`);
       return address;
-    } else if (bump >= 250) {
-      logger.log(`✗ Bump ${bump} invalid`);
+    } else {
+      logger.log(`[ATA-RPC] ✗ Bump ${bump} invalid`);
     }
   }
   
-  throw new Error('Failed to derive ATA address - no valid bump found');
+  // Try remaining bumps without logging each one
+  for (let bump = 249; bump >= 0; bump--) {
+    const address = await computeATAAddress(owner, mint, tokenProgramId, bump);
+    const isValid = await validateATAWithRPC(rpcUrl, owner, mint, address, tokenProgramId, bump, payer);
+    
+    if (isValid) {
+      logger.log(`[ATA-RPC] ✓ Found valid ATA with bump ${bump}: ${address}`);
+      return address;
+    }
+  }
+  
+  throw new Error('Failed to derive ATA address - no valid bump found after trying all 256 values');
 }
 
 /**
@@ -510,7 +526,10 @@ async function validateATAWithRPC(rpcUrl, owner, mint, ataAddress, tokenProgramI
     });
     const bhData = await bhResponse.json();
     const blockhash = bhData.result?.value?.blockhash;
-    if (!blockhash) return false;
+    if (!blockhash) {
+      logger.warn('[ATA-RPC] Failed to get blockhash');
+      return false;
+    }
     
     // Build CreateATA message using real payer (sender)
     const message = buildCreateATAMessage(payer, owner, ataAddress, mint, tokenProgramId, blockhash);
@@ -543,9 +562,7 @@ async function validateATAWithRPC(rpcUrl, owner, mint, ataAddress, tokenProgramI
     const data = await response.json();
     const err = data.result?.value?.err;
     
-    if (bump >= 250) {
-      logger.log(`Bump ${bump} simulation:`, err ? JSON.stringify(err) : 'OK');
-    }
+    logger.log(`[ATA-RPC] Bump ${bump} simulation result:`, err ? JSON.stringify(err) : 'OK');
     
     if (!err) {
       return true;  // No error - valid
@@ -671,11 +688,26 @@ function buildCreateATAMessage(payer, owner, ataAddress, mint, tokenProgramId, b
 }
 
 /**
- * Standard ATA derivation without simulation (fallback when no RPC)
- * Uses bump 255 which works for most cases
+ * Standard ATA derivation with RPC validation
+ * MUST provide rpcUrl and payer for reliable derivation when creating new ATAs
  */
-async function deriveATAAddressStandard(owner, mint, tokenProgramId) {
-  // Use the findATAAddress which tries different bumps
+export async function deriveATAAddressStandard(owner, mint, tokenProgramId, rpcUrl = null, payer = null) {
+  // If we have RPC URL and payer, use validation to ensure correct bump
+  if (rpcUrl && payer) {
+    try {
+      logger.log('[ATA] Using RPC validation for ATA derivation');
+      const address = await deriveATAAddressWithValidation(rpcUrl, owner, mint, tokenProgramId, payer);
+      logger.log('[ATA] RPC validated address:', address);
+      return address;
+    } catch (e) {
+      logger.error('[ATA] RPC validation failed:', e.message);
+      // Don't fall back - throw the error so caller knows derivation failed
+      throw new Error(`Failed to derive ATA address: ${e.message}`);
+    }
+  }
+  
+  // No RPC provided - this is risky for new ATAs
+  logger.warn('[ATA] No RPC validation - using bump 255 (may be incorrect)');
   const result = await findATAAddress(owner, mint, tokenProgramId);
   return result.address;
 }
@@ -921,6 +953,42 @@ export function buildTransferMessage(fromPubkey, toPubkey, lamports, recentBlock
   message.set(transferInst, offset);
   
   return message;
+}
+
+// Build token transfer message for hardware wallet signing (exported)
+export function buildTokenTransferMessageForHardware({
+  fromPubkey,
+  toPubkey,
+  fromTokenAccount,
+  toTokenAccount,
+  mint,
+  amount,
+  recentBlockhash,
+  tokenProgramId,
+  needsCreateATA = false
+}) {
+  // Use the internal function based on whether ATA creation is needed
+  if (needsCreateATA) {
+    return buildTokenTransferWithCreateATAMessage({
+      fromPubkey,
+      toPubkey,
+      fromTokenAccount,
+      toTokenAccount,
+      mint,
+      amount,
+      recentBlockhash,
+      tokenProgramId: tokenProgramId || TOKEN_PROGRAM_ID
+    });
+  } else {
+    return buildTokenTransferMessage({
+      fromPubkey,
+      fromTokenAccount,
+      toTokenAccount,
+      amount,
+      recentBlockhash,
+      tokenProgramId: tokenProgramId || TOKEN_PROGRAM_ID
+    });
+  }
 }
 
 // Serialize transaction with signature
@@ -1566,6 +1634,105 @@ export async function signAndSendExternalTransaction(transactionBase64, privateK
 }
 
 /**
+ * Sign and send an external transaction using hardware wallet (Ledger)
+ * Similar to signAndSendExternalTransaction but uses hardware wallet for signing
+ */
+export async function signAndSendExternalTransactionHardware(transactionBase64, hardwareWallet, rpcUrl) {
+  try {
+    logger.log('[Swap TX HW] Starting to sign external transaction with hardware wallet');
+    
+    // Validate and clean the base64 transaction
+    if (!transactionBase64 || typeof transactionBase64 !== 'string') {
+      throw new Error('Transaction data is missing or invalid');
+    }
+    
+    // Log transaction info (first 50 chars for debugging)
+    logger.log('[Swap TX HW] Transaction base64 length:', transactionBase64.length);
+    
+    // Handle URL-safe base64
+    let cleanedBase64 = transactionBase64
+      .replace(/-/g, '+')
+      .replace(/_/g, '/');
+    
+    // Remove any whitespace or newlines
+    cleanedBase64 = cleanedBase64.replace(/\s/g, '');
+    
+    // Add padding if needed
+    const paddingNeeded = (4 - (cleanedBase64.length % 4)) % 4;
+    cleanedBase64 += '='.repeat(paddingNeeded);
+    
+    // Validate base64 characters
+    const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
+    if (!base64Regex.test(cleanedBase64)) {
+      throw new Error('Transaction contains invalid base64 encoding');
+    }
+    
+    // Decode the base64 transaction
+    let txBytes;
+    try {
+      txBytes = Uint8Array.from(atob(cleanedBase64), c => c.charCodeAt(0));
+    } catch (atobError) {
+      throw new Error('Failed to decode transaction: Invalid base64 encoding');
+    }
+    logger.log('[Swap TX HW] Decoded transaction:', txBytes.length, 'bytes');
+    
+    // Parse the transaction structure
+    const numSignatures = txBytes[0];
+    logger.log('[Swap TX HW] Number of signatures:', numSignatures);
+    
+    // The message starts after signature placeholders
+    const messageOffset = 1 + (numSignatures * 64);
+    const message = txBytes.slice(messageOffset);
+    logger.log('[Swap TX HW] Message length:', message.length, 'bytes');
+    
+    // Sign with hardware wallet
+    const signature = await hardwareWallet.signTransaction(message);
+    logger.log('[Swap TX HW] Signature generated via hardware wallet');
+    
+    // Build the signed transaction
+    const signedTx = new Uint8Array(1 + 64 + message.length);
+    signedTx[0] = 1; // 1 signature
+    signedTx.set(signature, 1);
+    signedTx.set(message, 65);
+    
+    // Convert to base64 for sending
+    const signedTxBase64 = btoa(String.fromCharCode(...signedTx));
+    logger.log('[Swap TX HW] Signed transaction ready');
+    
+    // Send the transaction
+    const response = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'sendTransaction',
+        params: [
+          signedTxBase64,
+          { 
+            encoding: 'base64',
+            skipPreflight: false,
+            preflightCommitment: 'confirmed'
+          }
+        ]
+      })
+    });
+    
+    const result = await response.json();
+    logger.log('[Swap TX HW] Send result:', result);
+    
+    if (result.error) {
+      throw new Error(result.error.message || JSON.stringify(result.error));
+    }
+    
+    return result.result;
+  } catch (error) {
+    logger.error('[Swap TX HW] Error:', error);
+    throw error;
+  }
+}
+
+/**
  * Build a transaction message from instructions
  * @param {Object} params - Transaction parameters
  * @param {string} params.feePayer - Fee payer public key (base58)
@@ -2167,6 +2334,305 @@ export async function createUnwrapTransaction({ owner, amount, rpcUrl, privateKe
     return txSignature;
   } catch (err) {
     console.error('[Unwrap] Error:', err?.message || err);
+    throw err;
+  }
+}
+
+/**
+ * Create a wrap transaction using hardware wallet (Ledger)
+ */
+export async function createWrapTransactionHardware({ owner, amount, rpcUrl, hardwareWallet }) {
+  logger.log('[Wrap HW] Creating wrap transaction for', amount, 'native tokens');
+  
+  try {
+    // Convert amount to lamports
+    const lamports = Math.floor(amount * 1e9);
+    
+    // Get recent blockhash
+    const blockhashResponse = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'getLatestBlockhash',
+        params: [{ commitment: 'confirmed' }]
+      })
+    });
+    const blockhashResult = await blockhashResponse.json();
+    if (blockhashResult.error) {
+      throw new Error('Blockhash error: ' + (blockhashResult.error.message || JSON.stringify(blockhashResult.error)));
+    }
+    const recentBlockhash = blockhashResult.result.value.blockhash;
+    logger.log('[Wrap HW] Got blockhash:', recentBlockhash);
+    
+    // Derive ATA for wrapped native token
+    let ataAddress;
+    try {
+      const tokenAccountsResponse = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getTokenAccountsByOwner',
+          params: [owner, { mint: NATIVE_MINT }, { encoding: 'jsonParsed' }]
+        })
+      });
+      const tokenAccountsResult = await tokenAccountsResponse.json();
+      
+      if (tokenAccountsResult.result?.value?.length > 0) {
+        ataAddress = tokenAccountsResult.result.value[0].pubkey;
+        logger.log('[Wrap HW] Found existing ATA:', ataAddress);
+      }
+    } catch (e) {
+      logger.log('[Wrap HW] Could not query token accounts:', e?.message);
+    }
+    
+    if (!ataAddress) {
+      ataAddress = await deriveATAAddressStandard(owner, NATIVE_MINT, TOKEN_PROGRAM_ID);
+      logger.log('[Wrap HW] Derived ATA address:', ataAddress);
+    }
+    
+    // Build transaction message (same as software version)
+    const ownerKey = decodeToFixedSize(owner, 32);
+    const nativeMintKey = decodeToFixedSize(NATIVE_MINT, 32);
+    const ataKey = decodeToFixedSize(ataAddress, 32);
+    const tokenProgramKey = decodeToFixedSize(TOKEN_PROGRAM_ID, 32);
+    const systemProgramKey = decodeToFixedSize(SYSTEM_PROGRAM_ID, 32);
+    const ataProgramKey = decodeToFixedSize(ASSOCIATED_TOKEN_PROGRAM_ID, 32);
+    const blockhashBytes = decodeBase58(recentBlockhash);
+    
+    const accountKeys = [];
+    const addKey = (key) => {
+      const keyBase58 = encodeBase58(key);
+      if (!accountKeys.find(k => encodeBase58(k) === keyBase58)) {
+        accountKeys.push(key);
+      }
+      return accountKeys.findIndex(k => encodeBase58(k) === keyBase58);
+    };
+    
+    const ownerIdx = addKey(ownerKey);
+    const ataIdx = addKey(ataKey);
+    const nativeMintIdx = addKey(nativeMintKey);
+    const systemIdx = addKey(systemProgramKey);
+    const tokenIdx = addKey(tokenProgramKey);
+    const ataProgIdx = addKey(ataProgramKey);
+    
+    const instructions = [];
+    
+    // CreateAssociatedTokenAccountIdempotent
+    instructions.push({
+      programIdIndex: ataProgIdx,
+      accountIndices: [ownerIdx, ataIdx, ownerIdx, nativeMintIdx, systemIdx, tokenIdx],
+      data: new Uint8Array([1])
+    });
+    
+    // Transfer lamports to ATA
+    const transferData = new Uint8Array(12);
+    transferData[0] = 2;
+    const lamportsView = new DataView(transferData.buffer);
+    lamportsView.setBigUint64(4, BigInt(lamports), true);
+    
+    instructions.push({
+      programIdIndex: systemIdx,
+      accountIndices: [ownerIdx, ataIdx],
+      data: transferData
+    });
+    
+    // SyncNative
+    instructions.push({
+      programIdIndex: tokenIdx,
+      accountIndices: [ataIdx],
+      data: new Uint8Array([17])
+    });
+    
+    const numSigners = 1;
+    const numReadonlySigners = 0;
+    const readonlyNonSigners = [nativeMintIdx, systemIdx, tokenIdx, ataProgIdx].filter((v, i, a) => a.indexOf(v) === i).length;
+    
+    const messageHeader = new Uint8Array([numSigners, numReadonlySigners, readonlyNonSigners]);
+    
+    const numKeys = encodeCompactU16(accountKeys.length);
+    const flatKeys = new Uint8Array(accountKeys.length * 32);
+    accountKeys.forEach((key, i) => flatKeys.set(key, i * 32));
+    
+    const numInstructions = encodeCompactU16(instructions.length);
+    const serializedInstructions = [];
+    for (const ix of instructions) {
+      const accountsLen = encodeCompactU16(ix.accountIndices.length);
+      const dataLen = encodeCompactU16(ix.data.length);
+      serializedInstructions.push(
+        new Uint8Array([ix.programIdIndex]),
+        accountsLen,
+        new Uint8Array(ix.accountIndices),
+        dataLen,
+        ix.data
+      );
+    }
+    
+    const messageParts = [
+      messageHeader,
+      numKeys,
+      flatKeys,
+      blockhashBytes,
+      numInstructions,
+      ...serializedInstructions
+    ];
+    
+    const totalLen = messageParts.reduce((sum, part) => sum + part.length, 0);
+    const message = new Uint8Array(totalLen);
+    let offset = 0;
+    for (const part of messageParts) {
+      message.set(part, offset);
+      offset += part.length;
+    }
+    
+    logger.log('[Wrap HW] Message built, length:', message.length);
+    
+    // Sign with hardware wallet
+    const signature = await hardwareWallet.signTransaction(message);
+    logger.log('[Wrap HW] Signature created via hardware wallet');
+    
+    // Build signed transaction
+    const signedTx = new Uint8Array(1 + 64 + message.length);
+    signedTx[0] = 1;
+    signedTx.set(signature, 1);
+    signedTx.set(message, 65);
+    
+    // Send transaction
+    const txSignature = await sendTransaction(signedTx, rpcUrl);
+    logger.log('[Wrap HW] Transaction sent:', txSignature);
+    
+    return txSignature;
+  } catch (err) {
+    logger.error('[Wrap HW] Error:', err?.message || err);
+    throw err;
+  }
+}
+
+/**
+ * Create an unwrap transaction using hardware wallet (Ledger)
+ */
+export async function createUnwrapTransactionHardware({ owner, amount, rpcUrl, hardwareWallet }) {
+  console.log('[Unwrap HW] Creating unwrap transaction');
+  
+  try {
+    // Get recent blockhash
+    const blockhashResponse = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'getLatestBlockhash',
+        params: [{ commitment: 'confirmed' }]
+      })
+    });
+    const blockhashResult = await blockhashResponse.json();
+    if (blockhashResult.error) {
+      throw new Error('Blockhash error: ' + blockhashResult.error.message);
+    }
+    const recentBlockhash = blockhashResult.result.value.blockhash;
+    
+    // Get the wrapped token account
+    const tokenAccountsResponse = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'getTokenAccountsByOwner',
+        params: [owner, { mint: NATIVE_MINT }, { encoding: 'jsonParsed' }]
+      })
+    });
+    const tokenAccountsResult = await tokenAccountsResponse.json();
+    
+    if (!tokenAccountsResult.result?.value?.length) {
+      throw new Error('No wrapped token account found');
+    }
+    
+    const ataAddress = tokenAccountsResult.result.value[0].pubkey;
+    console.log('[Unwrap HW] Found ATA:', ataAddress);
+    
+    // Build close account instruction
+    const ownerKey = decodeToFixedSize(owner, 32);
+    const ataKey = decodeToFixedSize(ataAddress, 32);
+    const tokenProgramKey = decodeToFixedSize(TOKEN_PROGRAM_ID, 32);
+    const blockhashBytes = decodeBase58(recentBlockhash);
+    
+    const accountKeys = [];
+    const addKey = (key) => {
+      const keyBase58 = encodeBase58(key);
+      if (!accountKeys.find(k => encodeBase58(k) === keyBase58)) {
+        accountKeys.push(key);
+      }
+      return accountKeys.findIndex(k => encodeBase58(k) === keyBase58);
+    };
+    
+    const ownerIdx = addKey(ownerKey);
+    const ataIdx = addKey(ataKey);
+    const tokenIdx = addKey(tokenProgramKey);
+    
+    // CloseAccount instruction: account, dest, authority
+    const closeInstruction = {
+      programIdIndex: tokenIdx,
+      accountIndices: [ataIdx, ownerIdx, ownerIdx],
+      data: new Uint8Array([9]) // CloseAccount instruction
+    };
+    
+    const numSigners = 1;
+    const numReadonlySigners = 0;
+    const readonlyNonSigners = 1; // token program
+    
+    const messageHeader = new Uint8Array([numSigners, numReadonlySigners, readonlyNonSigners]);
+    const numKeys = encodeCompactU16(accountKeys.length);
+    const flatKeys = new Uint8Array(accountKeys.length * 32);
+    accountKeys.forEach((key, i) => flatKeys.set(key, i * 32));
+    
+    const accountsLen = encodeCompactU16(closeInstruction.accountIndices.length);
+    const dataLen = encodeCompactU16(closeInstruction.data.length);
+    
+    const messageParts = [
+      messageHeader,
+      numKeys,
+      flatKeys,
+      blockhashBytes,
+      encodeCompactU16(1),
+      new Uint8Array([closeInstruction.programIdIndex]),
+      accountsLen,
+      new Uint8Array(closeInstruction.accountIndices),
+      dataLen,
+      closeInstruction.data
+    ];
+    
+    const totalLen = messageParts.reduce((sum, part) => sum + part.length, 0);
+    const message = new Uint8Array(totalLen);
+    let offset = 0;
+    for (const part of messageParts) {
+      message.set(part, offset);
+      offset += part.length;
+    }
+    
+    console.log('[Unwrap HW] Message built, length:', message.length);
+    
+    // Sign with hardware wallet
+    const signature = await hardwareWallet.signTransaction(message);
+    console.log('[Unwrap HW] Signature created via hardware wallet');
+    
+    // Build signed transaction
+    const signedTx = new Uint8Array(1 + 64 + message.length);
+    signedTx[0] = 1;
+    signedTx.set(signature, 1);
+    signedTx.set(message, 65);
+    
+    // Send transaction
+    const txSignature = await sendTransaction(signedTx, rpcUrl);
+    console.log('[Unwrap HW] Transaction sent:', txSignature);
+    
+    return txSignature;
+  } catch (err) {
+    console.error('[Unwrap HW] Error:', err?.message || err);
     throw err;
   }
 }

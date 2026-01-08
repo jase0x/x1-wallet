@@ -1,6 +1,18 @@
 // Token Service for SPL and Token-2022 tokens
+// FIXED: Added rate limiting to prevent 429 errors on XDEX API calls
+// INCLUDES: All metadata sources - X1 Mobile API, Metaplex, DAS, Jupiter, XDEX
+
 import { logger } from '../utils/logger.js';
 import { decodeBase58, encodeBase58 } from '../utils/base58';
+import { 
+  XDEX_LP_MINT_AUTHORITY, 
+  XLP_LOGO_URL, 
+  KNOWN_TOKENS,
+  NETWORK_TOKEN_OVERRIDES,
+  X1_TOKEN_OVERRIDES,
+  isX1Network,
+  getKnownTokenMetadata
+} from './knownTokens.js';
 
 // API Server (same as Android app)
 const API_SERVER = 'https://mobile-api.x1.xyz';
@@ -10,165 +22,140 @@ export const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 export const TOKEN_2022_PROGRAM_ID = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 export const METADATA_PROGRAM_ID = 'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s';
 
-// Known token list for common tokens (fallback metadata)
-const KNOWN_TOKENS = {
-  'So11111111111111111111111111111111111111112': {
-    symbol: 'SOL',
-    name: 'Wrapped SOL',
-    decimals: 9,
-    logoURI: 'https://xdex.s3.us-east-2.amazonaws.com/vimages/solana.png'
-  },
-  'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': {
-    symbol: 'USDC',
-    name: 'USD Coin',
-    decimals: 6,
-    logoURI: 'https://cryptologos.cc/logos/usd-coin-usdc-logo.png'
-  },
-  'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB': {
-    symbol: 'USDT',
-    name: 'Tether USD',
-    decimals: 6,
-    logoURI: 'https://cryptologos.cc/logos/tether-usdt-logo.png'
-  },
-  'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So': {
-    symbol: 'mSOL',
-    name: 'Marinade staked SOL',
-    decimals: 9,
-    logoURI: 'https://raw.githubusercontent.com/marinade-finance/msol-logo/main/msol-logo.png'
-  },
-  'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263': {
-    symbol: 'BONK',
-    name: 'Bonk',
-    decimals: 5,
-    logoURI: 'https://arweave.net/hQiPZOsRZXGXBJd_82PhVdlM_hACsT_q6wqwf5cSY7I'
-  },
-  'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN': {
-    symbol: 'JUP',
-    name: 'Jupiter',
-    decimals: 6,
-    logoURI: 'https://static.jup.ag/jup/icon.png'
-  },
-  '7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs': {
-    symbol: 'ETH',
-    name: 'Ether (Wormhole)',
-    decimals: 8,
-    logoURI: 'https://cryptologos.cc/logos/ethereum-eth-logo.png'
-  },
-  'B69chRzqzDCmdB5WYB8NRu5Yv5ZA95ABiZcdzCgGm9Tq': {
-    symbol: 'USDC.X',
-    name: 'USDC X1',
-    decimals: 6,
-    logoURI: 'https://cryptologos.cc/logos/usd-coin-usdc-logo.png',
-    isToken2022: true,
-    price: 1
-  },
-  'pXNTyoqQsskHdZ7Q1rnP25FEyHHjissbs7n6RRN2nP5': {
-    symbol: 'pXNT',
-    name: 'Staked XNT',
-    decimals: 9,
-    logoURI: 'https://x1logos.s3.us-east-1.amazonaws.com/48-pxnt.png',
-    isToken2022: false,
-    isStakePoolToken: true
-  }
-};
+// ============================================
+// RATE LIMITER - Prevents 429 errors
+// ============================================
 
-// Network-specific token overrides
-const NETWORK_TOKEN_OVERRIDES = {
-  'X1 Mainnet': {
-    'So11111111111111111111111111111111111111112': {
-      symbol: 'WXNT',
-      name: 'Wrapped XNT',
-      decimals: 9,
-      logoURI: 'https://x1logos.s3.us-east-1.amazonaws.com/48.png'
-    }
-  },
-  'X1 Testnet': {
-    'So11111111111111111111111111111111111111112': {
-      symbol: 'WXNT',
-      name: 'Wrapped XNT',
-      decimals: 9,
-      logoURI: 'https://x1logos.s3.us-east-1.amazonaws.com/48.png'
-    }
-  },
-  'Solana Mainnet': {
-    'So11111111111111111111111111111111111111112': {
-      symbol: 'SOL',
-      name: 'Solana',
-      decimals: 9,
-      logoURI: 'https://xdex.s3.us-east-2.amazonaws.com/vimages/solana.png'
-    },
-    'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': {
-      symbol: 'USDC',
-      name: 'USD Coin',
-      decimals: 6,
-      logoURI: 'https://cryptologos.cc/logos/usd-coin-usdc-logo.png'
-    },
-    'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB': {
-      symbol: 'USDT',
-      name: 'Tether USD',
-      decimals: 6,
-      logoURI: 'https://cryptologos.cc/logos/tether-usdt-logo.png'
-    }
-  },
-  'Solana Devnet': {
-    'So11111111111111111111111111111111111111112': {
-      symbol: 'SOL',
-      name: 'Solana',
-      decimals: 9,
-      logoURI: 'https://xdex.s3.us-east-2.amazonaws.com/vimages/solana.png'
-    }
+class RateLimiter {
+  constructor(maxRequests = 5, windowMs = 1000) {
+    this.maxRequests = maxRequests;
+    this.windowMs = windowMs;
+    this.requests = [];
   }
-};
 
-// X1 token overrides for custom networks
-const X1_TOKEN_OVERRIDES = {
-  'So11111111111111111111111111111111111111112': {
-    symbol: 'WXNT',
-    name: 'Wrapped XNT',
-    decimals: 9,
-    logoURI: 'https://x1logos.s3.us-east-1.amazonaws.com/48.png'
+  async acquire() {
+    const now = Date.now();
+    this.requests = this.requests.filter(time => now - time < this.windowMs);
+    
+    if (this.requests.length >= this.maxRequests) {
+      const waitTime = this.windowMs - (now - this.requests[0]) + 10;
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+      return this.acquire();
+    }
+    
+    this.requests.push(now);
+    return true;
   }
-};
+}
 
-// Check if a network is X1-based
-function isX1Network(network) {
-  if (!network) return false;
-  if (network === 'X1 Mainnet' || network === 'X1 Testnet') return true;
+// Rate limiter for XDEX API (5 requests per second)
+const xdexRateLimiter = new RateLimiter(5, 1000);
+
+// Cache for failed requests to avoid retrying them repeatedly
+const failedRequestsCache = new Map();
+const FAILED_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+function hasRecentlyFailed(key) {
+  const failedAt = failedRequestsCache.get(key);
+  if (!failedAt) return false;
   
-  const lowerName = network.toLowerCase();
-  if (lowerName.includes('x1') || lowerName.includes('xnt')) return true;
+  if (Date.now() - failedAt > FAILED_CACHE_TTL) {
+    failedRequestsCache.delete(key);
+    return false;
+  }
+  return true;
+}
+
+function markFailed(key) {
+  failedRequestsCache.set(key, Date.now());
+}
+
+function clearFailed(key) {
+  failedRequestsCache.delete(key);
+}
+
+// Fetch with rate limiting
+async function fetchWithRateLimit(url, options = {}) {
+  await xdexRateLimiter.acquire();
+  return fetch(url, options);
+}
+
+// ============================================
+// XDEX LP TOKEN DETECTION
+// ============================================
+
+// Cache for mint authority lookups (to avoid repeated RPC calls)
+const mintAuthorityCache = new Map();
+const MINT_AUTHORITY_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+
+// Fetch mint authority for a token
+async function fetchMintAuthority(rpcUrl, mintAddress) {
+  const cacheKey = `${rpcUrl}:${mintAddress}`;
+  const cached = mintAuthorityCache.get(cacheKey);
+  
+  if (cached && Date.now() - cached.timestamp < MINT_AUTHORITY_CACHE_TTL) {
+    return cached.authority;
+  }
   
   try {
-    const customNetworks = JSON.parse(localStorage.getItem('x1wallet_customRpcs') || '[]');
-    const customNet = customNetworks.find(n => n.name === network);
-    if (customNet) {
-      const url = customNet.url?.toLowerCase() || '';
-      if (url.includes('x1.xyz') || url.includes('x1.') || url.includes('/x1') || 
-          customNet.symbol?.toUpperCase() === 'XNT') {
-        return true;
-      }
+    const response = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'getAccountInfo',
+        params: [
+          mintAddress,
+          { encoding: 'jsonParsed' }
+        ]
+      })
+    });
+    
+    const data = await response.json();
+    const mintAuthority = data?.result?.value?.data?.parsed?.info?.mintAuthority || null;
+    
+    mintAuthorityCache.set(cacheKey, { authority: mintAuthority, timestamp: Date.now() });
+    return mintAuthority;
+  } catch (e) {
+    logger.warn('[Tokens] Failed to fetch mint authority:', e.message);
+    return null;
+  }
+}
+
+// Check if a token is an XDEX LP token by its mint authority
+async function checkAndApplyLPBranding(rpcUrl, token, network) {
+  // Only check on X1 networks where XDEX operates
+  if (!network?.includes('X1')) return false;
+  
+  try {
+    const mintAuthority = await fetchMintAuthority(rpcUrl, token.mint);
+    
+    if (mintAuthority === XDEX_LP_MINT_AUTHORITY) {
+      token.symbol = 'XLP';
+      token.name = 'XDEX LP Token';
+      token.logoURI = XLP_LOGO_URL;
+      token.isLPToken = true;
+      logger.log(`[Tokens] Detected XDEX LP token: ${token.mint}`);
+      return true;
     }
-  } catch {}
+  } catch (e) {
+    logger.warn('[Tokens] LP token check failed:', e.message);
+  }
   
   return false;
 }
 
-// Get token metadata with network-specific overrides
-function getKnownTokenMetadata(mint, network) {
-  const networkOverrides = NETWORK_TOKEN_OVERRIDES[network];
-  if (networkOverrides && networkOverrides[mint]) {
-    return networkOverrides[mint];
-  }
-  
-  if (isX1Network(network) && X1_TOKEN_OVERRIDES[mint]) {
-    return X1_TOKEN_OVERRIDES[mint];
-  }
-  
-  return KNOWN_TOKENS[mint] || null;
-}
+// ============================================
+// KNOWN TOKENS - Imported from knownTokens.js
+// ============================================
 
 // Metadata cache
 const metadataCache = new Map();
+
+// ============================================
+// API FUNCTIONS
+// ============================================
 
 // Fetch token metadata from X1 Mobile API
 export async function fetchTokenMetadataFromAPI(mint) {
@@ -177,7 +164,7 @@ export async function fetchTokenMetadataFromAPI(mint) {
     logger.log('[Token API] Fetching metadata for:', mint);
     
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000); // Reduced to 3s
+    const timeout = setTimeout(() => controller.abort(), 3000);
     
     const response = await fetch(url, { signal: controller.signal });
     clearTimeout(timeout);
@@ -218,7 +205,7 @@ async function fetchFromDAS(rpcUrl, mint) {
     if (!rpcUrl.includes('helius')) return null;
     
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000); // Reduced to 3s
+    const timeout = setTimeout(() => controller.abort(), 3000);
     
     const response = await fetch(rpcUrl, {
       method: 'POST',
@@ -261,42 +248,84 @@ async function fetchFromDAS(rpcUrl, mint) {
   }
 }
 
+// ============================================
+// MAIN TOKEN FETCH
+// ============================================
+
 // Fetch all token accounts for an address
-export async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null) {
+export async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null, onUpdate = null) {
   const tokens = [];
   const startTime = Date.now();
   
   try {
-    logger.log('[Tokens] Starting token fetch for:', ownerAddress);
+    logger.log('[Tokens] Starting token fetch for:', ownerAddress, 'on network:', network);
     
-    const [splTokens, token2022] = await Promise.all([
+    // Fetch tokens from RPC and XDEX price API in parallel
+    const [splTokens, token2022, xdexPrices] = await Promise.all([
       fetchTokenAccountsByProgram(rpcUrl, ownerAddress, TOKEN_PROGRAM_ID),
-      fetchTokenAccountsByProgram(rpcUrl, ownerAddress, TOKEN_2022_PROGRAM_ID)
+      fetchTokenAccountsByProgram(rpcUrl, ownerAddress, TOKEN_2022_PROGRAM_ID),
+      fetchXDEXWalletTokens(ownerAddress, network)
     ]);
     
     logger.log('[Tokens] RPC done in', Date.now() - startTime, 'ms - SPL:', splTokens.length, 'Token2022:', token2022.length);
+    logger.log('[Tokens] XDEX prices received for', Object.keys(xdexPrices).length, 'tokens');
     
     tokens.push(...splTokens, ...token2022);
     
-    // Quick pass: apply cached/known metadata only (no network calls)
+    // Quick pass: apply cached/known metadata and XDEX prices
     for (const token of tokens) {
       const cacheKey = network ? `${network}:${token.mint}` : token.mint;
       
+      // Check cache first
       if (metadataCache.has(cacheKey)) {
-        Object.assign(token, metadataCache.get(cacheKey));
+        const cached = metadataCache.get(cacheKey);
+        Object.assign(token, cached);
+        // Keep XDEX price if we got one (prices update more frequently)
+        if (xdexPrices[token.mint]?.price !== undefined) {
+          token.price = parseFloat(xdexPrices[token.mint].price);
+        }
         continue;
       }
       
+      // Check known tokens FIRST (hardcoded reliable data)
       const known = getKnownTokenMetadata(token.mint, network);
       if (known) {
         token.symbol = known.symbol;
         token.name = known.name;
         token.logoURI = known.logoURI;
-        metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI });
+        // Use known price as default, but prefer XDEX price if available
+        token.price = known.price;
+        if (xdexPrices[token.mint]?.price !== undefined) {
+          token.price = parseFloat(xdexPrices[token.mint].price);
+        }
+        metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
         continue;
       }
       
-      // Fallback
+      // Apply XDEX data if available (for non-hardcoded tokens)
+      if (xdexPrices[token.mint]) {
+        const xdexData = xdexPrices[token.mint];
+        if (xdexData.price !== undefined && xdexData.price !== null) {
+          token.price = parseFloat(xdexData.price);
+        }
+        // Use XDEX metadata
+        if (xdexData.symbol) token.symbol = xdexData.symbol;
+        if (xdexData.name) token.name = xdexData.name;
+        if (xdexData.image) token.logoURI = xdexData.image;
+        
+        // If XDEX provided complete data (symbol, name, AND image), cache it
+        if (xdexData.symbol && xdexData.name && xdexData.image) {
+          metadataCache.set(cacheKey, { 
+            symbol: token.symbol, 
+            name: token.name, 
+            logoURI: token.logoURI, 
+            price: token.price 
+          });
+          continue;
+        }
+      }
+      
+      // Fallback defaults
       if (!token.symbol) {
         token.symbol = token.mint ? token.mint.slice(0, 4).toUpperCase() : 'UNK';
       }
@@ -305,24 +334,158 @@ export async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null) {
       }
     }
     
-    logger.log('[Tokens] Cache pass done in', Date.now() - startTime, 'ms');
+    logger.log('[Tokens] Quick pass done in', Date.now() - startTime, 'ms - RETURNING IMMEDIATELY');
     
-    // Fetch missing metadata (blocking but parallelized)
-    const tokensNeedingMetadata = tokens.filter(t => !metadataCache.has(network ? `${network}:${t.mint}` : t.mint));
+    // Identify tokens that still need metadata enrichment
+    const tokensNeedingMetadata = tokens.filter(t => {
+      const cacheKey = network ? `${network}:${t.mint}` : t.mint;
+      if (!metadataCache.has(cacheKey)) return true;
+      const cached = metadataCache.get(cacheKey);
+      return !cached.logoURI;
+    });
+    
+    // If we have tokens needing metadata and a callback, enrich in background
     if (tokensNeedingMetadata.length > 0) {
-      logger.log('[Tokens] Fetching metadata for', tokensNeedingMetadata.length, 'tokens');
-      await Promise.allSettled(tokensNeedingMetadata.map(async (token) => {
+      logger.log('[Tokens] Will enrich', tokensNeedingMetadata.length, 'tokens in background');
+      
+      // Fire and forget - enrich in background
+      (async () => {
         try {
-          await enrichTokenMetadata(rpcUrl, token, network);
-        } catch (e) {}
-      }));
+          // Process in batches to avoid overwhelming APIs
+          const batchSize = 5;
+          let updated = false;
+          
+          for (let i = 0; i < tokensNeedingMetadata.length; i += batchSize) {
+            const batch = tokensNeedingMetadata.slice(i, i + batchSize);
+            await Promise.allSettled(batch.map(async (token) => {
+              try {
+                await enrichTokenMetadata(rpcUrl, token, network);
+                updated = true;
+              } catch (e) {
+                logger.warn('[Tokens] Failed to enrich metadata for', token.mint, e.message);
+              }
+            }));
+            
+            // Notify after each batch if we have updates and a callback
+            if (updated && onUpdate) {
+              onUpdate([...tokens]);
+              updated = false;
+            }
+            
+            // Small delay between batches
+            if (i + batchSize < tokensNeedingMetadata.length) {
+              await new Promise(r => setTimeout(r, 100));
+            }
+          }
+          
+          // Final update
+          if (onUpdate) {
+            onUpdate([...tokens]);
+          }
+          
+          logger.log('[Tokens] Background enrichment complete in', Date.now() - startTime, 'ms');
+        } catch (e) {
+          logger.warn('[Tokens] Background enrichment error:', e);
+        }
+      })();
     }
     
-    logger.log('[Tokens] Total time:', Date.now() - startTime, 'ms');
+    logger.log('[Tokens] Returning', tokens.length, 'tokens');
     return tokens;
   } catch (e) {
     logger.error('[Tokens] Error fetching token accounts:', e);
     return [];
+  }
+}
+
+/**
+ * Fetch wallet tokens with prices from XDEX API (batch endpoint)
+ * This is the primary source for token prices - fetches ALL tokens in ONE call
+ */
+async function fetchXDEXWalletTokens(walletAddress, network) {
+  try {
+    const networkName = network || 'X1 Mainnet';
+    const url = `https://devapi.xdex.xyz/api/xendex/wallet/tokens?wallet_address=${walletAddress}&network=${encodeURIComponent(networkName)}&price=true`;
+    
+    logger.log('[XDEX] Fetching wallet tokens with prices:', url);
+    
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    
+    const response = await fetch(url, { 
+      signal: controller.signal,
+      headers: { 'Accept': 'application/json' }
+    });
+    clearTimeout(timeout);
+    
+    if (!response.ok) {
+      logger.warn('[XDEX] Wallet tokens API returned:', response.status);
+      return {};
+    }
+    
+    const data = await response.json();
+    
+    // Handle nested response: { success: true, data: { tokens: [...] } }
+    const tokenList = data?.data?.tokens || data?.tokens || (Array.isArray(data) ? data : []);
+    logger.log('[XDEX] Wallet tokens response - count:', tokenList.length);
+    
+    // Log first token structure
+    if (tokenList[0]) {
+      logger.log('[XDEX] Sample token fields:', Object.keys(tokenList[0]).join(', '));
+    }
+    
+    // Build a map of mint -> token data with prices
+    const priceMap = {};
+    
+    // Helper to extract price from various field names
+    const extractPrice = (token) => {
+      const priceValue = token.price ?? token.priceUsd ?? token.price_usd ?? 
+                         token.priceUSD ?? token.usdPrice ?? token.usd_price ?? 
+                         token.tokenPrice ?? token.token_price ?? null;
+      
+      if (priceValue !== null && priceValue !== undefined) {
+        const parsed = parseFloat(priceValue);
+        if (!isNaN(parsed) && parsed >= 0) {
+          return parsed;
+        }
+      }
+      return null;
+    };
+    
+    for (const token of tokenList) {
+      if (token.mint || token.address) {
+        const mint = token.mint || token.address;
+        const price = extractPrice(token);
+        
+        // Get image URL, but only if it's a full URL
+        let imageUrl = token.imageUrl || token.image || token.logo || token.logoURI || token.icon;
+        if (imageUrl && !imageUrl.startsWith('http')) {
+          imageUrl = null;
+        }
+        
+        priceMap[mint] = {
+          price: price,
+          symbol: token.symbol,
+          name: token.name,
+          image: imageUrl
+        };
+        
+        if (price !== null) {
+          logger.log('[XDEX] Price found for', token.symbol || mint.slice(0,8), ':', price);
+        }
+      }
+    }
+    
+    logger.log('[XDEX] Total prices extracted:', Object.values(priceMap).filter(p => p.price !== null).length);
+    
+    return priceMap;
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      logger.warn('[XDEX] Wallet tokens request timeout');
+    } else {
+      logger.warn('[XDEX] Failed to fetch wallet tokens:', e.message);
+    }
+    return {};
   }
 }
 
@@ -335,13 +498,13 @@ async function fetchTokenAccountsByProgram(rpcUrl, ownerAddress, programId) {
   
   logger.log(`[Tokens] Fetching ${programId === TOKEN_2022_PROGRAM_ID ? 'Token-2022' : 'SPL Token'} accounts from:`, rpcUrl);
   
-  const maxRetries = 2; // Reduced from 3
+  const maxRetries = 2;
   let lastError = null;
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000); // Reduced from 8s to 5s
+      const timeout = setTimeout(() => controller.abort(), 5000);
       
       const response = await fetch(rpcUrl, {
         method: 'POST',
@@ -372,7 +535,6 @@ async function fetchTokenAccountsByProgram(rpcUrl, ownerAddress, programId) {
       }
       
       const data = await response.json();
-      logger.log('[Tokens] RPC response:', JSON.stringify(data).slice(0, 500));
       
       if (data.error) {
         logger.warn('[Tokens] RPC error fetching tokens:', data.error, `(attempt ${attempt}/${maxRetries})`);
@@ -429,6 +591,10 @@ async function fetchTokenAccountsByProgram(rpcUrl, ownerAddress, programId) {
   return [];
 }
 
+// ============================================
+// METADATA ENRICHMENT
+// ============================================
+
 // Enrich token with metadata
 async function enrichTokenMetadata(rpcUrl, token, network = null) {
   const cacheKey = network ? `${network}:${token.mint}` : token.mint;
@@ -451,6 +617,13 @@ async function enrichTokenMetadata(rpcUrl, token, network = null) {
     return;
   }
   
+  // Check if this is an XDEX LP token (by mint authority)
+  const isLP = await checkAndApplyLPBranding(rpcUrl, token, network);
+  if (isLP) {
+    metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, isLPToken: true });
+    return;
+  }
+  
   let apiMetadata = null;
   
   // Try X1 Mobile API
@@ -461,33 +634,16 @@ async function enrichTokenMetadata(rpcUrl, token, network = null) {
       token.name = apiMetadata.name;
       token.logoURI = apiMetadata.logoURI;
       token.price = apiMetadata.price || null;
-      metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
-      return;
+      
+      // If we have price, we're done. Otherwise continue to check XDEX for price.
+      if (token.price !== null && token.price !== undefined) {
+        metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
+        return;
+      }
+      // Continue to XDEX to try to get price
     }
   } catch (e) {
     logger.warn('Failed to fetch from X1 Mobile API:', e);
-  }
-  
-  // Try Explorer API (with short timeout - often returns 404)
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 2000); // 2 second timeout
-    const explorerResponse = await fetch('https://explorer.mainnet.x1.xyz/api/v2/addresses/' + token.mint, {
-      signal: controller.signal
-    });
-    clearTimeout(timeout);
-    if (explorerResponse.ok) {
-      const explorerData = await explorerResponse.json();
-      if (explorerData.token && explorerData.token.name) {
-        token.symbol = explorerData.token.symbol || token.mint.slice(0, 4);
-        token.name = explorerData.token.name;
-        token.logoURI = explorerData.token.icon_url || explorerData.token.image || null;
-        metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI });
-        return;
-      }
-    }
-  } catch (e) {
-    // Silently ignore - Explorer API often fails
   }
   
   // Try Token-2022 extension metadata
@@ -522,7 +678,7 @@ async function enrichTokenMetadata(rpcUrl, token, network = null) {
     if (metaplexData) {
       token.symbol = apiMetadata?.symbol || metaplexData.symbol || token.mint.slice(0, 4);
       token.name = apiMetadata?.name || metaplexData.name || 'Unknown Token';
-      token.logoURI = metaplexData.uri || null;
+      token.logoURI = null; // Will be set from URI fetch
       token.price = apiMetadata?.price || null;
       
       if (metaplexData.uri && metaplexData.uri.startsWith('http')) {
@@ -568,23 +724,84 @@ async function enrichTokenMetadata(rpcUrl, token, network = null) {
     logger.warn('Failed to fetch from DAS API:', e);
   }
   
-  // Try XDEX API
+  // Try Jupiter API (for Solana tokens)
   try {
-    logger.log('[Token API] Trying XDEX API for:', token.mint);
-    const xdexResponse = await fetch('https://api.xdex.xyz/api/xendex/tokens/' + token.mint);
-    if (xdexResponse.ok) {
-      const xdexData = await xdexResponse.json();
-      logger.log('[Token API] XDEX response:', xdexData);
-      if (xdexData.name) {
-        token.symbol = xdexData.symbol || token.mint.slice(0, 4);
-        token.name = xdexData.name;
-        token.logoURI = xdexData.image || xdexData.logo || xdexData.logoURI || xdexData.icon || null;
-        metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    const jupiterResponse = await fetch(`https://lite-api.jup.ag/tokens/v1/token/${token.mint}`, {
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    
+    if (jupiterResponse.ok) {
+      const jupiterData = await jupiterResponse.json();
+      if (jupiterData && jupiterData.name) {
+        token.symbol = jupiterData.symbol || token.mint.slice(0, 4);
+        token.name = jupiterData.name;
+        token.logoURI = jupiterData.logoURI || null;
+        metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
         return;
       }
     }
   } catch (e) {
-    logger.warn('[Token API] XDEX API failed:', e.message);
+    // Silently ignore - Jupiter may not have the token
+  }
+  
+  // Try XDEX API with rate limiting (single token endpoint as fallback)
+  const xdexCacheKey = `xdex:${token.mint}`;
+  if (!hasRecentlyFailed(xdexCacheKey)) {
+    try {
+      logger.log('[Token API] Trying XDEX API for:', token.mint);
+      
+      const xdexResponse = await fetchWithRateLimit(
+        'https://api.xdex.xyz/api/xendex/tokens/' + token.mint,
+        { signal: AbortSignal.timeout(5000) }
+      );
+      
+      if (xdexResponse.status === 429) {
+        logger.warn('[Token API] XDEX rate limited for:', token.mint);
+        markFailed(xdexCacheKey);
+      } else if (xdexResponse.status === 404) {
+        markFailed(xdexCacheKey);
+      } else if (xdexResponse.ok) {
+        clearFailed(xdexCacheKey);
+        const xdexData = await xdexResponse.json();
+        logger.log('[Token API] XDEX response:', xdexData);
+        
+        // Get price from XDEX if available
+        let xdexPrice = null;
+        if (xdexData.price !== undefined && xdexData.price !== null) {
+          xdexPrice = parseFloat(xdexData.price);
+        } else if (xdexData.priceUsd !== undefined && xdexData.priceUsd !== null) {
+          xdexPrice = parseFloat(xdexData.priceUsd);
+        }
+        
+        // If we already have metadata from mobile API, just grab the price
+        if (token.name && token.name !== 'Unknown Token' && token.logoURI) {
+          if (xdexPrice !== null && (token.price === null || token.price === undefined)) {
+            token.price = xdexPrice;
+            logger.log('[Token API] Got price from XDEX:', xdexPrice, 'for', token.symbol);
+          }
+          metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
+          return;
+        }
+        
+        // Otherwise use full XDEX metadata
+        if (xdexData.name) {
+          token.symbol = xdexData.symbol || token.symbol || token.mint.slice(0, 4);
+          token.name = xdexData.name;
+          token.logoURI = xdexData.image || xdexData.logo || xdexData.logoURI || xdexData.icon || token.logoURI || null;
+          if (xdexPrice !== null) {
+            token.price = xdexPrice;
+          }
+          metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
+          return;
+        }
+      }
+    } catch (e) {
+      logger.warn('[Token API] XDEX API failed:', e.message);
+      markFailed(xdexCacheKey);
+    }
   }
   
   // Fallback to API metadata if we have it
@@ -604,47 +821,49 @@ async function enrichTokenMetadata(rpcUrl, token, network = null) {
   metadataCache.set(token.mint, { symbol: token.symbol, name: token.name, logoURI: null });
 }
 
-// Fetch Token-2022 extension metadata
-export async function fetchToken2022Metadata(rpcUrl, mint) {
+/**
+ * Fetch just the price for a token from XDEX (with rate limiting)
+ */
+export async function fetchTokenPriceFromXDEX(mint) {
+  const cacheKey = `xdex-price:${mint}`;
+  
+  if (hasRecentlyFailed(cacheKey)) {
+    return null;
+  }
+  
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
+    const response = await fetchWithRateLimit(
+      'https://api.xdex.xyz/api/xendex/tokens/' + mint,
+      { signal: AbortSignal.timeout(3000) }
+    );
     
-    const response = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'getAccountInfo',
-        params: [mint, { encoding: 'jsonParsed' }]
-      }),
-      signal: controller.signal
-    });
-    clearTimeout(timeout);
+    if (response.status === 429 || response.status === 404) {
+      markFailed(cacheKey);
+      return null;
+    }
     
-    const data = await response.json();
-    if (!data.result?.value?.data?.parsed?.info) return null;
-    
-    const info = data.result.value.data.parsed.info;
-    if (info.extensions) {
-      for (const ext of info.extensions) {
-        if (ext.extension === 'tokenMetadata') {
-          const state = ext.state;
-          return {
-            name: state.name || null,
-            symbol: state.symbol || null,
-            uri: state.uri || null
-          };
-        }
+    if (response.ok) {
+      clearFailed(cacheKey);
+      const data = await response.json();
+      if (data.price !== undefined && data.price !== null) {
+        return parseFloat(data.price);
       }
+      if (data.priceUsd !== undefined && data.priceUsd !== null) {
+        return parseFloat(data.priceUsd);
+      }
+    } else {
+      markFailed(cacheKey);
     }
     return null;
   } catch (e) {
-    logger.warn('Error fetching Token-2022 metadata:', e);
+    markFailed(cacheKey);
     return null;
   }
 }
+
+// ============================================
+// METAPLEX ON-CHAIN METADATA
+// ============================================
 
 // Fetch Metaplex on-chain metadata
 async function fetchMetaplexMetadata(rpcUrl, mint) {
@@ -716,6 +935,56 @@ function parseMetaplexMetadata(data) {
     return null;
   }
 }
+
+// ============================================
+// TOKEN-2022 METADATA
+// ============================================
+
+// Fetch Token-2022 extension metadata
+export async function fetchToken2022Metadata(rpcUrl, mint) {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    
+    const response = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'getAccountInfo',
+        params: [mint, { encoding: 'jsonParsed' }]
+      }),
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    
+    const data = await response.json();
+    if (!data.result?.value?.data?.parsed?.info) return null;
+    
+    const info = data.result.value.data.parsed.info;
+    if (info.extensions) {
+      for (const ext of info.extensions) {
+        if (ext.extension === 'tokenMetadata') {
+          const state = ext.state;
+          return {
+            name: state.name || null,
+            symbol: state.symbol || null,
+            uri: state.uri || null
+          };
+        }
+      }
+    }
+    return null;
+  } catch (e) {
+    logger.warn('Error fetching Token-2022 metadata:', e);
+    return null;
+  }
+}
+
+// ============================================
+// URI METADATA FETCH (IPFS, Arweave, etc.)
+// ============================================
 
 // Fetch metadata from URI (IPFS, Arweave, etc.)
 export async function fetchTokenMetadataFromURI(uri) {
