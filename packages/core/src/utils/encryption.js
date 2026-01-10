@@ -153,4 +153,53 @@ export function isEncrypted(data) {
   }
 }
 
-export default { encryptData, decryptData, hashPassword, verifyPassword, isEncrypted };
+/**
+ * X1W-SEC-009 FIX: Securely wipe sensitive data from memory
+ * Zeros out Uint8Arrays and attempts to clear strings
+ * Note: JavaScript strings are immutable, so we can only encourage GC
+ */
+export function secureWipe(data) {
+  if (!data) return;
+  
+  if (data instanceof Uint8Array || data instanceof Int8Array) {
+    // Zero out typed arrays
+    data.fill(0);
+  } else if (Array.isArray(data)) {
+    // Zero out regular arrays
+    for (let i = 0; i < data.length; i++) {
+      if (typeof data[i] === 'number') {
+        data[i] = 0;
+      } else if (data[i] instanceof Uint8Array) {
+        data[i].fill(0);
+      }
+    }
+    data.length = 0;
+  } else if (typeof data === 'object' && data !== null) {
+    // Recursively wipe object properties
+    for (const key of Object.keys(data)) {
+      if (data[key] instanceof Uint8Array) {
+        data[key].fill(0);
+      }
+      // Set to null to encourage GC
+      data[key] = null;
+    }
+  }
+  // For strings, we can't modify them but setting the reference to null helps GC
+  return null;
+}
+
+/**
+ * X1W-SEC-009: Wrapper to run a function and wipe sensitive intermediate data
+ */
+export async function withSecureCleanup(fn, ...sensitiveRefs) {
+  try {
+    return await fn();
+  } finally {
+    // Wipe all sensitive references after function completes
+    for (const ref of sensitiveRefs) {
+      secureWipe(ref);
+    }
+  }
+}
+
+export default { encryptData, decryptData, hashPassword, verifyPassword, isEncrypted, secureWipe, withSecureCleanup };

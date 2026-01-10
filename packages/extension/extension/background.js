@@ -3,6 +3,26 @@
 // Fixed: No spurious accountChanged events on tab switch or network change
 // Fixed: Uses long-lived ports for reliable event broadcasting (no activeTab needed)
 
+// X1W-SEC-011 FIX: Production-safe logging - disable verbose logs in production
+const DEBUG_MODE = false; // Set to true for development debugging
+const logger = {
+  log: (...args) => DEBUG_MODE && console.log(...args),
+  warn: (...args) => console.warn(...args), // Always show warnings
+  error: (...args) => console.error(...args), // Always show errors
+  // Redact sensitive data in production
+  logSafe: (msg, data) => {
+    if (DEBUG_MODE) {
+      console.log(msg, data);
+    } else if (data) {
+      // In production, redact public keys and other potentially sensitive info
+      const safeData = typeof data === 'string' && data.length > 20 
+        ? data.slice(0, 8) + '...' + data.slice(-4)
+        : '[REDACTED]';
+      console.log(msg, safeData);
+    }
+  }
+};
+
 // Enable side panel on extension icon click
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() => {});
 
@@ -14,8 +34,32 @@ const PENDING_REQUESTS_KEY = 'x1wallet_pending_requests';
 // Map of origin -> Set of ports (multiple tabs can have same origin)
 const connectedPorts = new Map();
 
+// ====== POPUP CONNECTION TRACKING ======
+// Track connected popup for in-popup approval flow
+let popupPort = null;
+let popupConnected = false;
+
 // Handle port connections from content scripts
 chrome.runtime.onConnect.addListener((port) => {
+  // Handle popup connection for in-popup approvals
+  if (port.name === 'x1-wallet-popup') {
+    logger.log('[Background] Popup connected');
+    popupPort = port;
+    popupConnected = true;
+    
+    port.onDisconnect.addListener(() => {
+      logger.log('[Background] Popup disconnected');
+      popupPort = null;
+      popupConnected = false;
+    });
+    
+    // If there's a pending request, notify popup immediately
+    if (pendingRequest) {
+      port.postMessage({ type: 'pending-request', request: pendingRequest });
+    }
+    return;
+  }
+  
   if (port.name !== 'x1-wallet-events') return;
   
   // Get origin from sender
@@ -23,11 +67,11 @@ chrome.runtime.onConnect.addListener((port) => {
   const tabId = port.sender?.tab?.id;
   
   if (!origin) {
-    console.log('[Background] Port connection without origin, ignoring');
+    logger.log('[Background] Port connection without origin, ignoring');
     return;
   }
   
-  console.log('[Background] Port connected from:', origin, 'tabId:', tabId);
+  logger.log('[Background] Port connected from:', origin, 'tabId:', tabId);
   
   // Store port by origin
   if (!connectedPorts.has(origin)) {
@@ -37,7 +81,7 @@ chrome.runtime.onConnect.addListener((port) => {
   
   // Handle port disconnect
   port.onDisconnect.addListener(() => {
-    console.log('[Background] Port disconnected from:', origin, 'tabId:', tabId);
+    logger.log('[Background] Port disconnected from:', origin, 'tabId:', tabId);
     const ports = connectedPorts.get(origin);
     if (ports) {
       ports.delete(port);
@@ -49,7 +93,7 @@ chrome.runtime.onConnect.addListener((port) => {
   
   // Handle messages through port (optional - for future use)
   port.onMessage.addListener((message) => {
-    console.log('[Background] Port message from', origin, ':', message.type);
+    logger.log('[Background] Port message from', origin, ':', message.type);
   });
 });
 
@@ -65,10 +109,10 @@ function broadcastToOrigins(origins, message) {
         try {
           port.postMessage(message);
           successCount++;
-          console.log('[Background] Broadcasted to port for:', origin);
+          logger.log('[Background] Broadcasted to port for:', origin);
         } catch (err) {
           failCount++;
-          console.log('[Background] Failed to broadcast to port:', origin, err.message);
+          logger.log('[Background] Failed to broadcast to port:', origin, err.message);
           // Remove dead port
           ports.delete(port);
         }
@@ -76,7 +120,7 @@ function broadcastToOrigins(origins, message) {
     }
   }
   
-  console.log('[Background] Broadcast complete - success:', successCount, 'failed:', failCount);
+  logger.log('[Background] Broadcast complete - success:', successCount, 'failed:', failCount);
   return { successCount, failCount };
 }
 
@@ -121,7 +165,7 @@ async function isSiteConnected(origin) {
     const sessionAge = Date.now() - siteData.connectedAt;
     if (sessionAge > SESSION_TIMEOUT_MS) {
       // Session expired - remove connection
-      console.log('[Background] Session expired for:', origin);
+      logger.log('[Background] Session expired for:', origin);
       delete sites[origin];
       await saveConnectedSites(sites);
       return false;
@@ -236,7 +280,7 @@ function clearPendingRequestsForOrigin(origin) {
     }
   }
   if (removed.length > 0) {
-    console.log('[Background] Cleared', removed.length, 'pending requests for', origin, ':', removed);
+    logger.log('[Background] Cleared', removed.length, 'pending requests for', origin, ':', removed);
   }
   return removed.length;
 }
@@ -249,7 +293,7 @@ function clearAllPendingRequests() {
     item.resolve({ error: 'Account changed - request cancelled' });
   }
   if (count > 0) {
-    console.log('[Background] Cleared all', count, 'pending requests due to account change');
+    logger.log('[Background] Cleared all', count, 'pending requests due to account change');
   }
   return count;
 }
@@ -263,7 +307,7 @@ function isLedgerBusy() {
 function setLedgerBusy(busy, origin = null) {
   ledgerBusy = busy;
   currentLedgerOrigin = busy ? origin : null;
-  console.log('[Background] Ledger busy:', busy, origin ? `for ${origin}` : '');
+  logger.log('[Background] Ledger busy:', busy, origin ? `for ${origin}` : '');
 }
 
 // Add request to queue and process
@@ -276,7 +320,7 @@ async function queueApprovalRequest(requestData, url) {
       timestamp: Date.now()
     });
     
-    console.log('[Background] Request queued, queue length:', requestQueue.length);
+    logger.log('[Background] Request queued, queue length:', requestQueue.length);
     
     // Start processing if not already
     processNextInQueue();
@@ -292,14 +336,14 @@ async function processNextInQueue() {
   
   // If there's still an approval window open, wait for it to close
   if (approvalWindowId) {
-    console.log('[Background] Waiting for current approval window to close');
+    logger.log('[Background] Waiting for current approval window to close');
     return;
   }
   
   isProcessingQueue = true;
   
   const item = requestQueue.shift();
-  console.log('[Background] Processing queued request:', item.request.type, 'from:', item.request.origin);
+  logger.log('[Background] Processing queued request:', item.request.type, 'from:', item.request.origin);
   
   // Set up the pending request
   pendingRequest = item.request;
@@ -309,30 +353,62 @@ async function processNextInQueue() {
     setTimeout(() => {
       isProcessingQueue = false;
       processNextInQueue();
-    }, 100); // Small delay to let window close
+    }, 100); // Small delay to let popup update
   };
   
-  // Open approval window
-  try {
-    const win = await chrome.windows.create({
-      url: item.url,
-      type: 'popup',
-      width: 400,
-      height: 620,
-      focused: true
-    });
-    approvalWindowId = win?.id;
-    console.log('[Background] Approval window opened:', approvalWindowId);
-  } catch (err) {
-    console.error('[Background] Failed to open approval window:', err);
-    approvalWindowId = null;
-    pendingRequestCallback({ error: 'Failed to open approval window' });
+  // ====== IN-POPUP APPROVAL FLOW ======
+  // Priority: 1) Use existing popup, 2) Open popup, 3) Fall back to window
+  
+  // Option 1: If popup is already open, just notify it
+  if (popupConnected && popupPort) {
+    logger.log('[Background] Popup already open, sending pending request');
+    try {
+      popupPort.postMessage({ type: 'pending-request', request: pendingRequest });
+      // No approval window needed - popup handles it
+      approvalWindowId = null;
+    } catch (err) {
+      logger.log('[Background] Failed to message popup, will open new');
+      popupConnected = false;
+      popupPort = null;
+    }
+  }
+  
+  // Option 2: Try to open the extension popup (MV3)
+  if (!popupConnected) {
+    try {
+      // chrome.action.openPopup() opens the default_popup from manifest
+      // The popup will detect the pending request on load
+      await chrome.action.openPopup();
+      logger.log('[Background] Extension popup opened via action.openPopup()');
+      // Give popup time to connect
+      await new Promise(resolve => setTimeout(resolve, 300));
+    } catch (err) {
+      logger.log('[Background] action.openPopup() failed:', err.message);
+      
+      // Option 3: Fall back to separate window (last resort)
+      try {
+        const win = await chrome.windows.create({
+          url: item.url,
+          type: 'popup',
+          width: 400,
+          height: 620,
+          focused: true
+        });
+        approvalWindowId = win?.id;
+        logger.log('[Background] Fallback approval window opened:', approvalWindowId);
+      } catch (winErr) {
+        console.error('[Background] Failed to open approval window:', winErr);
+        approvalWindowId = null;
+        pendingRequestCallback({ error: 'Failed to open approval window' });
+        return;
+      }
+    }
   }
   
   // Timeout after 60 seconds
   setTimeout(() => {
     if (pendingRequest === item.request && pendingRequestCallback) {
-      console.log('[Background] Request timeout for:', item.request.type);
+      logger.log('[Background] Request timeout for:', item.request.type);
       closeApprovalWindow();
       pendingRequestCallback({ error: 'Request timeout' });
       pendingRequestCallback = null;
@@ -359,7 +435,7 @@ async function closeApprovalWindow() {
 // Listen for approval window being closed by user
 chrome.windows.onRemoved.addListener((windowId) => {
   if (windowId === approvalWindowId) {
-    console.log('[Background] Approval window closed by user');
+    logger.log('[Background] Approval window closed by user');
     approvalWindowId = null;
     
     // If there's a pending request, reject it
@@ -393,7 +469,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   
   // Handle ACTUAL account change from popup (when user switches wallet)
   if (message.type === 'account-changed') {
-    console.log('[Background] Received account-changed message from popup:', message.publicKey);
+    logger.log('[Background] Received account-changed message from popup:', message.publicKey);
     handleAccountChanged(message.publicKey).then(result => {
       sendResponse(result || { success: true });
     }).catch(err => {
@@ -450,7 +526,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           };
           return saveConnectedSites(sites);
         }).then(() => {
-          console.log('[Background] Saved connected site:', currentRequest.origin);
+          logger.log('[Background] Saved connected site:', currentRequest.origin);
           // Now resolve the promise
           pendingRequestCallback(payload);
           pendingRequestCallback = null;
@@ -502,20 +578,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // Handle network change - broadcast ONLY networkChanged to all connected tabs
 // DO NOT emit accountChanged - that should only happen when account actually changes
 async function handleNetworkChanged(network) {
-  console.log('[Background] ====== NETWORK CHANGE START ======');
-  console.log('[Background] Network changed to:', network);
+  logger.log('[Background] ====== NETWORK CHANGE START ======');
+  logger.log('[Background] Network changed to:', network);
   
   const chain = networkToChain(network);
-  console.log('[Background] Chain ID:', chain);
+  logger.log('[Background] Chain ID:', chain);
   
   const connectedSites = await getConnectedSites();
   const origins = Object.keys(connectedSites);
   
-  console.log('[Background] Connected sites:', origins);
-  console.log('[Background] Active ports:', Array.from(connectedPorts.keys()));
+  logger.log('[Background] Connected sites:', origins);
+  logger.log('[Background] Active ports:', Array.from(connectedPorts.keys()));
   
   if (origins.length === 0) {
-    console.log('[Background] No connected sites to notify');
+    logger.log('[Background] No connected sites to notify');
     return;
   }
   
@@ -526,15 +602,15 @@ async function handleNetworkChanged(network) {
     payload: { network, chain }
   };
   
-  console.log('[Background] Broadcasting message:', JSON.stringify(message));
+  logger.log('[Background] Broadcasting message:', JSON.stringify(message));
   
   const { successCount, failCount } = broadcastToOrigins(origins, message);
-  console.log('[Background] Broadcast result - success:', successCount, 'failed:', failCount);
+  logger.log('[Background] Broadcast result - success:', successCount, 'failed:', failCount);
   
   // Fallback: Also try tabs.sendMessage for tabs that might not have port connection yet
   // This handles edge cases where content script loaded but port not yet connected
   if (successCount < origins.length) {
-    console.log('[Background] Using fallback tabs.sendMessage for remaining sites');
+    logger.log('[Background] Using fallback tabs.sendMessage for remaining sites');
     try {
       const tabs = await chrome.tabs.query({});
       
@@ -546,9 +622,9 @@ async function handleNetworkChanged(network) {
           
           // Only notify connected sites that weren't reached via port
           if (origins.includes(tabOrigin)) {
-            console.log('[Background] Fallback sending to tab:', tab.id, tabOrigin);
+            logger.log('[Background] Fallback sending to tab:', tab.id, tabOrigin);
             chrome.tabs.sendMessage(tab.id, message).catch((e) => {
-              console.log('[Background] Fallback failed for tab:', tab.id, e.message);
+              logger.log('[Background] Fallback failed for tab:', tab.id, e.message);
             });
           }
         } catch (e) {
@@ -559,38 +635,38 @@ async function handleNetworkChanged(network) {
       console.error('[Background] Error in fallback network broadcast:', err);
     }
   }
-  console.log('[Background] ====== NETWORK CHANGE END ======');
+  logger.log('[Background] ====== NETWORK CHANGE END ======');
 }
 
 // Handle ACTUAL account change - when user switches wallet in the extension
 // Broadcast to ALL connected dApps so they can update their UI
 async function handleAccountChanged(newPublicKey, forceSwitch = false) {
-  console.log('[Background] ====== ACCOUNT CHANGE START ======');
-  console.log('[Background] handleAccountChanged called with:', newPublicKey);
+  logger.log('[Background] ====== ACCOUNT CHANGE START ======');
+  logger.log('[Background] handleAccountChanged called with:', newPublicKey);
   
   // Check if Ledger is busy - block account switching during Ledger operations
   if (ledgerBusy && !forceSwitch) {
-    console.log('[Background] ⚠️ BLOCKED: Cannot switch accounts while Ledger is busy');
-    console.log('[Background] ====== ACCOUNT CHANGE END (blocked - Ledger busy) ======');
+    logger.log('[Background] ⚠️ BLOCKED: Cannot switch accounts while Ledger is busy');
+    logger.log('[Background] ====== ACCOUNT CHANGE END (blocked - Ledger busy) ======');
     // Return error that popup can display
     return { error: 'Cannot switch accounts while Ledger signing is in progress. Please complete or cancel the current operation.' };
   }
   
   // Deduplicate - don't broadcast if key hasn't actually changed
   if (newPublicKey === lastKnownPublicKey) {
-    console.log('[Background] Same public key, skipping broadcast');
-    console.log('[Background] ====== ACCOUNT CHANGE END (skipped) ======');
+    logger.log('[Background] Same public key, skipping broadcast');
+    logger.log('[Background] ====== ACCOUNT CHANGE END (skipped) ======');
     return { success: true, skipped: true };
   }
   
-  console.log('[Background] Previous key:', lastKnownPublicKey);
-  console.log('[Background] New key:', newPublicKey);
+  logger.log('[Background] Previous key:', lastKnownPublicKey);
+  logger.log('[Background] New key:', newPublicKey);
   
   // IMPORTANT: Clear ALL pending requests when account changes
   // Old requests should not execute against the new account
   const clearedCount = clearAllPendingRequests();
   if (clearedCount > 0) {
-    console.log('[Background] Cleared', clearedCount, 'pending requests due to account change');
+    logger.log('[Background] Cleared', clearedCount, 'pending requests due to account change');
   }
   
   // Update last known public key
@@ -603,12 +679,12 @@ async function handleAccountChanged(newPublicKey, forceSwitch = false) {
   const connectedSites = await getConnectedSites();
   const origins = Object.keys(connectedSites);
   
-  console.log('[Background] Connected sites:', origins);
-  console.log('[Background] Active ports:', Array.from(connectedPorts.keys()));
+  logger.log('[Background] Connected sites:', origins);
+  logger.log('[Background] Active ports:', Array.from(connectedPorts.keys()));
   
   if (origins.length === 0) {
-    console.log('[Background] No connected sites to notify about account change');
-    console.log('[Background] ====== ACCOUNT CHANGE END (no sites) ======');
+    logger.log('[Background] No connected sites to notify about account change');
+    logger.log('[Background] ====== ACCOUNT CHANGE END (no sites) ======');
     return { success: true };
   }
   
@@ -626,14 +702,14 @@ async function handleAccountChanged(newPublicKey, forceSwitch = false) {
     payload: { publicKey: newPublicKey }
   };
   
-  console.log('[Background] Broadcasting message:', JSON.stringify(message));
+  logger.log('[Background] Broadcasting message:', JSON.stringify(message));
   
   const { successCount, failCount } = broadcastToOrigins(origins, message);
-  console.log('[Background] Broadcast result - success:', successCount, 'failed:', failCount);
+  logger.log('[Background] Broadcast result - success:', successCount, 'failed:', failCount);
   
   // Fallback: Also try tabs.sendMessage for tabs without port connection
   if (successCount < origins.length) {
-    console.log('[Background] Using fallback tabs.sendMessage for remaining sites');
+    logger.log('[Background] Using fallback tabs.sendMessage for remaining sites');
     try {
       const tabs = await chrome.tabs.query({});
       for (const tab of tabs) {
@@ -641,9 +717,9 @@ async function handleAccountChanged(newPublicKey, forceSwitch = false) {
         try {
           const tabOrigin = new URL(tab.url).origin;
           if (origins.includes(tabOrigin)) {
-            console.log('[Background] Fallback sending to tab:', tab.id, tabOrigin);
+            logger.log('[Background] Fallback sending to tab:', tab.id, tabOrigin);
             chrome.tabs.sendMessage(tab.id, message).catch((e) => {
-              console.log('[Background] Fallback failed for tab:', tab.id, e.message);
+              logger.log('[Background] Fallback failed for tab:', tab.id, e.message);
             });
           }
         } catch (e) {}
@@ -652,7 +728,7 @@ async function handleAccountChanged(newPublicKey, forceSwitch = false) {
       console.error('[Background] Error in fallback account broadcast:', err);
     }
   }
-  console.log('[Background] ====== ACCOUNT CHANGE END ======');
+  logger.log('[Background] ====== ACCOUNT CHANGE END ======');
 }
 
 // Notify a specific origin if the account has changed since last notification
@@ -685,7 +761,7 @@ async function notifyIfAccountChanged(origin) {
     return;
   }
   
-  console.log('[Background] Site', origin, 'has old key, updating to:', currentKey);
+  logger.log('[Background] Site', origin, 'has old key, updating to:', currentKey);
   
   // Update the site's stored key
   connectedSites[origin].publicKey = currentKey;
@@ -706,7 +782,7 @@ async function notifyIfAccountChanged(origin) {
     for (const port of ports) {
       try {
         port.postMessage(message);
-        console.log('[Background] Sent accountChanged to:', origin);
+        logger.log('[Background] Sent accountChanged to:', origin);
       } catch (e) {
         // Port might be disconnected
       }
@@ -721,7 +797,7 @@ async function handleProviderRequest(message, sender) {
   // Use secure origin validation
   const origin = validateOrigin(message.origin, sender);
   
-  console.log('[Background] Provider request:', method, 'from:', origin);
+  logger.log('[Background] Provider request:', method, 'from:', origin);
   
   // Track request time for this origin (helps determine active tab)
   originLastRequestTime.set(origin, Date.now());
@@ -732,7 +808,7 @@ async function handleProviderRequest(message, sender) {
       if (!params?.onlyIfTrusted) {
         mostRecentActiveOrigin = origin;
         mostRecentActiveTime = Date.now();
-        console.log('[Background] User connect (non-silent) from:', origin);
+        logger.log('[Background] User connect (non-silent) from:', origin);
       }
       return handleConnect(origin, favicon, sender, params || {});
       
@@ -783,7 +859,7 @@ async function handleConnect(origin, favicon, sender, params = {}) {
     
     // Return stored publicKey - don't update on reconnect
     if (siteData && siteData.publicKey) {
-      console.log('[Background] Site already connected, returning STORED wallet info:', origin);
+      logger.log('[Background] Site already connected, returning STORED wallet info:', origin);
       return { result: { publicKey: siteData.publicKey, network, chain } };
     }
     
@@ -796,19 +872,19 @@ async function handleConnect(origin, favicon, sender, params = {}) {
     }
     
     // Remove stale connection
-    console.log('[Background] Removing stale connection for:', origin);
+    logger.log('[Background] Removing stale connection for:', origin);
     delete sites[origin];
     await saveConnectedSites(sites);
   }
   
   // If onlyIfTrusted is set and site is not connected, reject silently
   if (params.onlyIfTrusted) {
-    console.log('[Background] Silent connect rejected - site not trusted:', origin);
+    logger.log('[Background] Silent connect rejected - site not trusted:', origin);
     return { error: 'User rejected the request.' };
   }
   
   // Queue the request
-  console.log('[Background] Queueing connect request for:', origin);
+  logger.log('[Background] Queueing connect request for:', origin);
   return queueApprovalRequest({
     type: 'connect',
     origin,
@@ -872,7 +948,7 @@ async function handleSwitchChain(params, origin) {
   // Verify site is connected before allowing network switch
   const connected = await isSiteConnected(origin);
   if (!connected) {
-    console.log('[Background] Rejecting switchChain - site not connected:', origin);
+    logger.log('[Background] Rejecting switchChain - site not connected:', origin);
     throw new Error('Site not connected. Please connect first.');
   }
   
@@ -888,7 +964,7 @@ async function handleSwitchChain(params, origin) {
     await saveConnectedSites(sites);
   }
   
-  console.log('[Background] Switched to chain:', chain, 'network:', network, 'for origin:', origin);
+  logger.log('[Background] Switched to chain:', chain, 'network:', network, 'for origin:', origin);
   
   // Broadcast network change to the requesting origin (and all connected sites)
   const connectedOrigins = Object.keys(sites);
@@ -917,18 +993,18 @@ async function handleDisconnect(origin) {
 
 // Handle sign transaction
 async function handleSignTransaction(params, origin, sender) {
-  console.log('[Background] signTransaction from origin:', origin);
+  logger.log('[Background] signTransaction from origin:', origin);
   const connected = await isSiteConnected(origin);
-  console.log('[Background] Site connected:', connected);
+  logger.log('[Background] Site connected:', connected);
   
   if (!connected) {
     const sites = await getConnectedSites();
-    console.log('[Background] Connected sites:', Object.keys(sites));
+    logger.log('[Background] Connected sites:', Object.keys(sites));
     throw new Error('Site not connected');
   }
   
   // Queue the request (like Backpack does)
-  console.log('[Background] Queueing signTransaction request for:', origin);
+  logger.log('[Background] Queueing signTransaction request for:', origin);
   return queueApprovalRequest({
     type: 'signTransaction',
     origin,
@@ -945,7 +1021,7 @@ async function handleSignAllTransactions(params, origin, sender) {
   }
   
   // Queue the request (like Backpack does)
-  console.log('[Background] Queueing signAllTransactions request for:', origin);
+  logger.log('[Background] Queueing signAllTransactions request for:', origin);
   return queueApprovalRequest({
     type: 'signAllTransactions',
     origin,
@@ -962,7 +1038,7 @@ async function handleSignAndSendTransaction(params, origin, sender) {
   }
   
   // Queue the request (like Backpack does)
-  console.log('[Background] Queueing signAndSendTransaction request for:', origin);
+  logger.log('[Background] Queueing signAndSendTransaction request for:', origin);
   return queueApprovalRequest({
     type: 'signAndSendTransaction',
     origin,
@@ -980,7 +1056,7 @@ async function handleSignMessage(params, origin, sender) {
   }
   
   // Queue the request - let user decide via popup
-  console.log('[Background] Queueing signMessage request for:', origin);
+  logger.log('[Background] Queueing signMessage request for:', origin);
   return queueApprovalRequest({
     type: 'signMessage',
     origin,
@@ -998,7 +1074,7 @@ async function handleGetNetwork() {
 
 // Handle approve sign from popup
 async function handleApproveSign(message) {
-  console.log('[Background] handleApproveSign received:', JSON.stringify(message));
+  logger.log('[Background] handleApproveSign received:', JSON.stringify(message));
   
   // Close approval window immediately to allow queue to process next
   const windowToClose = approvalWindowId;
@@ -1012,7 +1088,7 @@ async function handleApproveSign(message) {
   setTimeout(() => processNextInQueue(), 50);
   
   if (message.signedTransaction && pendingRequestCallback) {
-    console.log('[Background] Sending signedTransaction back to DApp');
+    logger.log('[Background] Sending signedTransaction back to DApp');
     pendingRequestCallback({ result: { signedTransaction: message.signedTransaction } });
     pendingRequestCallback = null;
     pendingRequest = null;
@@ -1020,7 +1096,7 @@ async function handleApproveSign(message) {
   }
   
   if (message.signedTransactions && pendingRequestCallback) {
-    console.log('[Background] Sending signedTransactions back to DApp');
+    logger.log('[Background] Sending signedTransactions back to DApp');
     pendingRequestCallback({ result: { signedTransactions: message.signedTransactions } });
     pendingRequestCallback = null;
     pendingRequest = null;
@@ -1028,7 +1104,7 @@ async function handleApproveSign(message) {
   }
   
   if (message.signature && pendingRequestCallback) {
-    console.log('[Background] Sending signature back to DApp:', message.signature);
+    logger.log('[Background] Sending signature back to DApp:', message.signature);
     pendingRequestCallback({ result: { signature: message.signature } });
     pendingRequestCallback = null;
     pendingRequest = null;
@@ -1036,7 +1112,7 @@ async function handleApproveSign(message) {
   }
   
   if (message.error) {
-    console.log('[Background] Sending error back to DApp:', message.error);
+    logger.log('[Background] Sending error back to DApp:', message.error);
     if (pendingRequestCallback) {
       pendingRequestCallback({ error: message.error });
       pendingRequestCallback = null;
@@ -1045,13 +1121,13 @@ async function handleApproveSign(message) {
     return { success: false };
   }
   
-  console.log('[Background] Invalid approve-sign message, pendingRequestCallback:', !!pendingRequestCallback);
+  logger.log('[Background] Invalid approve-sign message, pendingRequestCallback:', !!pendingRequestCallback);
   return { error: 'Invalid approve-sign message' };
 }
 
 // Handle approve sign message from popup
 async function handleApproveSignMessage(message) {
-  console.log('[Background] handleApproveSignMessage received');
+  logger.log('[Background] handleApproveSignMessage received');
   
   // Clear Ledger busy state - signing operation is complete (success or failure)
   setLedgerBusy(false);
@@ -1074,8 +1150,8 @@ async function handleApproveSignMessage(message) {
   );
   
   if (isLedgerError) {
-    console.log('[Background] Ledger error detected - NOT auto-processing queue');
-    console.log('[Background] Error:', message.error);
+    logger.log('[Background] Ledger error detected - NOT auto-processing queue');
+    logger.log('[Background] Error:', message.error);
     // Clear the entire queue on Ledger errors to prevent cascading failures
     clearAllPendingRequests();
   }
@@ -1154,7 +1230,7 @@ async function revokeSiteConnection(origin) {
   const wallet = await getActiveWallet();
   if (wallet && wallet.publicKey) {
     lastKnownPublicKey = wallet.publicKey;
-    console.log('[Background] Initialized lastKnownPublicKey:', lastKnownPublicKey);
+    logger.log('[Background] Initialized lastKnownPublicKey:', lastKnownPublicKey);
   }
 })();
 
@@ -1167,7 +1243,7 @@ chrome.storage.onChanged.addListener(async (changes, areaName) => {
   const walletChanged = changes.x1wallet_active || changes.x1wallet_wallets;
   
   if (walletChanged) {
-    console.log('[Background] Wallet storage changed:', 
+    logger.log('[Background] Wallet storage changed:', 
       changes.x1wallet_active ? 'active wallet' : '', 
       changes.x1wallet_wallets ? 'wallets list' : '');
     
@@ -1175,17 +1251,17 @@ chrome.storage.onChanged.addListener(async (changes, areaName) => {
     const wallet = await getActiveWallet();
     const newPublicKey = wallet?.publicKey;
     
-    console.log('[Background] Current lastKnownPublicKey:', lastKnownPublicKey);
-    console.log('[Background] New active wallet publicKey:', newPublicKey);
+    logger.log('[Background] Current lastKnownPublicKey:', lastKnownPublicKey);
+    logger.log('[Background] New active wallet publicKey:', newPublicKey);
     
     if (newPublicKey && newPublicKey !== lastKnownPublicKey) {
-      console.log('[Background] Detected account change via storage, calling handleAccountChanged');
+      logger.log('[Background] Detected account change via storage, calling handleAccountChanged');
       lastKnownPublicKey = newPublicKey;
       
       // Broadcast account change to all connected sites
       handleAccountChanged(newPublicKey);
     } else {
-      console.log('[Background] No account change detected (same key or null)');
+      logger.log('[Background] No account change detected (same key or null)');
     }
   }
 });

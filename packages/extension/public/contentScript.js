@@ -13,15 +13,30 @@
   // ====== PORT-BASED CONNECTION FOR RELIABLE EVENT BROADCASTING ======
   let eventPort = null;
   let portReconnectAttempts = 0;
+  let portConnectedSuccessfully = false; // Track if we've had a stable connection
   const MAX_RECONNECT_ATTEMPTS = 5;
   const RECONNECT_DELAY_MS = 1000;
+  const STABLE_CONNECTION_MS = 3000; // Consider connection stable after 3 seconds
 
   // Establish port connection with background script
   function connectEventPort() {
     try {
+      // Check for any previous errors
+      if (chrome.runtime.lastError) {
+        console.error('[X1 Wallet] Runtime error before connect:', chrome.runtime.lastError.message);
+      }
+      
       eventPort = chrome.runtime.connect({ name: 'x1-wallet-events' });
       console.log('[X1 Wallet] Event port connected');
-      portReconnectAttempts = 0;
+      
+      // Don't reset counter immediately - wait for stable connection
+      const connectionTime = Date.now();
+      let stabilityTimer = setTimeout(() => {
+        // Connection was stable for 3 seconds, reset counter
+        portReconnectAttempts = 0;
+        portConnectedSuccessfully = true;
+        console.log('[X1 Wallet] Port connection stable');
+      }, STABLE_CONNECTION_MS);
       
       // Handle messages from background via port
       eventPort.onMessage.addListener((message) => {
@@ -45,8 +60,25 @@
       
       // Handle port disconnect - attempt reconnection
       eventPort.onDisconnect.addListener(() => {
-        console.log('[X1 Wallet] Event port disconnected');
+        // Clear stability timer if disconnect happens before stable
+        clearTimeout(stabilityTimer);
+        
+        const disconnectTime = Date.now();
+        const connectionDuration = disconnectTime - connectionTime;
+        
+        // Check for runtime error that caused disconnect
+        const lastError = chrome.runtime.lastError;
+        console.log('[X1 Wallet] Event port disconnected after', connectionDuration, 'ms');
+        if (lastError) {
+          console.error('[X1 Wallet] Disconnect reason:', lastError.message);
+        }
+        
         eventPort = null;
+        
+        // If connection was very short (<500ms), something is wrong
+        if (connectionDuration < 500) {
+          console.warn('[X1 Wallet] Port disconnected very quickly - possible extension reload or error');
+        }
         
         // Attempt reconnection with backoff
         if (portReconnectAttempts < MAX_RECONNECT_ATTEMPTS) {

@@ -1,10 +1,11 @@
 var __defProp = Object.defineProperty;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
-import { T as Transport, i as identifyUSBProductId, l as log, a as ledgerUSBVendorId } from "./index.js";
+import { T as Transport, i as identifyUSBProductId, l as log, a as ledgerUSBVendorId } from "./index2.js";
 import { c as createHIDframing } from "./hid-framing.js";
-import { T as TransportOpenUserCancelled, a as TransportError, D as DisconnectedDeviceDuringOperation, b as DisconnectedDevice } from "./index2.js";
+import { T as TransportOpenUserCancelled, a as TransportError, D as DisconnectedDeviceDuringOperation, b as DisconnectedDevice } from "./index3.js";
 import "./popup.js";
+import "./events.js";
 const ledgerDevices = [
   {
     vendorId: ledgerUSBVendorId

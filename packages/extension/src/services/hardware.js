@@ -1,4 +1,4 @@
-// Hardware Wallet Service - Ledger Integration
+// Hardware Wallet Service - Ledger and Trezor Integration
 import { Buffer } from 'buffer';
 
 // Production-safe logger (only logs in development)
@@ -8,8 +8,8 @@ const isDev = typeof process !== 'undefined'
 
 const logger = {
   log: (...args) => isDev && console.log('[Hardware]', ...args),
-  warn: (...args) => isDev && console.warn('[Hardware]', ...args),
-  error: (...args) => isDev && console.error('[Hardware]', ...args),
+  warn: (...args) => console.warn('[Hardware]', ...args), // Always log warnings
+  error: (...args) => console.error('[Hardware]', ...args), // Always log errors
 };
 
 // Make Buffer available globally for Ledger libs
@@ -17,7 +17,7 @@ if (typeof window !== 'undefined') {
   window.Buffer = Buffer;
 }
 
-// Ledger device states
+// Device states
 export const LEDGER_STATES = {
   DISCONNECTED: 'disconnected',
   CONNECTING: 'connecting',
@@ -30,7 +30,7 @@ export const LEDGER_STATES = {
 // Hardware wallet types
 export const HW_TYPES = {
   LEDGER: 'ledger',
-  TREZOR: 'trezor'  // Keep for compatibility, but not implemented
+  TREZOR: 'trezor'
 };
 
 // Connection types
@@ -74,6 +74,42 @@ class HardwareWalletService {
     this.publicKey = null;
     this.derivationPath = "44'/501'/0'/0'"; // Solana default, works for X1 too
     this.currentScheme = DERIVATION_SCHEMES.BIP44_EXTENDED; // Default scheme
+    
+    // Session invalid flag - forces reconnection after Ledger errors
+    // This prevents 0x6a81 errors from corrupted transport state
+    this.sessionInvalid = false;
+  }
+  
+  // Mark session as invalid and close transport
+  // Call this after ANY Ledger transport/status error
+  async invalidateSession(reason = 'unknown') {
+    logger.warn('[Hardware] Invalidating session:', reason);
+    this.sessionInvalid = true;
+    await this.disconnect();
+  }
+  
+  // Check if session is valid, throw if not
+  ensureValidSession() {
+    if (this.sessionInvalid) {
+      throw new Error('Ledger session expired. Please reconnect your device and open the Solana app.');
+    }
+  }
+  
+  // Preflight check - verify Solana app is responsive before signing
+  async preflightCheck() {
+    if (!this.solanaApp) {
+      throw new Error('Solana app not initialized');
+    }
+    
+    try {
+      // Quick check that the app is responsive
+      await this.solanaApp.getAppConfiguration();
+      return true;
+    } catch (err) {
+      logger.error('[Hardware] Preflight check failed:', err.message);
+      await this.invalidateSession('preflight failed: ' + err.message);
+      throw new Error('Ledger not ready. Please unlock your device and open the Solana app.');
+    }
   }
 
   // Check if WebUSB/WebHID is supported
@@ -184,6 +220,30 @@ class HardwareWalletService {
             // Filter for Ledger devices (vendorId 0x2c97)
             const ledgerDevices = existingDevices.filter(d => d.vendorId === 0x2c97);
             logger.log('Ledger devices found:', ledgerDevices.length);
+            
+            // Log detailed info about each Ledger device to help debug Nano X issues
+            for (const device of ledgerDevices) {
+              console.log('[Hardware] Ledger device:', {
+                productId: '0x' + device.productId.toString(16),
+                productName: device.productName,
+                collections: device.collections?.map(c => ({
+                  usagePage: '0x' + c.usagePage.toString(16),
+                  usage: '0x' + c.usage.toString(16)
+                }))
+              });
+              
+              // Check if this is a FIDO interface (usagePage 0xF1D0)
+              const isFido = device.collections?.some(c => c.usagePage === 0xF1D0);
+              if (isFido) {
+                console.warn('[Hardware] ⚠️ This device is a FIDO interface - may not work for signing!');
+              }
+              
+              // Check for main Ledger interface (usagePage 0xFFA0)
+              const isMain = device.collections?.some(c => c.usagePage === 0xFFA0);
+              if (isMain) {
+                console.log('[Hardware] ✅ This device is the main Ledger interface');
+              }
+            }
           } catch (e) {
             logger.log('Could not enumerate existing devices:', e.message);
           }
@@ -194,13 +254,45 @@ class HardwareWalletService {
             const Transport = TransportModule.default;
             
             logger.log('Requesting Ledger device via WebHID...');
-            this.transport = await Transport.create();
+            console.log('[Hardware] About to call Transport.create() - device picker should appear');
+            console.log('[Hardware] Note: For Nano X, make sure to select the main interface, not FIDO');
+            
+            // Add a timeout to detect if device picker never appears
+            // This can happen on macOS due to focus/permission issues
+            const transportPromise = Transport.create();
+            const timeoutPromise = new Promise((_, reject) => {
+              setTimeout(() => {
+                reject(new Error('Device picker timeout. This can happen if:\n• Chrome blocked the popup (check for blocked popup icon)\n• The extension window lost focus\n• macOS requires additional permissions\n\nTry: Click this window, ensure it has focus, then click Connect again.'));
+              }, 30000); // 30 second timeout
+            });
+            
+            this.transport = await Promise.race([transportPromise, timeoutPromise]);
+            console.log('[Hardware] Transport.create() returned successfully');
+            
+            // Log transport details to verify correct interface
+            if (this.transport?.device) {
+              const device = this.transport.device;
+              console.log('[Hardware] Connected to device:', {
+                productId: '0x' + device.productId?.toString(16),
+                productName: device.productName,
+                collections: device.collections?.map(c => ({
+                  usagePage: '0x' + c.usagePage?.toString(16),
+                  usage: '0x' + c.usage?.toString(16)
+                }))
+              });
+              
+              // Warn if connected to FIDO interface
+              const isFido = device.collections?.some(c => c.usagePage === 0xF1D0);
+              if (isFido) {
+                console.error('[Hardware] ❌ Connected to FIDO interface! This will cause 0x6a81 errors.');
+                console.error('[Hardware] Please disconnect and reconnect, selecting a different interface.');
+              }
+            }
+            
             logger.log('Transport created successfully');
           } catch (e) {
             logger.error('WebHID transport creation failed:', e);
-            logger.error('Error name:', e?.name);
-            logger.error('Error message:', e?.message);
-            logger.error('Error statusCode:', e?.statusCode);
+            console.error('[Hardware] WebHID error:', e?.name, e?.message);
             
             // Re-throw with better message
             if (e?.name === 'TransportOpenUserCancelled') {
@@ -208,6 +300,12 @@ class HardwareWalletService {
             }
             if (e?.message?.includes('No device selected')) {
               throw new Error('No Ledger device selected. Please try again.');
+            }
+            if (e?.message?.includes('timeout') || e?.message?.includes('Device picker')) {
+              throw e; // Already has a good message
+            }
+            if (e?.name === 'NotAllowedError') {
+              throw new Error('Chrome blocked device access. Ensure this window has focus and try again.');
             }
             throw new Error(`WebHID connection failed: ${e?.message || e?.name || 'Unknown error'}`);
           }
@@ -297,11 +395,17 @@ class HardwareWalletService {
       const config = await this.solanaApp.getAppConfiguration();
       logger.log('Solana app version:', config.version);
       
+      // Clear session invalid flag - we have a good connection now
+      this.sessionInvalid = false;
+      
       this.state = LEDGER_STATES.READY;
       return config;
     } catch (error) {
       this.state = LEDGER_STATES.APP_CLOSED;
       logger.error('Solana app error:', error);
+      
+      // Mark session as invalid on connection failure
+      await this.invalidateSession('openApp failed: ' + error.message);
       
       if (error.statusCode === 0x6e00 || error.statusCode === 0x6d00) {
         throw new Error('Please open the Solana app on your Ledger device.');
@@ -388,9 +492,15 @@ class HardwareWalletService {
 
   // Sign transaction with Ledger
   async signTransaction(transaction, path = null) {
+    // Check if session is valid first
+    this.ensureValidSession();
+    
     if (!this.solanaApp) {
       await this.openApp();
     }
+    
+    // Preflight check - verify Solana app is still responsive
+    await this.preflightCheck();
 
     const derivePath = path || this.derivationPath;
     
@@ -411,37 +521,61 @@ class HardwareWalletService {
       if (error.statusCode === 0x6a80) {
         throw new Error('Invalid transaction data');
       }
+      
+      // On transport errors, invalidate session to force clean reconnection
+      const isTransportError = 
+        error.statusCode === 27265 || // 0x6a81
+        error.statusCode === 0x6a81 ||
+        error.name === 'TransportStatusError' ||
+        error.message?.includes('0x6a81') ||
+        error.message?.includes('UNKNOWN_ERROR');
+      
+      if (isTransportError) {
+        await this.invalidateSession('signTransaction transport error: ' + error.message);
+      }
+      
       throw error;
     }
   }
 
   // Sign message with Ledger (off-chain)
   async signMessage(message, path = null) {
+    // Check if session is valid first
+    this.ensureValidSession();
+    
     if (!this.solanaApp) {
       await this.openApp();
     }
+    
+    // Preflight check - verify Solana app is still responsive
+    await this.preflightCheck();
 
     const derivePath = path || this.derivationPath;
     
-    try {
-      const msgBuffer = Buffer.isBuffer(message)
-        ? message
+    // Handle Buffer, Uint8Array, or string
+    const msgBuffer = Buffer.isBuffer(message)
+      ? message
+      : message instanceof Uint8Array
+        ? Buffer.from(message)
         : Buffer.from(message, 'utf8');
-      
+    
+    try {
       const result = await this.solanaApp.signOffchainMessage(derivePath, msgBuffer);
       return result.signature;
-    } catch (error) {
-      logger.error('Sign message error:', error);
+    } catch (err) {
+      // On transport errors, invalidate session to force clean reconnection
+      const isTransportError = 
+        err.statusCode === 27265 || // 0x6a81
+        err.statusCode === 0x6a81 ||
+        err.name === 'TransportStatusError' ||
+        err.message?.includes('0x6a81') ||
+        err.message?.includes('UNKNOWN_ERROR');
       
-      // Handle Ledger v1.4+ off-chain message signing restrictions
-      if (error.statusCode === 0x6a81) {
-        throw new Error(
-          'Ledger cannot sign this message. The updated Ledger Solana app (v1.4+) has stricter requirements for off-chain message signing. ' +
-          'This dApp may not be compatible with Ledger hardware wallets. Try using a software wallet instead.'
-        );
+      if (isTransportError) {
+        await this.invalidateSession('signMessage transport error: ' + err.message);
       }
       
-      throw error;
+      throw err;
     }
   }
 
@@ -518,15 +652,266 @@ class HardwareWalletService {
   }
 }
 
-// Export singleton instance
+// Trezor Wallet Service
+class TrezorWalletService {
+  constructor() {
+    this.trezorConnect = null;
+    this.deviceType = HW_TYPES.TREZOR;
+    this.state = LEDGER_STATES.DISCONNECTED;
+    this.publicKey = null;
+    this.derivationPath = "m/44'/501'/0'/0'";
+    this.initialized = false;
+  }
+
+  // Initialize Trezor Connect
+  async init() {
+    if (this.initialized) return;
+    
+    try {
+      logger.log('[Trezor] Starting initialization...');
+      
+      // Add timeout for import
+      const importPromise = import('@trezor/connect-web');
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Trezor Connect import timeout')), 10000)
+      );
+      
+      const TrezorConnect = await Promise.race([importPromise, timeoutPromise]);
+      logger.log('[Trezor] Module imported');
+      
+      this.trezorConnect = TrezorConnect.default;
+      
+      // Check if already initialized
+      if (this.trezorConnect.isInitialized && this.trezorConnect.isInitialized()) {
+        logger.log('[Trezor] Already initialized');
+        this.initialized = true;
+        return;
+      }
+      
+      logger.log('[Trezor] Calling init...');
+      await this.trezorConnect.init({
+        lazyLoad: true, // Let operations trigger the popup
+        manifest: {
+          email: 'support@x1.xyz',
+          appUrl: typeof chrome !== 'undefined' && chrome.runtime?.id 
+            ? `chrome-extension://${chrome.runtime.id}` 
+            : window.location.origin
+        },
+        transports: ['BridgeTransport', 'WebUsbTransport'], // Try Bridge first, then WebUSB
+        connectSrc: 'https://connect.trezor.io/9/',
+        popup: true, // Use popup mode
+        debug: isDev
+      });
+      
+      this.initialized = true;
+      logger.log('[Trezor] Connect initialized successfully');
+    } catch (e) {
+      // If already initialized, that's OK
+      if (e.message?.includes('already initialized')) {
+        this.initialized = true;
+        logger.log('[Trezor] Was already initialized');
+        return;
+      }
+      logger.error('[Trezor] Failed to initialize:', e);
+      throw new Error('Failed to initialize Trezor: ' + e.message);
+    }
+  }
+
+  // Check if supported
+  isSupported() {
+    return typeof navigator !== 'undefined' && navigator.usb !== undefined;
+  }
+
+  // Get derivation schemes (same as Ledger for Solana)
+  getDerivationSchemes() {
+    return Object.values(DERIVATION_SCHEMES);
+  }
+
+  // Connect to Trezor - just initialize, actual connection happens on first use
+  async connect() {
+    this.state = LEDGER_STATES.CONNECTING;
+    
+    try {
+      await this.init();
+      // Don't call getFeatures - it can hang. Let the first actual operation trigger the popup.
+      this.state = LEDGER_STATES.CONNECTED;
+      logger.log('Trezor Connect ready');
+      return true;
+    } catch (e) {
+      this.state = LEDGER_STATES.ERROR;
+      logger.error('Trezor initialization error:', e);
+      throw e;
+    }
+  }
+
+  // Open app (no-op for Trezor - Solana is built-in)
+  async openApp() {
+    await this.init();
+    this.state = LEDGER_STATES.READY;
+    return { version: 'native' };
+  }
+
+  // Get public key from Trezor
+  async getPublicKey(path = null, display = false) {
+    await this.init();
+    
+    const derivePath = path || this.derivationPath;
+    // Convert path format: "44'/501'/0'" -> "m/44'/501'/0'"
+    const fullPath = derivePath.startsWith('m/') ? derivePath : `m/${derivePath}`;
+    
+    try {
+      const result = await this.trezorConnect.solanaGetPublicKey({
+        path: fullPath,
+        showOnTrezor: display
+      });
+      
+      if (!result.success) {
+        throw new Error(result.payload?.error || 'Failed to get public key');
+      }
+      
+      this.publicKey = result.payload.publicKey;
+      return result.payload.publicKey;
+    } catch (e) {
+      logger.error('Trezor getPublicKey error:', e);
+      throw e;
+    }
+  }
+
+  // Get accounts for a scheme
+  async getAccountsForScheme(scheme, startIndex = 0, count = 5) {
+    const accounts = [];
+    
+    for (let i = startIndex; i < startIndex + count; i++) {
+      const path = scheme.getPath(i);
+      try {
+        const address = await this.getPublicKey(path, false);
+        accounts.push({
+          index: i,
+          path,
+          address,
+          scheme: scheme.id,
+          schemeName: scheme.name,
+          label: `Account ${i + 1}`
+        });
+      } catch (e) {
+        logger.warn(`Could not get Trezor account ${i}:`, e);
+        break;
+      }
+    }
+    
+    return accounts;
+  }
+
+  // Discover accounts from all schemes
+  async discoverAccounts(count = 5) {
+    const allAccounts = [];
+    const seenAddresses = new Set();
+    
+    for (const scheme of Object.values(DERIVATION_SCHEMES)) {
+      try {
+        const accounts = await this.getAccountsForScheme(scheme, 0, count);
+        for (const account of accounts) {
+          if (!seenAddresses.has(account.address)) {
+            seenAddresses.add(account.address);
+            allAccounts.push(account);
+          }
+        }
+      } catch (e) {
+        logger.warn(`Failed to get Trezor accounts for scheme ${scheme.id}:`, e);
+      }
+    }
+    
+    return allAccounts;
+  }
+
+  // Sign transaction with Trezor
+  async signTransaction(transaction, path = null) {
+    await this.init();
+    
+    const derivePath = path || this.derivationPath;
+    const fullPath = derivePath.startsWith('m/') ? derivePath : `m/${derivePath}`;
+    
+    try {
+      // Transaction should be a serialized transaction buffer
+      const txBuffer = Buffer.isBuffer(transaction)
+        ? transaction
+        : Buffer.from(transaction);
+      
+      const result = await this.trezorConnect.solanaSignTransaction({
+        path: fullPath,
+        serializedTx: txBuffer.toString('hex')
+      });
+      
+      if (!result.success) {
+        if (result.payload?.code === 'Failure_ActionCancelled') {
+          throw new Error('Transaction rejected by user');
+        }
+        throw new Error(result.payload?.error || 'Failed to sign transaction');
+      }
+      
+      // Return signature as Buffer
+      return Buffer.from(result.payload.signature, 'hex');
+    } catch (e) {
+      logger.error('Trezor signTransaction error:', e);
+      throw e;
+    }
+  }
+
+  // Sign message (off-chain) - Note: Trezor may have limited support
+  async signMessage(message, path = null) {
+    await this.init();
+    
+    // Trezor doesn't have native Solana message signing yet
+    // This may need to use a workaround or may not be supported
+    throw new Error('Message signing is not yet supported on Trezor for Solana');
+  }
+
+  // Disconnect
+  async disconnect() {
+    if (this.trezorConnect) {
+      try {
+        await this.trezorConnect.dispose();
+      } catch (e) {
+        logger.warn('Error disposing Trezor Connect:', e);
+      }
+    }
+    this.initialized = false;
+    this.state = LEDGER_STATES.DISCONNECTED;
+    this.publicKey = null;
+  }
+
+  // Get derivation paths (legacy compatibility)
+  getDerivationPaths() {
+    return [
+      { path: "44'/501'/0'/0'", label: "Default (m/44'/501'/0'/0')" },
+      { path: "44'/501'/0'", label: "Legacy (m/44'/501'/0')" },
+      { path: "44'/501'/1'/0'", label: "Account 2 (m/44'/501'/1'/0')" },
+      { path: "44'/501'/2'/0'", label: "Account 3 (m/44'/501'/2'/0')" },
+    ];
+  }
+
+  setDerivationPath(path) {
+    this.derivationPath = path;
+  }
+
+  getState() {
+    return this.state;
+  }
+
+  isReady() {
+    return this.state === LEDGER_STATES.READY;
+  }
+}
+
+// Export singleton instances
 export const hardwareWallet = new HardwareWalletService();
+export const trezorWallet = new TrezorWalletService();
 
-// Trezor placeholder (not implemented in this version)
-export const trezorWallet = null;
-
-// Factory function for compatibility
+// Factory function to get the right wallet service
 export function getHardwareWallet(type) {
-  // Only Ledger is supported in this version
+  if (type === HW_TYPES.TREZOR) {
+    return trezorWallet;
+  }
   return hardwareWallet;
 }
 

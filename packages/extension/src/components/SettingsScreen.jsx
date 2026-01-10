@@ -233,22 +233,43 @@ export default function SettingsScreen({ wallet, onBack, onLock }) {
     setError('');
   };
 
-  // Verify password before showing sensitive data
-  const verifyUserPassword = () => {
-    const storedHash = storage.get('passwordHash', null);
-    const inputHash = btoa(verifyPassword);
-    
-    if (storedHash === inputHash) {
-      setPasswordVerified(true);
-      setVerifyError('');
-      setVerifyPassword('');
-    } else {
-      setVerifyError('Incorrect password');
+  // X1W-SEC-006 FIX: Use PBKDF2 verification instead of base64
+  const verifyUserPassword = async () => {
+    try {
+      const { checkPassword } = await import('@x1-wallet/core/services/wallet');
+      const isValid = await checkPassword(verifyPassword);
+      
+      if (isValid) {
+        setPasswordVerified(true);
+        setVerifyError('');
+        setVerifyPassword('');
+      } else {
+        setVerifyError('Incorrect password');
+      }
+    } catch (err) {
+      setVerifyError(err.message || 'Password verification failed');
     }
   };
 
-  // Check if password protection is enabled and has a password set
-  const hasPasswordProtection = passwordProtection && storage.get('passwordHash', null) !== null;
+  // Check if password protection is enabled
+  const [hasPasswordProtection, setHasPasswordProtection] = useState(false);
+  
+  useEffect(() => {
+    const checkPasswordProtection = async () => {
+      if (!passwordProtection) {
+        setHasPasswordProtection(false);
+        return;
+      }
+      try {
+        const { hasPassword } = await import('@x1-wallet/core/services/wallet');
+        const result = await hasPassword();
+        setHasPasswordProtection(result);
+      } catch {
+        setHasPasswordProtection(!!storage.get('x1wallet_auth', null));
+      }
+    };
+    checkPasswordProtection();
+  }, [passwordProtection]);
 
   // Sub-screens
   if (subScreen === 'autolock') {
@@ -888,72 +909,63 @@ export default function SettingsScreen({ wallet, onBack, onLock }) {
       setPasswordError('');
       setPasswordSuccess(false);
       
-      // Validate current password (check against stored hash)
-      const storedHash = storage.get('passwordHash', null);
-      if (storedHash) {
-        const inputHash = btoa(currentPassword);
-        if (inputHash !== storedHash) {
-          setPasswordError('Current password is incorrect');
+      // X1W-SEC-001 FIX: Use PBKDF2 verification from wallet service instead of base64
+      try {
+        // Import secure password functions from wallet service
+        const { checkPassword, setupPassword, validatePasswordStrength } = await import('@x1-wallet/core/services/wallet');
+        
+        // Check if there's an existing password to verify
+        const hasExisting = storage.get('passwordHash', null) !== null;
+        
+        if (hasExisting) {
+          // Verify current password using PBKDF2
+          const isValid = await checkPassword(currentPassword);
+          if (!isValid) {
+            setPasswordError('Current password is incorrect');
+            return;
+          }
+        }
+        
+        // X1W-SEC-008 FIX: Use consistent password validation (12 chars minimum)
+        const validation = validatePasswordStrength(newPassword);
+        if (!validation.valid) {
+          setPasswordError(validation.error);
           return;
         }
-      }
-      
-      // X1W-005: Use strong password validation
-      // Validate new password with secure requirements
-      if (newPassword.length < 12) {
-        setPasswordError('Password must be at least 12 characters');
-        return;
-      }
-      
-      if (!/[a-z]/.test(newPassword)) {
-        setPasswordError('Password must contain at least one lowercase letter');
-        return;
-      }
-      
-      if (!/[A-Z]/.test(newPassword)) {
-        setPasswordError('Password must contain at least one uppercase letter');
-        return;
-      }
-      
-      if (!/[0-9]/.test(newPassword)) {
-        setPasswordError('Password must contain at least one number');
-        return;
-      }
-      
-      if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?~`]/.test(newPassword)) {
-        setPasswordError('Password must contain at least one special character (!@#$%^&*...)');
-        return;
-      }
-      
-      // Check for common weak patterns
-      const commonPatterns = ['password', '12345678', 'qwerty', 'abcdef'];
-      const lowerPassword = newPassword.toLowerCase();
-      for (const pattern of commonPatterns) {
-        if (lowerPassword.includes(pattern)) {
-          setPasswordError('Password contains a common weak pattern');
+        
+        if (newPassword !== confirmPassword) {
+          setPasswordError('Passwords do not match');
           return;
         }
+        
+        // X1W-SEC-002 FIX: Re-encrypt wallet data with new password
+        // First, set up the new password hash (PBKDF2)
+        await setupPassword(newPassword);
+        
+        // Then re-encrypt wallet data using wallet hook
+        if (wallet.changePassword) {
+          await wallet.changePassword(currentPassword, newPassword);
+        } else if (wallet.enableEncryption) {
+          // Fallback: re-enable encryption with new password
+          await wallet.enableEncryption(newPassword);
+        }
+        
+        // Also update the legacy storage key for backward compatibility
+        // (but now properly hashed via setupPassword above)
+        storage.set('passwordProtection', true);
+        setPasswordProtection(true);
+        setPasswordSuccess(true);
+        setCurrentPassword('');
+        setNewPassword('');
+        setConfirmPassword('');
+        
+        setTimeout(() => {
+          setSubScreen('password');
+          setPasswordSuccess(false);
+        }, 1500);
+      } catch (err) {
+        setPasswordError(err.message || 'Failed to change password');
       }
-      
-      if (newPassword !== confirmPassword) {
-        setPasswordError('Passwords do not match');
-        return;
-      }
-      
-      // Save new password hash
-      const newHash = btoa(newPassword);
-      storage.set('passwordHash', newHash);
-      storage.set('passwordProtection', true); // Enable protection when password is set
-      setPasswordProtection(true); // Update local state
-      setPasswordSuccess(true);
-      setCurrentPassword('');
-      setNewPassword('');
-      setConfirmPassword('');
-      
-      setTimeout(() => {
-        setSubScreen('password');
-        setPasswordSuccess(false);
-      }, 1500);
     };
     
     const hasExistingPassword = storage.get('passwordHash', null) !== null;

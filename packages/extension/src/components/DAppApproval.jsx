@@ -416,6 +416,7 @@ export default function DAppApproval({ wallet, onComplete }) {
   
   // Ref to prevent re-entry into signing functions
   const signingInProgress = useRef(false);
+  const lastSignAttempt = useRef(0); // Timestamp of last attempt
 
   // Load network from chrome.storage for accuracy
   useEffect(() => {
@@ -621,22 +622,10 @@ export default function DAppApproval({ wallet, onComplete }) {
   const handleReject = async () => {
     setProcessing(true);
     try {
-      const reqType = pendingRequest?.type;
-
-      // Send the correct rejection message type so background can resolve the right pending request.
-      // signMessage expects approve-sign-message, connect expects approve-connect.
-      let message = { error: 'User rejected the request' };
-
-      if (reqType === 'signMessage') {
-        message = { ...message, type: 'approve-sign-message' };
-      } else if (reqType === 'connect') {
-        message = { ...message, type: 'approve-connect' };
-      } else {
-        // Covers signTransaction, signAllTransactions, signAndSendTransaction, etc.
-        message = { ...message, type: 'approve-sign' };
-      }
-
-      await chrome.runtime.sendMessage(message);
+      await chrome.runtime.sendMessage({
+        type: 'approve-sign',
+        error: 'User rejected the request'
+      });
     } catch (e) {}
     if (onComplete) onComplete();
     setTimeout(() => window.close(), 300);
@@ -719,6 +708,19 @@ export default function DAppApproval({ wallet, onComplete }) {
 
   // Sign a transaction - the dApp sends serialized tx, we sign it
   const handleSignTransaction = async () => {
+    // Prevent re-entry
+    if (signingInProgress.current) {
+      logger.warn('[DAppApproval] Sign already in progress, ignoring');
+      return;
+    }
+    const now = Date.now();
+    if (now - lastSignAttempt.current < 2000) {
+      logger.warn('[DAppApproval] Sign attempt too soon, ignoring');
+      return;
+    }
+    lastSignAttempt.current = now;
+    signingInProgress.current = true;
+    
     setProcessing(true);
     setError(null);
     
@@ -802,6 +804,9 @@ export default function DAppApproval({ wallet, onComplete }) {
       setError(getUserFriendlyError(err, ErrorMessages.transaction.signFailed));
       setProcessing(false);
     } finally {
+      // ALWAYS clear signing state when done (success or failure)
+      signingInProgress.current = false;
+      
       // ALWAYS clear Ledger busy state when done (success or failure)
       if (isHardwareWallet) {
         try {
@@ -815,6 +820,19 @@ export default function DAppApproval({ wallet, onComplete }) {
 
   // Handle sign all transactions
   const handleSignAllTransactions = async () => {
+    // Prevent re-entry
+    if (signingInProgress.current) {
+      logger.warn('[DAppApproval] Sign already in progress, ignoring');
+      return;
+    }
+    const now = Date.now();
+    if (now - lastSignAttempt.current < 2000) {
+      logger.warn('[DAppApproval] Sign attempt too soon, ignoring');
+      return;
+    }
+    lastSignAttempt.current = now;
+    signingInProgress.current = true;
+    
     setProcessing(true);
     setError(null);
     
@@ -899,6 +917,9 @@ export default function DAppApproval({ wallet, onComplete }) {
       setError(getUserFriendlyError(err, ErrorMessages.transaction.signFailed));
       setProcessing(false);
     } finally {
+      // ALWAYS clear signing state when done (success or failure)
+      signingInProgress.current = false;
+      
       // ALWAYS clear Ledger busy state when done (success or failure)
       if (isHardwareWallet) {
         try {
@@ -912,6 +933,19 @@ export default function DAppApproval({ wallet, onComplete }) {
 
   // Handle sign and send transaction
   const handleSignAndSendTransaction = async () => {
+    // Prevent re-entry
+    if (signingInProgress.current) {
+      logger.warn('[DAppApproval] Sign already in progress, ignoring');
+      return;
+    }
+    const now = Date.now();
+    if (now - lastSignAttempt.current < 2000) {
+      logger.warn('[DAppApproval] Sign attempt too soon, ignoring');
+      return;
+    }
+    lastSignAttempt.current = now;
+    signingInProgress.current = true;
+    
     setProcessing(true);
     setError(null);
     
@@ -1162,6 +1196,9 @@ export default function DAppApproval({ wallet, onComplete }) {
       setError(getUserFriendlyError(err, ErrorMessages.transaction.failed));
       setProcessing(false);
     } finally {
+      // ALWAYS clear signing state when done (success or failure)
+      signingInProgress.current = false;
+      
       // ALWAYS clear Ledger busy state when done (success or failure)
       if (isHardwareWallet) {
         try {
@@ -1180,6 +1217,14 @@ export default function DAppApproval({ wallet, onComplete }) {
       logger.warn('[DAppApproval] Sign already in progress, ignoring duplicate call');
       return;
     }
+    
+    // Additional debounce: prevent attempts within 2 seconds of each other
+    const now = Date.now();
+    if (now - lastSignAttempt.current < 2000) {
+      logger.warn('[DAppApproval] Sign attempt too soon after last attempt, ignoring');
+      return;
+    }
+    lastSignAttempt.current = now;
     signingInProgress.current = true;
     
     setProcessing(true);
@@ -1230,17 +1275,6 @@ export default function DAppApproval({ wallet, onComplete }) {
         stack: err?.stack,
         statusCode: err?.statusCode
       });
-
-// IMPORTANT: always notify background so it can close the approval window and clear the queue.
-const errorMsg = err?.message || err?.toString?.() || 'Unknown error';
-try {
-  await chrome.runtime.sendMessage({
-    type: 'approve-sign-message',
-    error: errorMsg
-  });
-} catch (e) {
-  // ignore - background may already be unavailable
-}
       
       // Check if this is a Ledger error that needs reconnection
       // If so, show the "Connect Ledger" UI instead of closing
@@ -1333,6 +1367,13 @@ try {
     // Immediately check if already processing (before React state updates)
     if (processing || signingInProgress.current) {
       console.log('[DAppApproval] Ignoring click - already processing');
+      return;
+    }
+    
+    // Additional debounce: prevent clicks within 2 seconds of last attempt
+    const now = Date.now();
+    if (now - lastSignAttempt.current < 2000) {
+      console.log('[DAppApproval] Ignoring click - too soon after last attempt');
       return;
     }
     
@@ -1661,7 +1702,7 @@ try {
                 onClick={async () => {
                   try {
                     setError(null);
-                    setHwStatus('Select your Ledger device...');
+                    setHwStatus('Connecting to Ledger...');
                     setProcessing(true);
                     
                     // First disconnect any existing connection to ensure clean state
@@ -1670,18 +1711,31 @@ try {
                     // Clear session invalid flag
                     hardwareWallet.sessionInvalid = false;
                     
-                    // Request device authorization - this shows the browser device picker
-                    const TransportModule = await import('@ledgerhq/hw-transport-webhid');
-                    const Transport = TransportModule.default;
-                    
-                    // This will show the device picker dialog
-                    const transport = await Transport.create();
-                    
-                    if (transport) {
-                      // Successfully authorized - set up hardware wallet
-                      hardwareWallet.transport = transport;
-                      hardwareWallet.state = 'connected';
+                    // Use the hardware service's connect method - it handles all the transport logic
+                    // This is more reliable than inline dynamic imports
+                    try {
+                      logger.log('[DAppApproval] Calling hardwareWallet.connect()...');
+                      await hardwareWallet.connect('usb');
+                      logger.log('[DAppApproval] Connect succeeded, transport:', !!hardwareWallet.transport);
+                    } catch (connectErr) {
+                      logger.error('[DAppApproval] hardwareWallet.connect() failed:', connectErr);
                       
+                      // If WebHID fails, the error might indicate why
+                      // On macOS, user gesture context can be lost with async imports
+                      if (connectErr.message?.includes('No device selected') || 
+                          connectErr.message?.includes('cancelled')) {
+                        throw connectErr; // User cancelled, that's fine
+                      }
+                      
+                      // Try to give more specific guidance
+                      if (connectErr.message?.includes('NotAllowedError')) {
+                        throw new Error('Chrome blocked device access. Please ensure the popup has focus and try again.');
+                      }
+                      
+                      throw connectErr;
+                    }
+                    
+                    if (hardwareWallet.transport) {
                       setHwStatus('Opening Solana app...');
                       await hardwareWallet.openApp();
                       
@@ -1690,12 +1744,16 @@ try {
                       
                       // Hide the connect UI - user can now click Approve
                       setLedgerPopupError(false);
-                      
-                      // DON'T auto-retry - let user click Approve again
-                      // This prevents loops if signing keeps failing
+                    } else {
+                      throw new Error('Failed to establish transport connection');
                     }
                   } catch (err) {
                     logger.error('[DAppApproval] Ledger authorization failed:', err);
+                    logger.error('[DAppApproval] Error details:', {
+                      name: err?.name,
+                      message: err?.message,
+                      stack: err?.stack
+                    });
                     setHwStatus('');
                     setProcessing(false);
                     
@@ -1705,6 +1763,8 @@ try {
                       setError('No Ledger device found. Make sure it is connected and unlocked.');
                     } else if (err.message?.includes('Solana app') || err.message?.includes('open the')) {
                       setError('Please open the Solana app on your Ledger, then try again.');
+                    } else if (err.message?.includes('NotAllowedError') || err.message?.includes('blocked')) {
+                      setError('Chrome blocked device access. Click this window to give it focus, then try again.');
                     } else {
                       setError(`Failed to connect: ${err.message}`);
                     }

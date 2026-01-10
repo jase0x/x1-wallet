@@ -2234,8 +2234,25 @@ function RecoveryPhrasePanel({ wallet, onClose }) {
   
   // Check if password protection is enabled
   const passwordProtection = localStorage.getItem('passwordProtection') !== 'false';
-  const storedHash = localStorage.getItem('passwordHash');
-  const requiresPassword = passwordProtection && storedHash;
+  // X1W-SEC-006 FIX: Check for PBKDF2 auth data instead of base64 hash
+  const [hasAuthData, setHasAuthData] = useState(false);
+  
+  useEffect(() => {
+    // Check for auth data asynchronously
+    const checkAuth = async () => {
+      try {
+        const { hasPassword } = await import('@x1-wallet/core/services/wallet');
+        const result = await hasPassword();
+        setHasAuthData(result);
+      } catch {
+        // Fallback to localStorage check
+        setHasAuthData(!!localStorage.getItem('x1wallet_auth'));
+      }
+    };
+    checkAuth();
+  }, []);
+  
+  const requiresPassword = passwordProtection && hasAuthData;
   
   const copyPhrase = () => {
     navigator.clipboard.writeText(phrase);
@@ -2243,18 +2260,25 @@ function RecoveryPhrasePanel({ wallet, onClose }) {
     setTimeout(() => setCopied(false), 2000);
   };
   
-  const verifyPassword = () => {
+  // X1W-SEC-006 FIX: Use PBKDF2 verification instead of base64
+  const verifyPassword = async () => {
     setPasswordError('');
     if (!password) {
       setPasswordError('Please enter your password');
       return;
     }
-    const inputHash = btoa(password);
-    if (inputHash !== storedHash) {
-      setPasswordError('Incorrect password');
-      return;
+    
+    try {
+      const { checkPassword } = await import('@x1-wallet/core/services/wallet');
+      const isValid = await checkPassword(password);
+      if (!isValid) {
+        setPasswordError('Incorrect password');
+        return;
+      }
+      setPasswordVerified(true);
+    } catch (err) {
+      setPasswordError(err.message || 'Password verification failed');
     }
-    setPasswordVerified(true);
   };
   
   const handleReveal = () => {

@@ -1,7 +1,7 @@
 var __defProp = Object.defineProperty;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
-import { S as StatusCodes } from "./index2.js";
+import { S as StatusCodes } from "./index3.js";
 import { g as getDefaultExportFromCjs } from "./popup.js";
 const HARDENED = 2147483648;
 var BIPPath = function(path) {

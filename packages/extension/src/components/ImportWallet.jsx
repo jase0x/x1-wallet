@@ -8,7 +8,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
   const [seedLength, setSeedLength] = useState(12);
   const [words, setWords] = useState(Array(12).fill(''));
   const [walletName, setWalletName] = useState('');
-  const [step, setStep] = useState('import');
+  const [step, setStep] = useState('import'); // import, name, password, name-pk, password-pk
   const [error, setError] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [activeInput, setActiveInput] = useState(-1);
@@ -16,6 +16,11 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
   
   // Private key state
   const [privateKeyInput, setPrivateKeyInput] = useState('');
+  
+  // Password state (mandatory encryption)
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
 
   const handleLengthChange = (len) => {
     setSeedLength(len);
@@ -102,8 +107,54 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
     setStep('name');
   };
 
+  // X1W-SEC-008 FIX: Consistent password validation (12 chars, special char required)
+  const validatePassword = (pwd) => {
+    if (!pwd || pwd.length < 12) {
+      return 'Password must be at least 12 characters';
+    }
+    if (!/[a-z]/.test(pwd)) {
+      return 'Password must contain a lowercase letter';
+    }
+    if (!/[A-Z]/.test(pwd)) {
+      return 'Password must contain an uppercase letter';
+    }
+    if (!/[0-9]/.test(pwd)) {
+      return 'Password must contain a number';
+    }
+    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?~`]/.test(pwd)) {
+      return 'Password must contain a special character (!@#$%^&*...)';
+    }
+    // Check for common weak patterns
+    const commonPatterns = ['password', '12345678', 'qwerty', 'abcdef'];
+    const lowerPwd = pwd.toLowerCase();
+    for (const pattern of commonPatterns) {
+      if (lowerPwd.includes(pattern)) {
+        return 'Password contains a common weak pattern';
+      }
+    }
+    return null;
+  };
+
+  // Move to password step after naming
+  const handleNameContinue = () => {
+    setStep('password');
+    setError('');
+  };
+
+  // Complete with password (seed phrase import)
   const handleComplete = () => {
-    onComplete(words.join(' '), walletName || 'Imported Wallet');
+    const pwdError = validatePassword(password);
+    if (pwdError) {
+      setError(pwdError);
+      return;
+    }
+    
+    if (password !== confirmPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+    
+    onComplete(words.join(' '), walletName || 'Imported Wallet', password);
   };
   
   // Private Key Import (handles base58 and byte array formats)
@@ -169,7 +220,6 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
       }
       
       const { encodeBase58 } = await import('@x1-wallet/core/utils/base58');
-      const publicKeyBase58 = encodeBase58(publicKey);
       const privateKeyBase58 = encodeBase58(secretKey);
       
       // Store the base58 version for completion
@@ -184,7 +234,25 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
     }
   };
   
+  // Move to password step after naming (private key)
+  const handleNamePkContinue = () => {
+    setStep('password-pk');
+    setError('');
+  };
+  
   const handleCompletePrivateKey = async () => {
+    // Validate password
+    const pwdError = validatePassword(password);
+    if (pwdError) {
+      setError(pwdError);
+      return;
+    }
+    
+    if (password !== confirmPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+    
     // X1W-004 FIX: Always require the secure onCompletePrivateKey handler
     // Never fall back to direct localStorage storage without encryption
     if (!onCompletePrivateKey) {
@@ -218,7 +286,8 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
       onCompletePrivateKey({
         publicKey: publicKeyBase58,
         privateKey: privateKeyBase58,
-        name: walletName || 'Imported Wallet'
+        name: walletName || 'Imported Wallet',
+        password: password
       });
     } catch (err) {
       setError('Failed to complete import: ' + err.message);
@@ -245,7 +314,102 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
           <div className="form-group" style={{ marginTop: 24 }}>
             <input type="text" className="form-input" value={walletName} onChange={e => setWalletName(e.target.value)} placeholder="My Imported Wallet" autoFocus />
           </div>
-          <button className="btn-primary" onClick={handleComplete} style={{ marginTop: 24 }}>Import Wallet</button>
+          <button className="btn-primary" onClick={handleNameContinue} style={{ marginTop: 24 }}>Continue</button>
+        </div>
+      </div>
+    );
+  }
+
+  // Password step for seed phrase import
+  if (step === 'password') {
+    return (
+      <div className="screen no-nav">
+        <div className="page-header">
+          <div className="header-left">
+            <button className="back-btn" onClick={() => setStep('name')}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M19 12H5M12 19l-7-7 7-7" />
+              </svg>
+            </button>
+          </div>
+          <h2 className="header-title">Secure Wallet</h2>
+          <div className="header-right" />
+        </div>
+        <div className="screen-content seed-container" style={{ paddingTop: 0 }}>
+          <div style={{ textAlign: 'center', marginBottom: 24 }}>
+            <div style={{ 
+              width: 64, 
+              height: 64, 
+              borderRadius: '50%', 
+              background: 'rgba(var(--x1-blue-rgb), 0.1)', 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center',
+              margin: '0 auto 16px'
+            }}>
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--x1-blue)" strokeWidth="2">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+            </div>
+            <p className="seed-subtitle">Create a password to encrypt your wallet</p>
+          </div>
+
+          <div className="form-group" style={{ marginBottom: 16 }}>
+            <label>Password</label>
+            <div style={{ position: 'relative' }}>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                className="form-input"
+                value={password}
+                onChange={e => { setPassword(e.target.value); setError(''); }}
+                placeholder="Enter password"
+                autoFocus
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                style={{
+                  position: 'absolute',
+                  right: 12,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: 4
+                }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth="2">
+                  {showPassword ? (
+                    <><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></>
+                  ) : (
+                    <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>
+                  )}
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <div className="form-group" style={{ marginBottom: 16 }}>
+            <label>Confirm Password</label>
+            <input
+              type={showPassword ? 'text' : 'password'}
+              className="form-input"
+              value={confirmPassword}
+              onChange={e => { setConfirmPassword(e.target.value); setError(''); }}
+              placeholder="Confirm password"
+            />
+          </div>
+
+          <div className="info-box" style={{ marginBottom: 16 }}>
+            <span>🔒</span>
+            <span>Min 12 characters with uppercase, lowercase, number, and special character.</span>
+          </div>
+
+          {error && <div className="error-message" style={{ marginBottom: 16 }}>{error}</div>}
+
+          <button className="btn-primary" onClick={handleComplete}>Import Wallet</button>
         </div>
       </div>
     );
@@ -272,7 +436,102 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
             <input type="text" className="form-input" value={walletName} onChange={e => setWalletName(e.target.value)} placeholder="My Imported Wallet" autoFocus />
           </div>
           {error && <div className="error-message">{error}</div>}
-          <button className="btn-primary" onClick={handleCompletePrivateKey} style={{ marginTop: 24 }}>Import Wallet</button>
+          <button className="btn-primary" onClick={handleNamePkContinue} style={{ marginTop: 24 }}>Continue</button>
+        </div>
+      </div>
+    );
+  }
+
+  // Password step for private key import
+  if (step === 'password-pk') {
+    return (
+      <div className="screen no-nav">
+        <div className="page-header">
+          <div className="header-left">
+            <button className="back-btn" onClick={() => setStep('name-pk')}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M19 12H5M12 19l-7-7 7-7" />
+              </svg>
+            </button>
+          </div>
+          <h2 className="header-title">Secure Wallet</h2>
+          <div className="header-right" />
+        </div>
+        <div className="screen-content seed-container" style={{ paddingTop: 0 }}>
+          <div style={{ textAlign: 'center', marginBottom: 24 }}>
+            <div style={{ 
+              width: 64, 
+              height: 64, 
+              borderRadius: '50%', 
+              background: 'rgba(var(--x1-blue-rgb), 0.1)', 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center',
+              margin: '0 auto 16px'
+            }}>
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--x1-blue)" strokeWidth="2">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+            </div>
+            <p className="seed-subtitle">Create a password to encrypt your wallet</p>
+          </div>
+
+          <div className="form-group" style={{ marginBottom: 16 }}>
+            <label>Password</label>
+            <div style={{ position: 'relative' }}>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                className="form-input"
+                value={password}
+                onChange={e => { setPassword(e.target.value); setError(''); }}
+                placeholder="Enter password"
+                autoFocus
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                style={{
+                  position: 'absolute',
+                  right: 12,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: 4
+                }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth="2">
+                  {showPassword ? (
+                    <><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></>
+                  ) : (
+                    <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>
+                  )}
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <div className="form-group" style={{ marginBottom: 16 }}>
+            <label>Confirm Password</label>
+            <input
+              type={showPassword ? 'text' : 'password'}
+              className="form-input"
+              value={confirmPassword}
+              onChange={e => { setConfirmPassword(e.target.value); setError(''); }}
+              placeholder="Confirm password"
+            />
+          </div>
+
+          <div className="info-box" style={{ marginBottom: 16 }}>
+            <span>🔒</span>
+            <span>Min 12 characters with uppercase, lowercase, number, and special character.</span>
+          </div>
+
+          {error && <div className="error-message" style={{ marginBottom: 16 }}>{error}</div>}
+
+          <button className="btn-primary" onClick={handleCompletePrivateKey}>Import Wallet</button>
         </div>
       </div>
     );

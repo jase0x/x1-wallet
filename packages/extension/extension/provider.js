@@ -7,6 +7,14 @@
 (function () {
   "use strict";
 
+  // X1W-SEC-011 FIX: Production-safe logging
+  const DEBUG_MODE = false; // Set to true for development
+  const logger = {
+    log: (...args) => DEBUG_MODE && console.log(...args),
+    warn: (...args) => console.warn(...args),
+    error: (...args) => console.error(...args)
+  };
+
   // X1W-NEW-003 FIX: Secure context check - don't inject on insecure HTTP pages
   // This prevents potential MITM attacks on non-HTTPS pages
   if (!window.isSecureContext && 
@@ -18,7 +26,7 @@
 
   // Prevent double injection
   if (window.x1Wallet && window.x1Wallet._initialized) {
-    console.log("[X1 Wallet] Provider already injected");
+    logger.log("[X1 Wallet] Provider already injected");
     return;
   }
 
@@ -279,7 +287,7 @@
       // Listen for messages from content script
       window.addEventListener("message", this._handleMessage.bind(this));
 
-      console.log("[X1 Wallet] Provider initialized");
+      logger.log("[X1 Wallet] Provider initialized");
     }
     
     // Load saved network from storage
@@ -290,11 +298,11 @@
         if (result && result.chain) {
           this._chain = result.chain;
           this._network = result.network || this._chainToNetwork(result.chain);
-          console.log("[X1 Wallet] Loaded saved network:", this._chain, this._network);
+          logger.log("[X1 Wallet] Loaded saved network:", this._chain, this._network);
         }
       } catch (e) {
         // Ignore errors - will use defaults
-        console.log("[X1 Wallet] Could not load saved network, using defaults");
+        logger.log("[X1 Wallet] Could not load saved network, using defaults");
       }
     }
     
@@ -338,7 +346,7 @@
 
       const { type, payload, id } = event.data;
 
-      console.log("[X1 Wallet Provider] 📨 Message received:", type, id ? `id:${id}` : "", JSON.stringify(payload || {}).slice(0, 100));
+      logger.log("[X1 Wallet Provider] 📨 Message received:", type, id ? `id:${id}` : "", JSON.stringify(payload || {}).slice(0, 100));
 
       // Handle responses to pending requests
       if (id && pendingRequests.has(id)) {
@@ -350,7 +358,7 @@
           console.error("[X1 Wallet Provider] ❌ Error:", payload.error);
           reject(new Error(payload.error));
         } else if (payload && payload.result !== undefined) {
-          console.log("[X1 Wallet Provider] ✅ Success:", JSON.stringify(payload.result).slice(0, 80));
+          logger.log("[X1 Wallet Provider] ✅ Success:", JSON.stringify(payload.result).slice(0, 80));
           resolve(payload.result);
         } else {
           resolve(payload);
@@ -365,19 +373,19 @@
           if (payload && payload.publicKey) {
             this._publicKey = new PublicKey(payload.publicKey);
           }
-          console.log("[X1 Wallet Provider] 🔗 Emitting 'connect' event");
+          logger.log("[X1 Wallet Provider] 🔗 Emitting 'connect' event");
           this.emit("connect", this._publicKey);
           break;
 
         case "disconnect":
           this._connected = false;
           this._publicKey = null;
-          console.log("[X1 Wallet Provider] 🔌 Emitting 'disconnect' event");
+          logger.log("[X1 Wallet Provider] 🔌 Emitting 'disconnect' event");
           this.emit("disconnect");
           break;
 
         case "accountChanged":
-          console.log("[X1 Wallet Provider] 👤 Received accountChanged:", JSON.stringify(payload));
+          logger.log("[X1 Wallet Provider] 👤 Received accountChanged:", JSON.stringify(payload));
           if (payload && payload.publicKey) {
             this._publicKey = new PublicKey(payload.publicKey);
             const pubkeyString = this._publicKey.toBase58();
@@ -385,42 +393,42 @@
             // Emit BOTH events for compatibility:
             // - accountChanged (singular) for X1 Wallet specific listeners
             // - accountsChanged (plural, array) for EIP-1193 / standard dApp adapters
-            console.log("[X1 Wallet Provider] 👤 Emitting 'accountChanged' event with:", pubkeyString);
+            logger.log("[X1 Wallet Provider] 👤 Emitting 'accountChanged' event with:", pubkeyString);
             this.emit("accountChanged", this._publicKey);
             
-            console.log("[X1 Wallet Provider] 👤 Emitting 'accountsChanged' (standard) event with:", [pubkeyString]);
+            logger.log("[X1 Wallet Provider] 👤 Emitting 'accountsChanged' (standard) event with:", [pubkeyString]);
             this.emit("accountsChanged", [pubkeyString]);
             
-            console.log("[X1 Wallet Provider] 👤 Account events emitted successfully");
+            logger.log("[X1 Wallet Provider] 👤 Account events emitted successfully");
           } else {
-            console.log("[X1 Wallet Provider] ⚠️ accountChanged received but no publicKey in payload");
+            logger.log("[X1 Wallet Provider] ⚠️ accountChanged received but no publicKey in payload");
           }
           break;
 
         case "networkChanged":
         case "chainChanged":
         case "network-changed":
-          console.log("[X1 Wallet Provider] 🌐 Received network event:", type, JSON.stringify(payload));
+          logger.log("[X1 Wallet Provider] 🌐 Received network event:", type, JSON.stringify(payload));
           if (payload) {
             const oldChain = this._chain;
             if (payload.chain) this._chain = payload.chain;
             if (payload.network) this._network = payload.network;
             
-            console.log("[X1 Wallet Provider] 🌐 Network changed:", oldChain, "->", this._chain);
+            logger.log("[X1 Wallet Provider] 🌐 Network changed:", oldChain, "->", this._chain);
             
             // Emit events for dApps to listen to
-            console.log("[X1 Wallet Provider] 🌐 Emitting 'networkChanged' event");
+            logger.log("[X1 Wallet Provider] 🌐 Emitting 'networkChanged' event");
             this.emit("networkChanged", { chain: this._chain, network: this._network });
-            console.log("[X1 Wallet Provider] 🌐 Emitting 'chainChanged' event");
+            logger.log("[X1 Wallet Provider] 🌐 Emitting 'chainChanged' event");
             this.emit("chainChanged", this._chain);
-            console.log("[X1 Wallet Provider] 🌐 Network events emitted successfully");
+            logger.log("[X1 Wallet Provider] 🌐 Network events emitted successfully");
           } else {
-            console.log("[X1 Wallet Provider] ⚠️ Network event received but no payload");
+            logger.log("[X1 Wallet Provider] ⚠️ Network event received but no payload");
           }
           break;
           
         default:
-          console.log("[X1 Wallet Provider] ⚠️ Unhandled message type:", type);
+          logger.log("[X1 Wallet Provider] ⚠️ Unhandled message type:", type);
       }
     }
 
@@ -429,7 +437,7 @@
       return new Promise((resolve, reject) => {
         const id = ++requestId;
         
-        console.log("[X1 Wallet] Request:", method, "id:", id);
+        logger.log("[X1 Wallet] Request:", method, "id:", id);
 
         const timeout = setTimeout(() => {
           if (pendingRequests.has(id)) {
@@ -457,7 +465,7 @@
      * @param {boolean} options.onlyIfTrusted - Only connect if already trusted
      */
     async connect(options = {}) {
-      console.log("[X1 Wallet] connect() with options:", options);
+      logger.log("[X1 Wallet] connect() with options:", options);
       
       try {
         // Pass chain info to the wallet
@@ -466,11 +474,11 @@
         // Normalize chain identifier if provided
         if (options.chain) {
           connectParams.chain = options.chain;
-          console.log("[X1 Wallet] Requesting chain:", options.chain);
+          logger.log("[X1 Wallet] Requesting chain:", options.chain);
         }
         
         const result = await this._sendRequest("connect", connectParams);
-        console.log("[X1 Wallet] Connect result:", result);
+        logger.log("[X1 Wallet] Connect result:", result);
         
         if (result && result.publicKey) {
           this._connected = true;
@@ -493,12 +501,12 @@
           // If chain changed during connect, emit chainChanged event
           // This is important for dApps that listen for chain changes
           if (result.chain && result.chain !== previousChain) {
-            console.log("[X1 Wallet] Chain changed during connect:", previousChain, "->", this._chain);
+            logger.log("[X1 Wallet] Chain changed during connect:", previousChain, "->", this._chain);
             this.emit("chainChanged", this._chain);
             this.emit("networkChanged", { chain: this._chain, network: this._network });
           }
           
-          console.log("[X1 Wallet] Connected:", this._publicKey.toBase58(), "on chain:", this._chain);
+          logger.log("[X1 Wallet] Connected:", this._publicKey.toBase58(), "on chain:", this._chain);
           return { publicKey: this._publicKey, chain: this._chain };
         }
         throw new Error("No public key returned");
@@ -514,7 +522,7 @@
      * @param {string} chain - Chain identifier (e.g., "x1:mainnet", "x1:testnet")
      */
     async switchChain(chain) {
-      console.log("[X1 Wallet] switchChain():", chain);
+      logger.log("[X1 Wallet] switchChain():", chain);
       
       const result = await this._sendRequest("switchChain", { chain });
       
@@ -537,7 +545,7 @@
     async request(args) {
       const { method, params } = args;
       
-      console.log("[X1 Wallet] request():", method, params);
+      logger.log("[X1 Wallet] request():", method, params);
       
       switch (method) {
         case 'wallet_switchNetwork':
@@ -575,7 +583,7 @@
      * Get current network info
      */
     async getNetwork() {
-      console.log("[X1 Wallet] getNetwork()");
+      logger.log("[X1 Wallet] getNetwork()");
       
       const result = await this._sendRequest("getNetwork", {});
       
@@ -591,7 +599,7 @@
      * Disconnect
      */
     async disconnect() {
-      console.log("[X1 Wallet] disconnect()");
+      logger.log("[X1 Wallet] disconnect()");
       try {
         await this._sendRequest("disconnect");
       } catch (e) {}
@@ -604,7 +612,7 @@
      * Sign a transaction
      */
     async signTransaction(transaction) {
-      console.log("[X1 Wallet] signTransaction()");
+      logger.log("[X1 Wallet] signTransaction()");
       
       if (!this._connected) {
         throw new Error("Wallet not connected");
@@ -641,7 +649,7 @@
      * Sign multiple transactions
      */
     async signAllTransactions(transactions) {
-      console.log("[X1 Wallet] signAllTransactions()");
+      logger.log("[X1 Wallet] signAllTransactions()");
       
       if (!this._connected) {
         throw new Error("Wallet not connected");
@@ -672,7 +680,7 @@
      * Sign and send transaction
      */
     async signAndSendTransaction(transaction, options = {}) {
-      console.log("[X1 Wallet] signAndSendTransaction()");
+      logger.log("[X1 Wallet] signAndSendTransaction()");
       
       if (!this._connected) {
         throw new Error("Wallet not connected");
@@ -702,7 +710,7 @@
      * Sign message
      */
     async signMessage(message, display = "utf8") {
-      console.log("[X1 Wallet] signMessage()");
+      logger.log("[X1 Wallet] signMessage()");
       
       if (!this._connected) {
         throw new Error("Wallet not connected");
@@ -1032,9 +1040,9 @@
   // Also set window.solana if not taken (for legacy dApps)
   if (!window.solana) {
     window.solana = provider;
-    console.log("[X1 Wallet] Set as window.solana");
+    logger.log("[X1 Wallet] Set as window.solana");
   } else {
-    console.log("[X1 Wallet] window.solana exists (likely Phantom)");
+    logger.log("[X1 Wallet] window.solana exists (likely Phantom)");
   }
 
   // Register with wallet standard
@@ -1048,5 +1056,5 @@
     window.dispatchEvent(new Event("solana#initialized"));
   });
 
-  console.log("[X1 Wallet] Provider ready");
+  logger.log("[X1 Wallet] Provider ready");
 })();

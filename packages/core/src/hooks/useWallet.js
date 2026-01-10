@@ -204,9 +204,10 @@ export function useWallet() {
   }, []);
 
   // Enable encryption on existing wallet
+  // X1W-SEC-008 FIX: Standardized to 12 char minimum
   const enableEncryption = useCallback(async (password) => {
-    if (!password || password.length < 8) {
-      throw new Error('Password must be at least 8 characters');
+    if (!password || password.length < 12) {
+      throw new Error('Password must be at least 12 characters');
     }
     
     // Re-save all wallets with encryption
@@ -220,9 +221,10 @@ export function useWallet() {
   }, [wallets]);
 
   // Change encryption password
+  // X1W-SEC-008 FIX: Standardized to 12 char minimum
   const changePassword = useCallback(async (currentPassword, newPassword) => {
-    if (!newPassword || newPassword.length < 8) {
-      throw new Error('New password must be at least 8 characters');
+    if (!newPassword || newPassword.length < 12) {
+      throw new Error('New password must be at least 12 characters');
     }
     
     // Verify current password by trying to decrypt
@@ -244,25 +246,12 @@ export function useWallet() {
     return true;
   }, [wallets]);
 
-  // Disable encryption (convert to plain storage)
-  const disableEncryption = useCallback(async (password) => {
-    // Verify password first
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (isEncrypted(saved)) {
-      try {
-        await decryptData(saved, password);
-      } catch {
-        throw new Error('Incorrect password');
-      }
-    }
-    
-    // Save as plain JSON
-    setEncryptionPassword(null);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(wallets));
-    localStorage.removeItem(ENCRYPTION_ENABLED_KEY);
-    
-    return true;
-  }, [wallets]);
+  // X1W-SEC-003 FIX: disableEncryption removed for security
+  // Encryption is now mandatory and cannot be disabled
+  // Private keys and mnemonics must always be encrypted at rest
+  const disableEncryption = useCallback(async () => {
+    throw new Error('Encryption cannot be disabled. Your wallet data must remain encrypted for security.');
+  }, []);
 
   // Save wallets to storage
   const saveWallets = useCallback(async (newWallets) => {
@@ -707,6 +696,7 @@ export function useWallet() {
     reorderWallets,
     clearWallet,
     loadWallets,
+    saveWallets, // Added for direct saving
     
     // Address Actions
     addAddress,

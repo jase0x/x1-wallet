@@ -4,7 +4,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { generateMnemonic, validateMnemonic, WORDLIST } from '@x1-wallet/core/utils/bip39';
 
 export default function CreateWallet({ onComplete, onBack }) {
-  const [step, setStep] = useState('choose'); // choose, generate, custom, verify, name
+  const [step, setStep] = useState('choose'); // choose, generate, custom, verify, name, password
   const [seedLength, setSeedLength] = useState(12);
   const [mnemonic, setMnemonic] = useState('');
   const [customWords, setCustomWords] = useState(Array(12).fill(''));
@@ -17,6 +17,11 @@ export default function CreateWallet({ onComplete, onBack }) {
   const [copied, setCopied] = useState(false);
   const [generating, setGenerating] = useState(false);
   const inputRefs = useRef([]);
+  
+  // Password state (mandatory encryption)
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   
   // X1W-NEW-002 FIX: Mnemonic masking for shoulder-surfing protection
   const [wordsRevealed, setWordsRevealed] = useState(new Set());
@@ -217,9 +222,56 @@ export default function CreateWallet({ onComplete, onBack }) {
     }
   };
 
-  // Complete wallet creation
+  // X1W-SEC-008 FIX: Consistent password validation (12 chars, special char required)
+  const validatePassword = (pwd) => {
+    if (!pwd || pwd.length < 12) {
+      return 'Password must be at least 12 characters';
+    }
+    if (!/[a-z]/.test(pwd)) {
+      return 'Password must contain a lowercase letter';
+    }
+    if (!/[A-Z]/.test(pwd)) {
+      return 'Password must contain an uppercase letter';
+    }
+    if (!/[0-9]/.test(pwd)) {
+      return 'Password must contain a number';
+    }
+    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?~`]/.test(pwd)) {
+      return 'Password must contain a special character (!@#$%^&*...)';
+    }
+    // Check for common weak patterns
+    const commonPatterns = ['password', '12345678', 'qwerty', 'abcdef'];
+    const lowerPwd = pwd.toLowerCase();
+    for (const pattern of commonPatterns) {
+      if (lowerPwd.includes(pattern)) {
+        return 'Password contains a common weak pattern';
+      }
+    }
+    return null;
+  };
+
+  // Move to password step after naming
+  const handleNameContinue = () => {
+    setStep('password');
+    setError('');
+  };
+
+  // Complete wallet creation with password
   const handleComplete = () => {
-    onComplete(mnemonic, walletName.trim() || 'My Wallet');
+    // Validate password
+    const pwdError = validatePassword(password);
+    if (pwdError) {
+      setError(pwdError);
+      return;
+    }
+    
+    if (password !== confirmPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+    
+    // Pass mnemonic, name, and password to parent
+    onComplete(mnemonic, walletName.trim() || 'My Wallet', password);
   };
 
   // Copy to clipboard with auto-clear (X1W-007)
@@ -548,7 +600,98 @@ export default function CreateWallet({ onComplete, onBack }) {
           />
         </div>
 
-        <button className="btn-primary" onClick={handleComplete} style={{ marginTop: 24 }}>
+        <button className="btn-primary" onClick={handleNameContinue} style={{ marginTop: 24 }}>
+          Continue
+        </button>
+      </div>
+    );
+  }
+
+  // Password screen (mandatory encryption)
+  if (step === 'password') {
+    return (
+      <div className="screen seed-container no-nav">
+        <button className="back-btn" onClick={() => setStep('name')} style={{ alignSelf: 'flex-start', marginBottom: 16 }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M19 12H5M12 19l-7-7 7-7" />
+          </svg>
+        </button>
+        
+        <div style={{ textAlign: 'center', marginBottom: 24 }}>
+          <div style={{ 
+            width: 64, 
+            height: 64, 
+            borderRadius: '50%', 
+            background: 'rgba(var(--x1-blue-rgb), 0.1)', 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            margin: '0 auto 16px'
+          }}>
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--x1-blue)" strokeWidth="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
+          </div>
+          <h2>Secure Your Wallet</h2>
+          <p className="seed-subtitle">Create a password to encrypt your wallet. This protects your seed phrase and private keys.</p>
+        </div>
+
+        <div className="form-group" style={{ marginBottom: 16 }}>
+          <label>Password</label>
+          <div style={{ position: 'relative' }}>
+            <input
+              type={showPassword ? 'text' : 'password'}
+              className="form-input"
+              value={password}
+              onChange={e => { setPassword(e.target.value); setError(''); }}
+              placeholder="Enter password"
+              autoFocus
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              style={{
+                position: 'absolute',
+                right: 12,
+                top: '50%',
+                transform: 'translateY(-50%)',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                padding: 4
+              }}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth="2">
+                {showPassword ? (
+                  <><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></>
+                ) : (
+                  <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>
+                )}
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div className="form-group" style={{ marginBottom: 16 }}>
+          <label>Confirm Password</label>
+          <input
+            type={showPassword ? 'text' : 'password'}
+            className="form-input"
+            value={confirmPassword}
+            onChange={e => { setConfirmPassword(e.target.value); setError(''); }}
+            placeholder="Confirm password"
+          />
+        </div>
+
+        <div className="info-box" style={{ marginBottom: 16 }}>
+          <span>🔒</span>
+          <span>Min 12 characters with uppercase, lowercase, number, and special character.</span>
+        </div>
+
+        {error && <div className="error-message" style={{ marginBottom: 16 }}>{error}</div>}
+
+        <button className="btn-primary" onClick={handleComplete}>
           Create Wallet
         </button>
       </div>

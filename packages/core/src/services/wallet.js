@@ -183,6 +183,9 @@ export async function checkPassword(password) {
 
 /**
  * Check rate limit status for password attempts (X1W-002)
+ * X1W-SEC-012: Added integrity validation to detect tampering
+ * Note: Client-side rate limiting is a "speed bump" - sophisticated attackers 
+ * can bypass it. Consider server-side rate limiting for additional protection.
  */
 async function checkRateLimit() {
   try {
@@ -200,6 +203,13 @@ async function checkRateLimit() {
       return { locked: false, attempts: 0 };
     }
     
+    // X1W-SEC-012: Validate integrity hash to detect tampering
+    if (!validateRateLimitIntegrity(rateLimitData)) {
+      logger.warn('X1W-SEC-012: Rate limit data tampering detected, resetting');
+      await clearRateLimit();
+      return { locked: false, attempts: 0, tamperingDetected: true };
+    }
+    
     // Check if lockout has expired
     if (rateLimitData.lockoutUntil && Date.now() < rateLimitData.lockoutUntil) {
       return { locked: true, lockoutUntil: rateLimitData.lockoutUntil, attempts: rateLimitData.attempts };
@@ -215,6 +225,27 @@ async function checkRateLimit() {
   } catch (e) {
     return { locked: false, attempts: 0 };
   }
+}
+
+/**
+ * X1W-SEC-012: Simple integrity check for rate limit data
+ * Uses a hash of the data to detect tampering (not cryptographically secure,
+ * but detects casual modification)
+ */
+function computeRateLimitChecksum(data) {
+  const str = `${data.attempts}:${data.lastAttempt}:${data.lockoutUntil || 0}:${data.delayUntil || 0}:x1w`;
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  return Math.abs(hash).toString(36);
+}
+
+function validateRateLimitIntegrity(data) {
+  if (!data || !data.checksum) return true; // Legacy data without checksum is OK
+  return data.checksum === computeRateLimitChecksum(data);
 }
 
 /**
@@ -249,6 +280,9 @@ async function updateRateLimit(success) {
     // 1 second delay
     rateLimitData.delayUntil = Date.now() + 1000;
   }
+  
+  // X1W-SEC-012: Add integrity checksum
+  rateLimitData.checksum = computeRateLimitChecksum(rateLimitData);
   
   try {
     if (typeof chrome !== 'undefined' && chrome.storage) {
@@ -333,8 +367,11 @@ export async function loadWallet(password) {
     if (!stored.version || stored.version < 2) {
       logger.warn('Legacy unencrypted wallet detected - migration required');
       
-      // Generate a unique migration token
-      const migrationToken = `migration_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      // X1W-SEC-005 FIX: Use crypto.getRandomValues() instead of Math.random()
+      const randomBytes = new Uint8Array(16);
+      crypto.getRandomValues(randomBytes);
+      const randomPart = Array.from(randomBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+      const migrationToken = `migration_${Date.now()}_${randomPart}`;
       
       // Store legacy data internally (NEVER exposed to caller)
       _legacyMigrationStore.set(migrationToken, {
@@ -738,12 +775,21 @@ export async function sendTransaction(walletData, toAddress, amount, network, op
   signedTx.set(message, 65);
   
   // Simulate transaction first (unless skipSimulation is true)
+  // X1W-SEC-010 FIX: Log when simulation is bypassed for audit purposes
   if (!options.skipSimulation) {
     const simResult = await simulateTransaction(signedTx, network);
     if (!simResult.success) {
       throw new Error(`Transaction simulation failed: ${simResult.error}`);
     }
     logger.log('Simulation successful, units consumed:', simResult.unitsConsumed);
+  } else {
+    // Log security audit event when simulation is skipped
+    logger.warn('X1W-SEC-010: Transaction simulation SKIPPED by caller', {
+      timestamp: new Date().toISOString(),
+      toAddress: toAddress.slice(0, 8) + '...',
+      amount: amount,
+      network: network
+    });
   }
   
   // Send

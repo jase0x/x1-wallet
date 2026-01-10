@@ -155,11 +155,11 @@ function LockScreen({ onUnlock, walletUnlock }) {
         return;
       }
       
-      // Fallback to legacy password check
-      const storedHash = storage.get('passwordHash', null);
-      const inputHash = btoa(password);
+      // X1W-SEC-006 FIX: Use PBKDF2 verification from wallet service instead of base64
+      const { checkPassword } = await import('@x1-wallet/core/services/wallet');
+      const isValid = await checkPassword(password);
       
-      if (storedHash === inputHash) {
+      if (isValid) {
         onUnlock(password);
       } else {
         throw new Error('Incorrect password');
@@ -251,35 +251,80 @@ function App() {
   }, []);
 
   // Check for pending dApp requests
-  // Only show approval UI if this window was opened AS an approval window (has URL params)
+  // Supports both: 1) Approval window (URL params) and 2) In-popup approvals (port messages)
   useEffect(() => {
+    let port = null;
+    
     const checkDAppRequest = async () => {
       try {
         // Check if this popup was opened as an approval window (has request param in URL)
         const urlParams = new URLSearchParams(window.location.search);
         const isApprovalWindow = urlParams.has('request');
         
-        // If this is not an approval window (user clicked extension icon), don't show approval UI
-        if (!isApprovalWindow) {
-          setHasDAppRequest(false);
+        // For approval windows, check for pending request
+        if (isApprovalWindow) {
+          if (typeof chrome !== 'undefined' && chrome.runtime) {
+            const response = await chrome.runtime.sendMessage({ type: 'get-pending-request' });
+            const pendingReq = response?.request || response;
+            setHasDAppRequest(pendingReq && pendingReq.type ? true : false);
+          }
           return;
         }
         
-        // This IS an approval window, check for pending request
+        // For regular popup (no URL params), also check if there's a pending request
+        // This handles the case where background uses action.openPopup()
         if (typeof chrome !== 'undefined' && chrome.runtime) {
           const response = await chrome.runtime.sendMessage({ type: 'get-pending-request' });
-          // Handle new response format: { request, approvalWindowId }
           const pendingReq = response?.request || response;
-          setHasDAppRequest(pendingReq && pendingReq.type ? true : false);
+          if (pendingReq && pendingReq.type) {
+            setHasDAppRequest(true);
+          }
         }
       } catch (err) {
-        setHasDAppRequest(false);
+        // Ignore errors
       }
     };
     
+    // Connect to background via port for real-time approval notifications
+    const connectPort = () => {
+      if (typeof chrome !== 'undefined' && chrome.runtime) {
+        try {
+          port = chrome.runtime.connect({ name: 'x1-wallet-popup' });
+          
+          port.onMessage.addListener((message) => {
+            if (message.type === 'pending-request' && message.request) {
+              logger.log('[App] Received pending request via port:', message.request.type);
+              setHasDAppRequest(true);
+            }
+          });
+          
+          port.onDisconnect.addListener(() => {
+            logger.log('[App] Port disconnected from background');
+            port = null;
+          });
+          
+          logger.log('[App] Connected to background via port');
+        } catch (err) {
+          logger.log('[App] Failed to connect port:', err.message);
+        }
+      }
+    };
+    
+    // Connect port and check for pending requests
+    connectPort();
     checkDAppRequest();
+    
+    // Keep checking periodically (for approval windows)
     const interval = setInterval(checkDAppRequest, 500);
-    return () => clearInterval(interval);
+    
+    return () => {
+      clearInterval(interval);
+      if (port) {
+        try {
+          port.disconnect();
+        } catch (e) {}
+      }
+    };
   }, []);
 
   // Fetch user's token holdings
@@ -304,8 +349,28 @@ function App() {
   }, [wallet.wallet?.publicKey, wallet.network]);
 
   // Check if password protection is enabled and if there's a password set
+  // X1W-SEC-006: Check both legacy passwordHash and new PBKDF2 auth
   const passwordProtection = storage.get('passwordProtection', false);
-  const hasPassword = storage.get('passwordHash', null) !== null;
+  const [hasPasswordAsync, setHasPasswordAsync] = useState(false);
+  
+  useEffect(() => {
+    const checkHasPassword = async () => {
+      try {
+        const { hasPassword: checkHasPass } = await import('@x1-wallet/core/services/wallet');
+        const result = await checkHasPass();
+        setHasPasswordAsync(result);
+      } catch {
+        // Fallback to legacy check
+        setHasPasswordAsync(
+          storage.get('passwordHash', null) !== null || 
+          !!localStorage.getItem('x1wallet_auth')
+        );
+      }
+    };
+    checkHasPassword();
+  }, []);
+  
+  const hasPassword = hasPasswordAsync;
   const autoLockMinutes = storage.get('autoLock', 5);
 
   // Track user activity - persist to storage so it survives popup close
@@ -399,10 +464,23 @@ function App() {
     storage.set('lastActivity', now); // Persist unlock time
   };
 
-  // Handle wallet creation
-  const handleCreateComplete = async (mnemonic, name) => {
+  // Handle wallet creation with mandatory encryption
+  const handleCreateComplete = async (mnemonic, name, password) => {
     try {
+      // X1W-SEC-006 FIX: Use PBKDF2 password hashing from wallet service
+      const { setupPassword } = await import('@x1-wallet/core/services/wallet');
+      
+      // First enable encryption with the password
+      await wallet.enableEncryption(password);
+      
+      // Then create the wallet (will be saved encrypted)
       await wallet.createWallet(mnemonic, name);
+      
+      // Set up password hash with PBKDF2 (not base64)
+      await setupPassword(password);
+      storage.set('passwordProtection', true);
+      storage.set('lastActivity', Date.now());
+      
       setScreen('main');
     } catch (err) {
       logger.error('Failed to create wallet:', err);
@@ -410,10 +488,23 @@ function App() {
     }
   };
 
-  // Handle wallet import
-  const handleImportComplete = async (mnemonic, name) => {
+  // Handle wallet import with mandatory encryption
+  const handleImportComplete = async (mnemonic, name, password) => {
     try {
+      // X1W-SEC-006 FIX: Use PBKDF2 password hashing from wallet service
+      const { setupPassword } = await import('@x1-wallet/core/services/wallet');
+      
+      // First enable encryption with the password
+      await wallet.enableEncryption(password);
+      
+      // Then import the wallet (will be saved encrypted)
       await wallet.importWallet(mnemonic, name);
+      
+      // Set up password hash with PBKDF2 (not base64)
+      await setupPassword(password);
+      storage.set('passwordProtection', true);
+      storage.set('lastActivity', Date.now());
+      
       setScreen('main');
     } catch (err) {
       logger.error('Failed to import wallet:', err);
@@ -421,9 +512,21 @@ function App() {
     }
   };
 
-  // Handle private key import
+  // Handle private key import with mandatory encryption
   const handleImportPrivateKey = async (walletData) => {
     try {
+      const password = walletData.password;
+      if (!password) {
+        showAlert('Password is required for wallet encryption', 'Security Error', 'error');
+        return;
+      }
+      
+      // X1W-SEC-006 FIX: Use PBKDF2 password hashing from wallet service
+      const { setupPassword } = await import('@x1-wallet/core/services/wallet');
+      
+      // Enable encryption first
+      await wallet.enableEncryption(password);
+      
       // Add wallet directly with private key data
       const newWallet = {
         id: Date.now().toString(),
@@ -442,10 +545,10 @@ function App() {
         activeAddressIndex: 0
       };
       
-      // Get existing wallets
-      const existingWallets = JSON.parse(localStorage.getItem('x1wallet_wallets') || '[]');
+      // Get existing wallets (need to check encrypted storage)
+      const existingWallets = wallet.wallets || [];
       
-      // Check if already exists (check both old format and new addresses array)
+      // Check if already exists
       const existingMatch = existingWallets.find(w => 
         w.publicKey === newWallet.publicKey || 
         w.addresses?.some(a => a.publicKey === newWallet.publicKey)
@@ -455,13 +558,14 @@ function App() {
         return;
       }
       
-      existingWallets.push(newWallet);
-      localStorage.setItem('x1wallet_wallets', JSON.stringify(existingWallets));
-      localStorage.setItem('x1wallet_active', newWallet.id);
-      
-      // Refresh wallet state
-      await wallet.loadWallets();
+      // Save via wallet hook (will encrypt)
+      await wallet.saveWallets([...existingWallets, newWallet]);
       wallet.selectWallet(newWallet.id);
+      
+      // Set up password hash with PBKDF2 (not base64)
+      await setupPassword(password);
+      storage.set('passwordProtection', true);
+      storage.set('lastActivity', Date.now());
       
       setScreen('main');
     } catch (err) {
@@ -900,6 +1004,18 @@ function App() {
   }
 
   // Main wallet screen
+  // If this is an approval window with a pending request, ONLY show DAppApproval (not the main wallet)
+  if (hasDAppRequest && wallet.wallet) {
+    return (
+      <div className="app">
+        <DAppApproval 
+          wallet={wallet} 
+          onComplete={() => setHasDAppRequest(false)} 
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       {alertModal.show && (
@@ -908,12 +1024,6 @@ function App() {
           message={alertModal.message}
           type={alertModal.type}
           onClose={closeAlert}
-        />
-      )}
-      {hasDAppRequest && wallet.wallet && (
-        <DAppApproval 
-          wallet={wallet} 
-          onComplete={() => setHasDAppRequest(false)} 
         />
       )}
       <WalletMain

@@ -1,4 +1,4 @@
-const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["TransportWebBLE.js","index.js","index2.js","TransportWebHID.js","hid-framing.js","TransportWebUSB.js","Solana.js"])))=>i.map(i=>d[i]);
+const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["TransportWebBLE.js","index2.js","events.js","index3.js","tslib.es6.js","TransportWebHID.js","hid-framing.js","TransportWebUSB.js","Solana.js","index.js"])))=>i.map(i=>d[i]);
 var _a, _b;
 (function polyfill() {
   const relList = document.createElement("link").relList;
@@ -37,8 +37,33 @@ var _a, _b;
     fetch(link.href, fetchOpts);
   }
 })();
+var commonjsGlobal = typeof globalThis !== "undefined" ? globalThis : typeof window !== "undefined" ? window : typeof globalThis !== "undefined" ? globalThis : typeof self !== "undefined" ? self : {};
 function getDefaultExportFromCjs(x2) {
   return x2 && x2.__esModule && Object.prototype.hasOwnProperty.call(x2, "default") ? x2["default"] : x2;
+}
+function getAugmentedNamespace(n2) {
+  if (n2.__esModule) return n2;
+  var f2 = n2.default;
+  if (typeof f2 == "function") {
+    var a = function a2() {
+      if (this instanceof a2) {
+        return Reflect.construct(f2, arguments, this.constructor);
+      }
+      return f2.apply(this, arguments);
+    };
+    a.prototype = f2.prototype;
+  } else a = {};
+  Object.defineProperty(a, "__esModule", { value: true });
+  Object.keys(n2).forEach(function(k2) {
+    var d = Object.getOwnPropertyDescriptor(n2, k2);
+    Object.defineProperty(a, k2, d.get ? d : {
+      enumerable: true,
+      get: function() {
+        return n2[k2];
+      }
+    });
+  });
+  return a;
 }
 var jsxRuntime = { exports: {} };
 var reactJsxRuntime_production_min = {};
@@ -7005,6 +7030,70 @@ var m = reactDomExports;
   client.createRoot = m.createRoot;
   client.hydrateRoot = m.hydrateRoot;
 }
+const scriptRel = "modulepreload";
+const assetsURL = function(dep) {
+  return "/" + dep;
+};
+const seen = {};
+const __vitePreload = function preload(baseModule, deps, importerUrl) {
+  let promise = Promise.resolve();
+  if (deps && deps.length > 0) {
+    document.getElementsByTagName("link");
+    const cspNonceMeta = document.querySelector(
+      "meta[property=csp-nonce]"
+    );
+    const cspNonce = (cspNonceMeta == null ? void 0 : cspNonceMeta.nonce) || (cspNonceMeta == null ? void 0 : cspNonceMeta.getAttribute("nonce"));
+    promise = Promise.allSettled(
+      deps.map((dep) => {
+        dep = assetsURL(dep);
+        if (dep in seen) return;
+        seen[dep] = true;
+        const isCss = dep.endsWith(".css");
+        const cssSelector = isCss ? '[rel="stylesheet"]' : "";
+        if (document.querySelector(`link[href="${dep}"]${cssSelector}`)) {
+          return;
+        }
+        const link = document.createElement("link");
+        link.rel = isCss ? "stylesheet" : scriptRel;
+        if (!isCss) {
+          link.as = "script";
+        }
+        link.crossOrigin = "";
+        link.href = dep;
+        if (cspNonce) {
+          link.setAttribute("nonce", cspNonce);
+        }
+        document.head.appendChild(link);
+        if (isCss) {
+          return new Promise((res, rej) => {
+            link.addEventListener("load", res);
+            link.addEventListener(
+              "error",
+              () => rej(new Error(`Unable to preload CSS for ${dep}`))
+            );
+          });
+        }
+      })
+    );
+  }
+  function handlePreloadError(err) {
+    const e = new Event("vite:preloadError", {
+      cancelable: true
+    });
+    e.payload = err;
+    window.dispatchEvent(e);
+    if (!e.defaultPrevented) {
+      throw err;
+    }
+  }
+  return promise.then((res) => {
+    for (const item of res || []) {
+      if (item.status !== "rejected") continue;
+      handlePreloadError(item.reason);
+    }
+    return baseModule().catch(handlePreloadError);
+  });
+};
 const isDev$1 = typeof process !== "undefined" ? false : typeof window !== "undefined" && ((_a = window.location) == null ? void 0 : _a.hostname) === "localhost";
 const SENSITIVE_PATTERNS = [
   /privateKey/i,
@@ -10736,70 +10825,6 @@ const base58 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
   encodeBase58,
   validateAddress
 }, Symbol.toStringTag, { value: "Module" }));
-const scriptRel = "modulepreload";
-const assetsURL = function(dep) {
-  return "/" + dep;
-};
-const seen = {};
-const __vitePreload = function preload(baseModule, deps, importerUrl) {
-  let promise = Promise.resolve();
-  if (deps && deps.length > 0) {
-    document.getElementsByTagName("link");
-    const cspNonceMeta = document.querySelector(
-      "meta[property=csp-nonce]"
-    );
-    const cspNonce = (cspNonceMeta == null ? void 0 : cspNonceMeta.nonce) || (cspNonceMeta == null ? void 0 : cspNonceMeta.getAttribute("nonce"));
-    promise = Promise.allSettled(
-      deps.map((dep) => {
-        dep = assetsURL(dep);
-        if (dep in seen) return;
-        seen[dep] = true;
-        const isCss = dep.endsWith(".css");
-        const cssSelector = isCss ? '[rel="stylesheet"]' : "";
-        if (document.querySelector(`link[href="${dep}"]${cssSelector}`)) {
-          return;
-        }
-        const link = document.createElement("link");
-        link.rel = isCss ? "stylesheet" : scriptRel;
-        if (!isCss) {
-          link.as = "script";
-        }
-        link.crossOrigin = "";
-        link.href = dep;
-        if (cspNonce) {
-          link.setAttribute("nonce", cspNonce);
-        }
-        document.head.appendChild(link);
-        if (isCss) {
-          return new Promise((res, rej) => {
-            link.addEventListener("load", res);
-            link.addEventListener(
-              "error",
-              () => rej(new Error(`Unable to preload CSS for ${dep}`))
-            );
-          });
-        }
-      })
-    );
-  }
-  function handlePreloadError(err) {
-    const e = new Event("vite:preloadError", {
-      cancelable: true
-    });
-    e.payload = err;
-    window.dispatchEvent(e);
-    if (!e.defaultPrevented) {
-      throw err;
-    }
-  }
-  return promise.then((res) => {
-    for (const item of res || []) {
-      if (item.status !== "rejected") continue;
-      handlePreloadError(item.reason);
-    }
-    return baseModule().catch(handlePreloadError);
-  });
-};
 const SYSTEM_PROGRAM_ID$1 = "11111111111111111111111111111111";
 const TOKEN_PROGRAM_ID$2 = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const ASSOCIATED_TOKEN_PROGRAM_ID$1 = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
@@ -12874,6 +12899,41 @@ async function decryptData(encryptedBase64, password) {
     throw new Error("Decryption failed - incorrect password or corrupted data");
   }
 }
+async function hashPassword(password, existingSalt = null) {
+  const encoder = new TextEncoder();
+  const salt = existingSalt || crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"]
+  );
+  const hashBuffer = await crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt,
+      iterations: PBKDF2_ITERATIONS_V3,
+      // Use modern iteration count
+      hash: "SHA-256"
+    },
+    keyMaterial,
+    256
+  );
+  return {
+    hash: btoa(String.fromCharCode(...new Uint8Array(hashBuffer))),
+    salt: btoa(String.fromCharCode(...salt))
+  };
+}
+async function verifyPassword(password, storedHash, storedSalt) {
+  try {
+    const salt = Uint8Array.from(atob(storedSalt), (c) => c.charCodeAt(0));
+    const { hash } = await hashPassword(password, salt);
+    return hash === storedHash;
+  } catch {
+    return false;
+  }
+}
 function isEncrypted(data) {
   if (!data || typeof data !== "string") return false;
   try {
@@ -14193,8 +14253,8 @@ function useWallet() {
     setBalance(0);
   }, []);
   const enableEncryption = reactExports.useCallback(async (password) => {
-    if (!password || password.length < 8) {
-      throw new Error("Password must be at least 8 characters");
+    if (!password || password.length < 12) {
+      throw new Error("Password must be at least 12 characters");
     }
     setEncryptionPassword(password);
     const jsonData = JSON.stringify(wallets);
@@ -14204,8 +14264,8 @@ function useWallet() {
     return true;
   }, [wallets]);
   const changePassword = reactExports.useCallback(async (currentPassword, newPassword) => {
-    if (!newPassword || newPassword.length < 8) {
-      throw new Error("New password must be at least 8 characters");
+    if (!newPassword || newPassword.length < 12) {
+      throw new Error("New password must be at least 12 characters");
     }
     const saved = localStorage.getItem(STORAGE_KEY);
     if (isEncrypted(saved)) {
@@ -14221,20 +14281,9 @@ function useWallet() {
     localStorage.setItem(STORAGE_KEY, encrypted);
     return true;
   }, [wallets]);
-  const disableEncryption = reactExports.useCallback(async (password) => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (isEncrypted(saved)) {
-      try {
-        await decryptData(saved, password);
-      } catch {
-        throw new Error("Incorrect password");
-      }
-    }
-    setEncryptionPassword(null);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(wallets));
-    localStorage.removeItem(ENCRYPTION_ENABLED_KEY);
-    return true;
-  }, [wallets]);
+  const disableEncryption = reactExports.useCallback(async () => {
+    throw new Error("Encryption cannot be disabled. Your wallet data must remain encrypted for security.");
+  }, []);
   const saveWallets = reactExports.useCallback(async (newWallets) => {
     await saveWalletsToStorage(newWallets);
     setWallets(newWallets);
@@ -14591,6 +14640,8 @@ function useWallet() {
     reorderWallets,
     clearWallet,
     loadWallets,
+    saveWallets,
+    // Added for direct saving
     // Address Actions
     addAddress,
     removeAddress,
@@ -14647,6 +14698,9 @@ function CreateWallet({ onComplete, onBack }) {
   const [copied, setCopied] = reactExports.useState(false);
   const [generating, setGenerating] = reactExports.useState(false);
   const inputRefs = reactExports.useRef([]);
+  const [password, setPassword] = reactExports.useState("");
+  const [confirmPassword, setConfirmPassword] = reactExports.useState("");
+  const [showPassword, setShowPassword] = reactExports.useState(false);
   const [wordsRevealed, setWordsRevealed] = reactExports.useState(/* @__PURE__ */ new Set());
   const [allRevealed, setAllRevealed] = reactExports.useState(false);
   const [windowBlurred, setWindowBlurred] = reactExports.useState(false);
@@ -14809,8 +14863,46 @@ function CreateWallet({ onComplete, onBack }) {
       setError("Words do not match. Please try again.");
     }
   };
+  const validatePassword = (pwd) => {
+    if (!pwd || pwd.length < 12) {
+      return "Password must be at least 12 characters";
+    }
+    if (!/[a-z]/.test(pwd)) {
+      return "Password must contain a lowercase letter";
+    }
+    if (!/[A-Z]/.test(pwd)) {
+      return "Password must contain an uppercase letter";
+    }
+    if (!/[0-9]/.test(pwd)) {
+      return "Password must contain a number";
+    }
+    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?~`]/.test(pwd)) {
+      return "Password must contain a special character (!@#$%^&*...)";
+    }
+    const commonPatterns = ["password", "12345678", "qwerty", "abcdef"];
+    const lowerPwd = pwd.toLowerCase();
+    for (const pattern of commonPatterns) {
+      if (lowerPwd.includes(pattern)) {
+        return "Password contains a common weak pattern";
+      }
+    }
+    return null;
+  };
+  const handleNameContinue = () => {
+    setStep("password");
+    setError("");
+  };
   const handleComplete = () => {
-    onComplete(mnemonic, walletName.trim() || "My Wallet");
+    const pwdError = validatePassword(password);
+    if (pwdError) {
+      setError(pwdError);
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError("Passwords do not match");
+      return;
+    }
+    onComplete(mnemonic, walletName.trim() || "My Wallet", password);
   };
   const copyMnemonic = () => {
     const cleanMnemonic = mnemonic.trim().toLowerCase().split(/\s+/).join(" ");
@@ -15054,7 +15146,94 @@ function CreateWallet({ onComplete, onBack }) {
           autoFocus: true
         }
       ) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", onClick: handleComplete, style: { marginTop: 24 }, children: "Create Wallet" })
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", onClick: handleNameContinue, style: { marginTop: 24 }, children: "Continue" })
+    ] });
+  }
+  if (step === "password") {
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen seed-container no-nav", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", onClick: () => setStep("name"), style: { alignSelf: "flex-start", marginBottom: 16 }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { textAlign: "center", marginBottom: 24 }, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: {
+          width: 64,
+          height: 64,
+          borderRadius: "50%",
+          background: "rgba(var(--x1-blue-rgb), 0.1)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          margin: "0 auto 16px"
+        }, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "32", height: "32", viewBox: "0 0 24 24", fill: "none", stroke: "var(--x1-blue)", strokeWidth: "2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "3", y: "11", width: "18", height: "11", rx: "2", ry: "2" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7 11V7a5 5 0 0 1 10 0v4" })
+        ] }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "Secure Your Wallet" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "seed-subtitle", children: "Create a password to encrypt your wallet. This protects your seed phrase and private keys." })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "form-group", style: { marginBottom: 16 }, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("label", { children: "Password" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { position: "relative" }, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              type: showPassword ? "text" : "password",
+              className: "form-input",
+              value: password,
+              onChange: (e) => {
+                setPassword(e.target.value);
+                setError("");
+              },
+              placeholder: "Enter password",
+              autoFocus: true
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              type: "button",
+              onClick: () => setShowPassword(!showPassword),
+              style: {
+                position: "absolute",
+                right: 12,
+                top: "50%",
+                transform: "translateY(-50%)",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                padding: 4
+              },
+              children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "var(--text-secondary)", strokeWidth: "2", children: showPassword ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "1", y1: "1", x2: "23", y2: "23" })
+              ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "3" })
+              ] }) })
+            }
+          )
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "form-group", style: { marginBottom: 16 }, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("label", { children: "Confirm Password" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "input",
+          {
+            type: showPassword ? "text" : "password",
+            className: "form-input",
+            value: confirmPassword,
+            onChange: (e) => {
+              setConfirmPassword(e.target.value);
+              setError("");
+            },
+            placeholder: "Confirm password"
+          }
+        )
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "info-box", style: { marginBottom: 16 }, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "🔒" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Min 12 characters with uppercase, lowercase, number, and special character." })
+      ] }),
+      error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", style: { marginBottom: 16 }, children: error }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", onClick: handleComplete, children: "Create Wallet" })
     ] });
   }
   return null;
@@ -15070,6 +15249,9 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey }) {
   const [activeInput, setActiveInput] = reactExports.useState(-1);
   const inputRefs = reactExports.useRef([]);
   const [privateKeyInput, setPrivateKeyInput] = reactExports.useState("");
+  const [password, setPassword] = reactExports.useState("");
+  const [confirmPassword, setConfirmPassword] = reactExports.useState("");
+  const [showPassword, setShowPassword] = reactExports.useState(false);
   const handleLengthChange = (len) => {
     setSeedLength(len);
     setWords(Array(len).fill(""));
@@ -15149,8 +15331,46 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey }) {
     }
     setStep("name");
   };
+  const validatePassword = (pwd) => {
+    if (!pwd || pwd.length < 12) {
+      return "Password must be at least 12 characters";
+    }
+    if (!/[a-z]/.test(pwd)) {
+      return "Password must contain a lowercase letter";
+    }
+    if (!/[A-Z]/.test(pwd)) {
+      return "Password must contain an uppercase letter";
+    }
+    if (!/[0-9]/.test(pwd)) {
+      return "Password must contain a number";
+    }
+    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?~`]/.test(pwd)) {
+      return "Password must contain a special character (!@#$%^&*...)";
+    }
+    const commonPatterns = ["password", "12345678", "qwerty", "abcdef"];
+    const lowerPwd = pwd.toLowerCase();
+    for (const pattern of commonPatterns) {
+      if (lowerPwd.includes(pattern)) {
+        return "Password contains a common weak pattern";
+      }
+    }
+    return null;
+  };
+  const handleNameContinue = () => {
+    setStep("password");
+    setError("");
+  };
   const handleComplete = () => {
-    onComplete(words.join(" "), walletName || "Imported Wallet");
+    const pwdError = validatePassword(password);
+    if (pwdError) {
+      setError(pwdError);
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError("Passwords do not match");
+      return;
+    }
+    onComplete(words.join(" "), walletName || "Imported Wallet", password);
   };
   const handlePrivateKeyImport = async () => {
     setError("");
@@ -15208,7 +15428,6 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey }) {
         const { encodeBase58: encodeBase583 } = await Promise.resolve().then(() => base58);
         return { encodeBase58: encodeBase583 };
       }, true ? void 0 : void 0);
-      const publicKeyBase58 = encodeBase582(publicKey);
       const privateKeyBase58 = encodeBase582(secretKey);
       setPrivateKeyInput(privateKeyBase58);
       setStep("name-pk");
@@ -15217,7 +15436,20 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey }) {
       setError("Failed to import: " + err.message);
     }
   };
+  const handleNamePkContinue = () => {
+    setStep("password-pk");
+    setError("");
+  };
   const handleCompletePrivateKey = async () => {
+    const pwdError = validatePassword(password);
+    if (pwdError) {
+      setError(pwdError);
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError("Passwords do not match");
+      return;
+    }
     if (!onCompletePrivateKey) {
       setError("Secure import handler not available. Please try again or contact support.");
       logger$1.error("[ImportWallet] onCompletePrivateKey handler not provided - this is a security requirement");
@@ -15249,7 +15481,8 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey }) {
       onCompletePrivateKey({
         publicKey: publicKeyBase58,
         privateKey: privateKeyBase58,
-        name: walletName || "Imported Wallet"
+        name: walletName || "Imported Wallet",
+        password
       });
     } catch (err) {
       setError("Failed to complete import: " + err.message);
@@ -15265,7 +15498,99 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey }) {
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen-content seed-container", style: { paddingTop: 0 }, children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "seed-subtitle", children: "Give your imported wallet a name" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "form-group", style: { marginTop: 24 }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "text", className: "form-input", value: walletName, onChange: (e) => setWalletName(e.target.value), placeholder: "My Imported Wallet", autoFocus: true }) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", onClick: handleComplete, style: { marginTop: 24 }, children: "Import Wallet" })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", onClick: handleNameContinue, style: { marginTop: 24 }, children: "Continue" })
+      ] })
+    ] });
+  }
+  if (step === "password") {
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen no-nav", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "page-header", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-left", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", onClick: () => setStep("name"), children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "header-title", children: "Secure Wallet" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-right" })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen-content seed-container", style: { paddingTop: 0 }, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { textAlign: "center", marginBottom: 24 }, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: {
+            width: 64,
+            height: 64,
+            borderRadius: "50%",
+            background: "rgba(var(--x1-blue-rgb), 0.1)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            margin: "0 auto 16px"
+          }, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "32", height: "32", viewBox: "0 0 24 24", fill: "none", stroke: "var(--x1-blue)", strokeWidth: "2", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "3", y: "11", width: "18", height: "11", rx: "2", ry: "2" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7 11V7a5 5 0 0 1 10 0v4" })
+          ] }) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "seed-subtitle", children: "Create a password to encrypt your wallet" })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "form-group", style: { marginBottom: 16 }, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("label", { children: "Password" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { position: "relative" }, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "input",
+              {
+                type: showPassword ? "text" : "password",
+                className: "form-input",
+                value: password,
+                onChange: (e) => {
+                  setPassword(e.target.value);
+                  setError("");
+                },
+                placeholder: "Enter password",
+                autoFocus: true
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                type: "button",
+                onClick: () => setShowPassword(!showPassword),
+                style: {
+                  position: "absolute",
+                  right: 12,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  padding: 4
+                },
+                children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "var(--text-secondary)", strokeWidth: "2", children: showPassword ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "1", y1: "1", x2: "23", y2: "23" })
+                ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "3" })
+                ] }) })
+              }
+            )
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "form-group", style: { marginBottom: 16 }, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("label", { children: "Confirm Password" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              type: showPassword ? "text" : "password",
+              className: "form-input",
+              value: confirmPassword,
+              onChange: (e) => {
+                setConfirmPassword(e.target.value);
+                setError("");
+              },
+              placeholder: "Confirm password"
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "info-box", style: { marginBottom: 16 }, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "🔒" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Min 12 characters with uppercase, lowercase, number, and special character." })
+        ] }),
+        error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", style: { marginBottom: 16 }, children: error }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", onClick: handleComplete, children: "Import Wallet" })
       ] })
     ] });
   }
@@ -15280,7 +15605,99 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey }) {
         /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "seed-subtitle", children: "Give your imported wallet a name" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "form-group", style: { marginTop: 24 }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "text", className: "form-input", value: walletName, onChange: (e) => setWalletName(e.target.value), placeholder: "My Imported Wallet", autoFocus: true }) }),
         error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", children: error }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", onClick: handleCompletePrivateKey, style: { marginTop: 24 }, children: "Import Wallet" })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", onClick: handleNamePkContinue, style: { marginTop: 24 }, children: "Continue" })
+      ] })
+    ] });
+  }
+  if (step === "password-pk") {
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen no-nav", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "page-header", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-left", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", onClick: () => setStep("name-pk"), children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "header-title", children: "Secure Wallet" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-right" })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen-content seed-container", style: { paddingTop: 0 }, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { textAlign: "center", marginBottom: 24 }, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: {
+            width: 64,
+            height: 64,
+            borderRadius: "50%",
+            background: "rgba(var(--x1-blue-rgb), 0.1)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            margin: "0 auto 16px"
+          }, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "32", height: "32", viewBox: "0 0 24 24", fill: "none", stroke: "var(--x1-blue)", strokeWidth: "2", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "3", y: "11", width: "18", height: "11", rx: "2", ry: "2" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7 11V7a5 5 0 0 1 10 0v4" })
+          ] }) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "seed-subtitle", children: "Create a password to encrypt your wallet" })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "form-group", style: { marginBottom: 16 }, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("label", { children: "Password" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { position: "relative" }, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "input",
+              {
+                type: showPassword ? "text" : "password",
+                className: "form-input",
+                value: password,
+                onChange: (e) => {
+                  setPassword(e.target.value);
+                  setError("");
+                },
+                placeholder: "Enter password",
+                autoFocus: true
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                type: "button",
+                onClick: () => setShowPassword(!showPassword),
+                style: {
+                  position: "absolute",
+                  right: 12,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  padding: 4
+                },
+                children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "var(--text-secondary)", strokeWidth: "2", children: showPassword ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "1", y1: "1", x2: "23", y2: "23" })
+                ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "3" })
+                ] }) })
+              }
+            )
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "form-group", style: { marginBottom: 16 }, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("label", { children: "Confirm Password" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              type: showPassword ? "text" : "password",
+              className: "form-input",
+              value: confirmPassword,
+              onChange: (e) => {
+                setConfirmPassword(e.target.value);
+                setError("");
+              },
+              placeholder: "Confirm password"
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "info-box", style: { marginBottom: 16 }, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "🔒" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Min 12 characters with uppercase, lowercase, number, and special character." })
+        ] }),
+        error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", style: { marginBottom: 16 }, children: error }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", onClick: handleCompletePrivateKey, children: "Import Wallet" })
       ] })
     ] });
   }
@@ -17162,8 +17579,10 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
 const isDev = typeof process !== "undefined" ? false : typeof window !== "undefined" && ((_b = window.location) == null ? void 0 : _b.hostname) === "localhost";
 const logger = {
   log: (...args) => isDev && console.log("[Hardware]", ...args),
-  warn: (...args) => isDev && console.warn("[Hardware]", ...args),
-  error: (...args) => isDev && console.error("[Hardware]", ...args)
+  warn: (...args) => console.warn("[Hardware]", ...args),
+  // Always log warnings
+  error: (...args) => console.error("[Hardware]", ...args)
+  // Always log errors
 };
 if (typeof window !== "undefined") {
   window.Buffer = buffer.Buffer;
@@ -17179,7 +17598,6 @@ const LEDGER_STATES = {
 const HW_TYPES = {
   LEDGER: "ledger",
   TREZOR: "trezor"
-  // Keep for compatibility, but not implemented
 };
 const CONNECTION_TYPES = {
   USB: "usb",
@@ -17218,6 +17636,34 @@ class HardwareWalletService {
     this.publicKey = null;
     this.derivationPath = "44'/501'/0'/0'";
     this.currentScheme = DERIVATION_SCHEMES.BIP44_EXTENDED;
+    this.sessionInvalid = false;
+  }
+  // Mark session as invalid and close transport
+  // Call this after ANY Ledger transport/status error
+  async invalidateSession(reason = "unknown") {
+    logger.warn("[Hardware] Invalidating session:", reason);
+    this.sessionInvalid = true;
+    await this.disconnect();
+  }
+  // Check if session is valid, throw if not
+  ensureValidSession() {
+    if (this.sessionInvalid) {
+      throw new Error("Ledger session expired. Please reconnect your device and open the Solana app.");
+    }
+  }
+  // Preflight check - verify Solana app is responsive before signing
+  async preflightCheck() {
+    if (!this.solanaApp) {
+      throw new Error("Solana app not initialized");
+    }
+    try {
+      await this.solanaApp.getAppConfiguration();
+      return true;
+    } catch (err) {
+      logger.error("[Hardware] Preflight check failed:", err.message);
+      await this.invalidateSession("preflight failed: " + err.message);
+      throw new Error("Ledger not ready. Please unlock your device and open the Solana app.");
+    }
   }
   // Check if WebUSB/WebHID is supported
   isSupported() {
@@ -17251,7 +17697,7 @@ class HardwareWalletService {
   }
   // Connect to Ledger device via USB or Bluetooth
   async connect(connectionType = CONNECTION_TYPES.USB) {
-    var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j;
+    var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s;
     if (!this.isSupported()) {
       throw new Error("WebUSB/WebHID not supported in this browser");
     }
@@ -17273,7 +17719,7 @@ class HardwareWalletService {
         if (!this.isBluetoothSupported()) {
           throw new Error("Bluetooth is not supported in this browser. Please use Chrome or Edge.");
         }
-        const TransportModule = await __vitePreload(() => import("./TransportWebBLE.js"), true ? __vite__mapDeps([0,1,2]) : void 0);
+        const TransportModule = await __vitePreload(() => import("./TransportWebBLE.js"), true ? __vite__mapDeps([0,1,2,3,4]) : void 0);
         const Transport = TransportModule.default;
         try {
           logger.log("Requesting Bluetooth Ledger device...");
@@ -17306,31 +17752,81 @@ class HardwareWalletService {
             logger.log("Existing authorized HID devices:", existingDevices.length);
             const ledgerDevices = existingDevices.filter((d) => d.vendorId === 11415);
             logger.log("Ledger devices found:", ledgerDevices.length);
+            for (const device of ledgerDevices) {
+              console.log("[Hardware] Ledger device:", {
+                productId: "0x" + device.productId.toString(16),
+                productName: device.productName,
+                collections: (_d = device.collections) == null ? void 0 : _d.map((c) => ({
+                  usagePage: "0x" + c.usagePage.toString(16),
+                  usage: "0x" + c.usage.toString(16)
+                }))
+              });
+              const isFido = (_e = device.collections) == null ? void 0 : _e.some((c) => c.usagePage === 61904);
+              if (isFido) {
+                console.warn("[Hardware] ⚠️ This device is a FIDO interface - may not work for signing!");
+              }
+              const isMain = (_f = device.collections) == null ? void 0 : _f.some((c) => c.usagePage === 65440);
+              if (isMain) {
+                console.log("[Hardware] ✅ This device is the main Ledger interface");
+              }
+            }
           } catch (e) {
             logger.log("Could not enumerate existing devices:", e.message);
           }
           try {
-            const TransportModule = await __vitePreload(() => import("./TransportWebHID.js"), true ? __vite__mapDeps([3,1,2,4]) : void 0);
+            const TransportModule = await __vitePreload(() => import("./TransportWebHID.js"), true ? __vite__mapDeps([5,1,2,3,6]) : void 0);
             const Transport = TransportModule.default;
             logger.log("Requesting Ledger device via WebHID...");
-            this.transport = await Transport.create();
+            console.log("[Hardware] About to call Transport.create() - device picker should appear");
+            console.log("[Hardware] Note: For Nano X, make sure to select the main interface, not FIDO");
+            const transportPromise = Transport.create();
+            const timeoutPromise = new Promise((_, reject) => {
+              setTimeout(() => {
+                reject(new Error("Device picker timeout. This can happen if:\n• Chrome blocked the popup (check for blocked popup icon)\n• The extension window lost focus\n• macOS requires additional permissions\n\nTry: Click this window, ensure it has focus, then click Connect again."));
+              }, 3e4);
+            });
+            this.transport = await Promise.race([transportPromise, timeoutPromise]);
+            console.log("[Hardware] Transport.create() returned successfully");
+            if ((_g = this.transport) == null ? void 0 : _g.device) {
+              const device = this.transport.device;
+              console.log("[Hardware] Connected to device:", {
+                productId: "0x" + ((_h = device.productId) == null ? void 0 : _h.toString(16)),
+                productName: device.productName,
+                collections: (_i = device.collections) == null ? void 0 : _i.map((c) => {
+                  var _a3, _b3;
+                  return {
+                    usagePage: "0x" + ((_a3 = c.usagePage) == null ? void 0 : _a3.toString(16)),
+                    usage: "0x" + ((_b3 = c.usage) == null ? void 0 : _b3.toString(16))
+                  };
+                })
+              });
+              const isFido = (_j = device.collections) == null ? void 0 : _j.some((c) => c.usagePage === 61904);
+              if (isFido) {
+                console.error("[Hardware] ❌ Connected to FIDO interface! This will cause 0x6a81 errors.");
+                console.error("[Hardware] Please disconnect and reconnect, selecting a different interface.");
+              }
+            }
             logger.log("Transport created successfully");
           } catch (e) {
             logger.error("WebHID transport creation failed:", e);
-            logger.error("Error name:", e == null ? void 0 : e.name);
-            logger.error("Error message:", e == null ? void 0 : e.message);
-            logger.error("Error statusCode:", e == null ? void 0 : e.statusCode);
+            console.error("[Hardware] WebHID error:", e == null ? void 0 : e.name, e == null ? void 0 : e.message);
             if ((e == null ? void 0 : e.name) === "TransportOpenUserCancelled") {
               throw new Error("Device selection cancelled. Please try again and select your Ledger.");
             }
-            if ((_d = e == null ? void 0 : e.message) == null ? void 0 : _d.includes("No device selected")) {
+            if ((_k = e == null ? void 0 : e.message) == null ? void 0 : _k.includes("No device selected")) {
               throw new Error("No Ledger device selected. Please try again.");
+            }
+            if (((_l = e == null ? void 0 : e.message) == null ? void 0 : _l.includes("timeout")) || ((_m = e == null ? void 0 : e.message) == null ? void 0 : _m.includes("Device picker"))) {
+              throw e;
+            }
+            if ((e == null ? void 0 : e.name) === "NotAllowedError") {
+              throw new Error("Chrome blocked device access. Ensure this window has focus and try again.");
             }
             throw new Error(`WebHID connection failed: ${(e == null ? void 0 : e.message) || (e == null ? void 0 : e.name) || "Unknown error"}`);
           }
         } else if (transportType === "webusb") {
           logger.log("Using WebUSB transport");
-          const TransportModule = await __vitePreload(() => import("./TransportWebUSB.js"), true ? __vite__mapDeps([5,1,2,4]) : void 0);
+          const TransportModule = await __vitePreload(() => import("./TransportWebUSB.js"), true ? __vite__mapDeps([7,1,2,3,6]) : void 0);
           const Transport = TransportModule.default;
           this.transport = await Transport.create();
         } else {
@@ -17346,19 +17842,19 @@ class HardwareWalletService {
       logger.error("Ledger connection error:", error);
       logger.error("Error name:", error.name);
       logger.error("Error message:", error.message);
-      if (error.name === "TransportOpenUserCancelled" || ((_e = error.message) == null ? void 0 : _e.includes("user cancelled"))) {
+      if (error.name === "TransportOpenUserCancelled" || ((_n = error.message) == null ? void 0 : _n.includes("user cancelled"))) {
         throw new Error("Connection cancelled. Please click Connect and select your Ledger device from the popup.");
       }
-      if ((_f = error.message) == null ? void 0 : _f.includes("No device selected")) {
+      if ((_o = error.message) == null ? void 0 : _o.includes("No device selected")) {
         throw new Error("No Ledger device selected. Please try again and select your device.");
       }
-      if ((_g = error.message) == null ? void 0 : _g.includes("Access denied")) {
+      if ((_p = error.message) == null ? void 0 : _p.includes("Access denied")) {
         throw new Error("Access denied. Please:\n• Make sure Ledger Live is closed\n• Unlock your Ledger device\n• Open the Solana app on the device\n• Try unplugging and replugging the USB");
       }
-      if ((_h = error.message) == null ? void 0 : _h.includes("Unable to claim interface")) {
+      if ((_q = error.message) == null ? void 0 : _q.includes("Unable to claim interface")) {
         throw new Error("Another application is using your Ledger. Please close Ledger Live and any other wallet apps.");
       }
-      if (((_i = error.message) == null ? void 0 : _i.includes("NotFoundError")) || ((_j = error.message) == null ? void 0 : _j.includes("no device"))) {
+      if (((_r = error.message) == null ? void 0 : _r.includes("NotFoundError")) || ((_s = error.message) == null ? void 0 : _s.includes("no device"))) {
         throw new Error("No Ledger device found. Please:\n• Connect your Ledger via USB\n• Unlock it with your PIN\n• Open the Solana app");
       }
       throw new Error(`Failed to connect: ${error.message || "Unknown error"}`);
@@ -17372,7 +17868,7 @@ class HardwareWalletService {
       try {
         const transportType = this.getAvailableTransport();
         if (transportType === "webhid") {
-          const TransportModule = await __vitePreload(() => import("./TransportWebHID.js"), true ? __vite__mapDeps([3,1,2,4]) : void 0);
+          const TransportModule = await __vitePreload(() => import("./TransportWebHID.js"), true ? __vite__mapDeps([5,1,2,3,6]) : void 0);
           const Transport = TransportModule.default;
           try {
             this.transport = await Transport.openConnected();
@@ -17393,16 +17889,18 @@ class HardwareWalletService {
       }
     }
     try {
-      const SolanaModule = await __vitePreload(() => import("./Solana.js"), true ? __vite__mapDeps([6,2]) : void 0);
+      const SolanaModule = await __vitePreload(() => import("./Solana.js"), true ? __vite__mapDeps([8,3]) : void 0);
       const Solana = SolanaModule.default;
       this.solanaApp = new Solana(this.transport);
       const config = await this.solanaApp.getAppConfiguration();
       logger.log("Solana app version:", config.version);
+      this.sessionInvalid = false;
       this.state = LEDGER_STATES.READY;
       return config;
     } catch (error) {
       this.state = LEDGER_STATES.APP_CLOSED;
       logger.error("Solana app error:", error);
+      await this.invalidateSession("openApp failed: " + error.message);
       if (error.statusCode === 28160 || error.statusCode === 27904) {
         throw new Error("Please open the Solana app on your Ledger device.");
       }
@@ -17474,9 +17972,12 @@ class HardwareWalletService {
   }
   // Sign transaction with Ledger
   async signTransaction(transaction2, path = null) {
+    var _a2, _b2;
+    this.ensureValidSession();
     if (!this.solanaApp) {
       await this.openApp();
     }
+    await this.preflightCheck();
     const derivePath2 = path || this.derivationPath;
     try {
       const txBuffer = buffer.Buffer.isBuffer(transaction2) ? transaction2 : buffer.Buffer.from(transaction2);
@@ -17490,27 +17991,34 @@ class HardwareWalletService {
       if (error.statusCode === 27264) {
         throw new Error("Invalid transaction data");
       }
+      const isTransportError = error.statusCode === 27265 || // 0x6a81
+      error.statusCode === 27265 || error.name === "TransportStatusError" || ((_a2 = error.message) == null ? void 0 : _a2.includes("0x6a81")) || ((_b2 = error.message) == null ? void 0 : _b2.includes("UNKNOWN_ERROR"));
+      if (isTransportError) {
+        await this.invalidateSession("signTransaction transport error: " + error.message);
+      }
       throw error;
     }
   }
   // Sign message with Ledger (off-chain)
   async signMessage(message, path = null) {
+    var _a2, _b2;
+    this.ensureValidSession();
     if (!this.solanaApp) {
       await this.openApp();
     }
+    await this.preflightCheck();
     const derivePath2 = path || this.derivationPath;
+    const msgBuffer = buffer.Buffer.isBuffer(message) ? message : message instanceof Uint8Array ? buffer.Buffer.from(message) : buffer.Buffer.from(message, "utf8");
     try {
-      const msgBuffer = buffer.Buffer.isBuffer(message) ? message : buffer.Buffer.from(message, "utf8");
       const result = await this.solanaApp.signOffchainMessage(derivePath2, msgBuffer);
       return result.signature;
-    } catch (error) {
-      logger.error("Sign message error:", error);
-      if (error.statusCode === 27265) {
-        throw new Error(
-          "Ledger cannot sign this message. The updated Ledger Solana app (v1.4+) has stricter requirements for off-chain message signing. This dApp may not be compatible with Ledger hardware wallets. Try using a software wallet instead."
-        );
+    } catch (err) {
+      const isTransportError = err.statusCode === 27265 || // 0x6a81
+      err.statusCode === 27265 || err.name === "TransportStatusError" || ((_a2 = err.message) == null ? void 0 : _a2.includes("0x6a81")) || ((_b2 = err.message) == null ? void 0 : _b2.includes("UNKNOWN_ERROR"));
+      if (isTransportError) {
+        await this.invalidateSession("signMessage transport error: " + err.message);
       }
-      throw error;
+      throw err;
     }
   }
   // Disconnect from Ledger
@@ -17574,8 +18082,217 @@ class HardwareWalletService {
     return this.state === LEDGER_STATES.READY;
   }
 }
+class TrezorWalletService {
+  constructor() {
+    this.trezorConnect = null;
+    this.deviceType = HW_TYPES.TREZOR;
+    this.state = LEDGER_STATES.DISCONNECTED;
+    this.publicKey = null;
+    this.derivationPath = "m/44'/501'/0'/0'";
+    this.initialized = false;
+  }
+  // Initialize Trezor Connect
+  async init() {
+    var _a2, _b2;
+    if (this.initialized) return;
+    try {
+      logger.log("[Trezor] Starting initialization...");
+      const importPromise = __vitePreload(() => import("./index.js").then((n2) => n2.i), true ? __vite__mapDeps([9,4,2]) : void 0);
+      const timeoutPromise = new Promise(
+        (_, reject) => setTimeout(() => reject(new Error("Trezor Connect import timeout")), 1e4)
+      );
+      const TrezorConnect = await Promise.race([importPromise, timeoutPromise]);
+      logger.log("[Trezor] Module imported");
+      this.trezorConnect = TrezorConnect.default;
+      if (this.trezorConnect.isInitialized && this.trezorConnect.isInitialized()) {
+        logger.log("[Trezor] Already initialized");
+        this.initialized = true;
+        return;
+      }
+      logger.log("[Trezor] Calling init...");
+      await this.trezorConnect.init({
+        lazyLoad: true,
+        // Let operations trigger the popup
+        manifest: {
+          email: "support@x1.xyz",
+          appUrl: typeof chrome !== "undefined" && ((_a2 = chrome.runtime) == null ? void 0 : _a2.id) ? `chrome-extension://${chrome.runtime.id}` : window.location.origin
+        },
+        transports: ["BridgeTransport", "WebUsbTransport"],
+        // Try Bridge first, then WebUSB
+        connectSrc: "https://connect.trezor.io/9/",
+        popup: true,
+        // Use popup mode
+        debug: isDev
+      });
+      this.initialized = true;
+      logger.log("[Trezor] Connect initialized successfully");
+    } catch (e) {
+      if ((_b2 = e.message) == null ? void 0 : _b2.includes("already initialized")) {
+        this.initialized = true;
+        logger.log("[Trezor] Was already initialized");
+        return;
+      }
+      logger.error("[Trezor] Failed to initialize:", e);
+      throw new Error("Failed to initialize Trezor: " + e.message);
+    }
+  }
+  // Check if supported
+  isSupported() {
+    return typeof navigator !== "undefined" && navigator.usb !== void 0;
+  }
+  // Get derivation schemes (same as Ledger for Solana)
+  getDerivationSchemes() {
+    return Object.values(DERIVATION_SCHEMES);
+  }
+  // Connect to Trezor - just initialize, actual connection happens on first use
+  async connect() {
+    this.state = LEDGER_STATES.CONNECTING;
+    try {
+      await this.init();
+      this.state = LEDGER_STATES.CONNECTED;
+      logger.log("Trezor Connect ready");
+      return true;
+    } catch (e) {
+      this.state = LEDGER_STATES.ERROR;
+      logger.error("Trezor initialization error:", e);
+      throw e;
+    }
+  }
+  // Open app (no-op for Trezor - Solana is built-in)
+  async openApp() {
+    await this.init();
+    this.state = LEDGER_STATES.READY;
+    return { version: "native" };
+  }
+  // Get public key from Trezor
+  async getPublicKey(path = null, display = false) {
+    var _a2;
+    await this.init();
+    const derivePath2 = path || this.derivationPath;
+    const fullPath = derivePath2.startsWith("m/") ? derivePath2 : `m/${derivePath2}`;
+    try {
+      const result = await this.trezorConnect.solanaGetPublicKey({
+        path: fullPath,
+        showOnTrezor: display
+      });
+      if (!result.success) {
+        throw new Error(((_a2 = result.payload) == null ? void 0 : _a2.error) || "Failed to get public key");
+      }
+      this.publicKey = result.payload.publicKey;
+      return result.payload.publicKey;
+    } catch (e) {
+      logger.error("Trezor getPublicKey error:", e);
+      throw e;
+    }
+  }
+  // Get accounts for a scheme
+  async getAccountsForScheme(scheme, startIndex = 0, count = 5) {
+    const accounts = [];
+    for (let i = startIndex; i < startIndex + count; i++) {
+      const path = scheme.getPath(i);
+      try {
+        const address = await this.getPublicKey(path, false);
+        accounts.push({
+          index: i,
+          path,
+          address,
+          scheme: scheme.id,
+          schemeName: scheme.name,
+          label: `Account ${i + 1}`
+        });
+      } catch (e) {
+        logger.warn(`Could not get Trezor account ${i}:`, e);
+        break;
+      }
+    }
+    return accounts;
+  }
+  // Discover accounts from all schemes
+  async discoverAccounts(count = 5) {
+    const allAccounts = [];
+    const seenAddresses = /* @__PURE__ */ new Set();
+    for (const scheme of Object.values(DERIVATION_SCHEMES)) {
+      try {
+        const accounts = await this.getAccountsForScheme(scheme, 0, count);
+        for (const account of accounts) {
+          if (!seenAddresses.has(account.address)) {
+            seenAddresses.add(account.address);
+            allAccounts.push(account);
+          }
+        }
+      } catch (e) {
+        logger.warn(`Failed to get Trezor accounts for scheme ${scheme.id}:`, e);
+      }
+    }
+    return allAccounts;
+  }
+  // Sign transaction with Trezor
+  async signTransaction(transaction2, path = null) {
+    var _a2, _b2;
+    await this.init();
+    const derivePath2 = path || this.derivationPath;
+    const fullPath = derivePath2.startsWith("m/") ? derivePath2 : `m/${derivePath2}`;
+    try {
+      const txBuffer = buffer.Buffer.isBuffer(transaction2) ? transaction2 : buffer.Buffer.from(transaction2);
+      const result = await this.trezorConnect.solanaSignTransaction({
+        path: fullPath,
+        serializedTx: txBuffer.toString("hex")
+      });
+      if (!result.success) {
+        if (((_a2 = result.payload) == null ? void 0 : _a2.code) === "Failure_ActionCancelled") {
+          throw new Error("Transaction rejected by user");
+        }
+        throw new Error(((_b2 = result.payload) == null ? void 0 : _b2.error) || "Failed to sign transaction");
+      }
+      return buffer.Buffer.from(result.payload.signature, "hex");
+    } catch (e) {
+      logger.error("Trezor signTransaction error:", e);
+      throw e;
+    }
+  }
+  // Sign message (off-chain) - Note: Trezor may have limited support
+  async signMessage(message, path = null) {
+    await this.init();
+    throw new Error("Message signing is not yet supported on Trezor for Solana");
+  }
+  // Disconnect
+  async disconnect() {
+    if (this.trezorConnect) {
+      try {
+        await this.trezorConnect.dispose();
+      } catch (e) {
+        logger.warn("Error disposing Trezor Connect:", e);
+      }
+    }
+    this.initialized = false;
+    this.state = LEDGER_STATES.DISCONNECTED;
+    this.publicKey = null;
+  }
+  // Get derivation paths (legacy compatibility)
+  getDerivationPaths() {
+    return [
+      { path: "44'/501'/0'/0'", label: "Default (m/44'/501'/0'/0')" },
+      { path: "44'/501'/0'", label: "Legacy (m/44'/501'/0')" },
+      { path: "44'/501'/1'/0'", label: "Account 2 (m/44'/501'/1'/0')" },
+      { path: "44'/501'/2'/0'", label: "Account 3 (m/44'/501'/2'/0')" }
+    ];
+  }
+  setDerivationPath(path) {
+    this.derivationPath = path;
+  }
+  getState() {
+    return this.state;
+  }
+  isReady() {
+    return this.state === LEDGER_STATES.READY;
+  }
+}
 const hardwareWallet = new HardwareWalletService();
+const trezorWallet = new TrezorWalletService();
 function getHardwareWallet(type) {
+  if (type === HW_TYPES.TREZOR) {
+    return trezorWallet;
+  }
   return hardwareWallet;
 }
 function HardwareWallet({ onComplete, onBack }) {
@@ -17595,7 +18312,7 @@ function HardwareWallet({ onComplete, onBack }) {
   const [selectedScheme, setSelectedScheme] = reactExports.useState(DERIVATION_SCHEMES.BIP44_STANDARD);
   const [customPath, setCustomPath] = reactExports.useState("");
   const [showCustomPath, setShowCustomPath] = reactExports.useState(false);
-  const getWallet = () => getHardwareWallet();
+  const getWallet = () => getHardwareWallet(deviceType);
   logger$1.log("[HardwareWallet] Rendering with step:", step, "loading:", loading, "deviceType:", deviceType);
   const isSupported = hardwareWallet.isSupported();
   const selectDevice = (type) => {
@@ -20197,25 +20914,48 @@ function RecoveryPhrasePanel({ wallet, onClose }) {
   const phrase = (wallet == null ? void 0 : wallet.mnemonic) || (wallet == null ? void 0 : wallet.seedPhrase) || "";
   const words = phrase ? phrase.split(" ") : [];
   const passwordProtection = localStorage.getItem("passwordProtection") !== "false";
-  const storedHash = localStorage.getItem("passwordHash");
-  const requiresPassword = passwordProtection && storedHash;
+  const [hasAuthData, setHasAuthData] = reactExports.useState(false);
+  reactExports.useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const { hasPassword } = await __vitePreload(async () => {
+          const { hasPassword: hasPassword2 } = await import("./wallet.js");
+          return { hasPassword: hasPassword2 };
+        }, true ? [] : void 0);
+        const result = await hasPassword();
+        setHasAuthData(result);
+      } catch {
+        setHasAuthData(!!localStorage.getItem("x1wallet_auth"));
+      }
+    };
+    checkAuth();
+  }, []);
+  const requiresPassword = passwordProtection && hasAuthData;
   const copyPhrase = () => {
     navigator.clipboard.writeText(phrase);
     setCopied(true);
     setTimeout(() => setCopied(false), 2e3);
   };
-  const verifyPassword = () => {
+  const verifyPassword2 = async () => {
     setPasswordError("");
     if (!password) {
       setPasswordError("Please enter your password");
       return;
     }
-    const inputHash = btoa(password);
-    if (inputHash !== storedHash) {
-      setPasswordError("Incorrect password");
-      return;
+    try {
+      const { checkPassword } = await __vitePreload(async () => {
+        const { checkPassword: checkPassword2 } = await import("./wallet.js");
+        return { checkPassword: checkPassword2 };
+      }, true ? [] : void 0);
+      const isValid = await checkPassword(password);
+      if (!isValid) {
+        setPasswordError("Incorrect password");
+        return;
+      }
+      setPasswordVerified(true);
+    } catch (err) {
+      setPasswordError(err.message || "Password verification failed");
     }
-    setPasswordVerified(true);
   };
   return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "slide-panel-overlay", onClick: onClose, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "slide-panel large", onClick: (e) => e.stopPropagation(), children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "slide-panel-header", style: { display: "flex", alignItems: "center", gap: 12 }, children: [
@@ -20259,13 +20999,13 @@ function RecoveryPhrasePanel({ wallet, onClose }) {
                   setPassword(e.target.value);
                   setPasswordError("");
                 },
-                onKeyDown: (e) => e.key === "Enter" && verifyPassword(),
+                onKeyDown: (e) => e.key === "Enter" && verifyPassword2(),
                 autoFocus: true,
                 style: { marginBottom: 12, textAlign: "center" }
               }
             ),
             passwordError && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { color: "#ff3b30", fontSize: 13, marginBottom: 12 }, children: passwordError }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", onClick: verifyPassword, style: { width: "100%" }, children: "Verify Password" })
+            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", onClick: verifyPassword2, style: { width: "100%" }, children: "Verify Password" })
           ] })
         ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("p", { style: { color: "var(--text-muted)", marginBottom: 24 }, children: "Your seed phrase is hidden for security" }),
@@ -21374,7 +22114,7 @@ function SettingsScreen({ wallet, onBack, onLock }) {
   const [privateKeyError, setPrivateKeyError] = reactExports.useState("");
   const [privateKeyCopied, setPrivateKeyCopied] = reactExports.useState(false);
   const [passwordVerified, setPasswordVerified] = reactExports.useState(false);
-  const [verifyPassword, setVerifyPassword] = reactExports.useState("");
+  const [verifyPassword2, setVerifyPassword] = reactExports.useState("");
   const [verifyError, setVerifyError] = reactExports.useState("");
   const [showAddRpc, setShowAddRpc] = reactExports.useState(false);
   const [customRpc, setCustomRpc] = reactExports.useState({ name: "", url: "", symbol: "", decimals: 9, explorer: "" });
@@ -21520,18 +22260,44 @@ function SettingsScreen({ wallet, onBack, onLock }) {
     setRpcOverrideUrl(rpcOverrides[networkName] || "");
     setError("");
   };
-  const verifyUserPassword = () => {
-    const storedHash = storage$1.get("passwordHash", null);
-    const inputHash = btoa(verifyPassword);
-    if (storedHash === inputHash) {
-      setPasswordVerified(true);
-      setVerifyError("");
-      setVerifyPassword("");
-    } else {
-      setVerifyError("Incorrect password");
+  const verifyUserPassword = async () => {
+    try {
+      const { checkPassword } = await __vitePreload(async () => {
+        const { checkPassword: checkPassword2 } = await import("./wallet.js");
+        return { checkPassword: checkPassword2 };
+      }, true ? [] : void 0);
+      const isValid = await checkPassword(verifyPassword2);
+      if (isValid) {
+        setPasswordVerified(true);
+        setVerifyError("");
+        setVerifyPassword("");
+      } else {
+        setVerifyError("Incorrect password");
+      }
+    } catch (err) {
+      setVerifyError(err.message || "Password verification failed");
     }
   };
-  const hasPasswordProtection = passwordProtection && storage$1.get("passwordHash", null) !== null;
+  const [hasPasswordProtection, setHasPasswordProtection] = reactExports.useState(false);
+  reactExports.useEffect(() => {
+    const checkPasswordProtection = async () => {
+      if (!passwordProtection) {
+        setHasPasswordProtection(false);
+        return;
+      }
+      try {
+        const { hasPassword } = await __vitePreload(async () => {
+          const { hasPassword: hasPassword2 } = await import("./wallet.js");
+          return { hasPassword: hasPassword2 };
+        }, true ? [] : void 0);
+        const result = await hasPassword();
+        setHasPasswordProtection(result);
+      } catch {
+        setHasPasswordProtection(!!storage$1.get("x1wallet_auth", null));
+      }
+    };
+    checkPasswordProtection();
+  }, [passwordProtection]);
   if (subScreen === "autolock") {
     const options = [
       { value: 0, label: "Immediately" },
@@ -21651,14 +22417,14 @@ function SettingsScreen({ wallet, onBack, onLock }) {
                 type: "password",
                 className: "form-input",
                 placeholder: "Enter password",
-                value: verifyPassword,
+                value: verifyPassword2,
                 onChange: (e) => setVerifyPassword(e.target.value),
                 onKeyDown: (e) => e.key === "Enter" && verifyUserPassword(),
                 autoFocus: true
               }
             ) }),
             verifyError && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", children: verifyError }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", onClick: verifyUserPassword, disabled: !verifyPassword, children: "Verify" })
+            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", onClick: verifyUserPassword, disabled: !verifyPassword2, children: "Verify" })
           ] }) })
         ] });
       }
@@ -21865,14 +22631,14 @@ Address: ${publicKeyBase58.slice(0, 20)}...`);
                 type: "password",
                 className: "form-input",
                 placeholder: "Enter password",
-                value: verifyPassword,
+                value: verifyPassword2,
                 onChange: (e) => setVerifyPassword(e.target.value),
                 onKeyDown: (e) => e.key === "Enter" && verifyUserPassword(),
                 autoFocus: true
               }
             ) }),
             verifyError && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", children: verifyError }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", onClick: verifyUserPassword, disabled: !verifyPassword, children: "Verify" })
+            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", onClick: verifyUserPassword, disabled: !verifyPassword2, children: "Verify" })
           ] }) })
         ] });
       }
@@ -22023,58 +22789,47 @@ Address: ${publicKeyBase58.slice(0, 20)}...`);
     const handlePasswordChange = async () => {
       setPasswordError("");
       setPasswordSuccess(false);
-      const storedHash = storage$1.get("passwordHash", null);
-      if (storedHash) {
-        const inputHash = btoa(currentPassword);
-        if (inputHash !== storedHash) {
-          setPasswordError("Current password is incorrect");
+      try {
+        const { checkPassword, setupPassword, validatePasswordStrength } = await __vitePreload(async () => {
+          const { checkPassword: checkPassword2, setupPassword: setupPassword2, validatePasswordStrength: validatePasswordStrength2 } = await import("./wallet.js");
+          return { checkPassword: checkPassword2, setupPassword: setupPassword2, validatePasswordStrength: validatePasswordStrength2 };
+        }, true ? [] : void 0);
+        const hasExisting = storage$1.get("passwordHash", null) !== null;
+        if (hasExisting) {
+          const isValid = await checkPassword(currentPassword);
+          if (!isValid) {
+            setPasswordError("Current password is incorrect");
+            return;
+          }
+        }
+        const validation = validatePasswordStrength(newPassword);
+        if (!validation.valid) {
+          setPasswordError(validation.error);
           return;
         }
-      }
-      if (newPassword.length < 12) {
-        setPasswordError("Password must be at least 12 characters");
-        return;
-      }
-      if (!/[a-z]/.test(newPassword)) {
-        setPasswordError("Password must contain at least one lowercase letter");
-        return;
-      }
-      if (!/[A-Z]/.test(newPassword)) {
-        setPasswordError("Password must contain at least one uppercase letter");
-        return;
-      }
-      if (!/[0-9]/.test(newPassword)) {
-        setPasswordError("Password must contain at least one number");
-        return;
-      }
-      if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?~`]/.test(newPassword)) {
-        setPasswordError("Password must contain at least one special character (!@#$%^&*...)");
-        return;
-      }
-      const commonPatterns = ["password", "12345678", "qwerty", "abcdef"];
-      const lowerPassword = newPassword.toLowerCase();
-      for (const pattern of commonPatterns) {
-        if (lowerPassword.includes(pattern)) {
-          setPasswordError("Password contains a common weak pattern");
+        if (newPassword !== confirmPassword) {
+          setPasswordError("Passwords do not match");
           return;
         }
+        await setupPassword(newPassword);
+        if (wallet.changePassword) {
+          await wallet.changePassword(currentPassword, newPassword);
+        } else if (wallet.enableEncryption) {
+          await wallet.enableEncryption(newPassword);
+        }
+        storage$1.set("passwordProtection", true);
+        setPasswordProtection(true);
+        setPasswordSuccess(true);
+        setCurrentPassword("");
+        setNewPassword("");
+        setConfirmPassword("");
+        setTimeout(() => {
+          setSubScreen("password");
+          setPasswordSuccess(false);
+        }, 1500);
+      } catch (err) {
+        setPasswordError(err.message || "Failed to change password");
       }
-      if (newPassword !== confirmPassword) {
-        setPasswordError("Passwords do not match");
-        return;
-      }
-      const newHash = btoa(newPassword);
-      storage$1.set("passwordHash", newHash);
-      storage$1.set("passwordProtection", true);
-      setPasswordProtection(true);
-      setPasswordSuccess(true);
-      setCurrentPassword("");
-      setNewPassword("");
-      setConfirmPassword("");
-      setTimeout(() => {
-        setSubScreen("password");
-        setPasswordSuccess(false);
-      }, 1500);
     };
     const hasExistingPassword = storage$1.get("passwordHash", null) !== null;
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen settings-screen", children: [
@@ -28645,6 +29400,7 @@ function DAppApproval({ wallet, onComplete }) {
   const [hwStatus, setHwStatus] = reactExports.useState("");
   const [ledgerPopupError, setLedgerPopupError] = reactExports.useState(false);
   const signingInProgress = reactExports.useRef(false);
+  const lastSignAttempt = reactExports.useRef(0);
   reactExports.useEffect(() => {
     const loadNetwork = async () => {
       try {
@@ -28728,7 +29484,7 @@ function DAppApproval({ wallet, onComplete }) {
       if (!hardwareWallet.isReady()) {
         logger$1.log("[DAppApproval] Hardware wallet not ready, attempting connection...");
         try {
-          const TransportModule = await __vitePreload(() => import("./TransportWebHID.js"), true ? __vite__mapDeps([3,1,2,4]) : void 0);
+          const TransportModule = await __vitePreload(() => import("./TransportWebHID.js"), true ? __vite__mapDeps([5,1,2,3,6]) : void 0);
           const Transport = TransportModule.default;
           let transport = null;
           try {
@@ -28789,16 +29545,10 @@ function DAppApproval({ wallet, onComplete }) {
   const handleReject = async () => {
     setProcessing(true);
     try {
-      const reqType = pendingRequest == null ? void 0 : pendingRequest.type;
-      let message = { error: "User rejected the request" };
-      if (reqType === "signMessage") {
-        message = { ...message, type: "approve-sign-message" };
-      } else if (reqType === "connect") {
-        message = { ...message, type: "approve-connect" };
-      } else {
-        message = { ...message, type: "approve-sign" };
-      }
-      await chrome.runtime.sendMessage(message);
+      await chrome.runtime.sendMessage({
+        type: "approve-sign",
+        error: "User rejected the request"
+      });
     } catch (e) {
     }
     if (onComplete) onComplete();
@@ -28866,6 +29616,17 @@ function DAppApproval({ wallet, onComplete }) {
     return map[chain] || null;
   };
   const handleSignTransaction = async () => {
+    if (signingInProgress.current) {
+      logger$1.warn("[DAppApproval] Sign already in progress, ignoring");
+      return;
+    }
+    const now = Date.now();
+    if (now - lastSignAttempt.current < 2e3) {
+      logger$1.warn("[DAppApproval] Sign attempt too soon, ignoring");
+      return;
+    }
+    lastSignAttempt.current = now;
+    signingInProgress.current = true;
     setProcessing(true);
     setError(null);
     if (isHardwareWallet) {
@@ -28924,6 +29685,7 @@ function DAppApproval({ wallet, onComplete }) {
       setError(getUserFriendlyError(err, ErrorMessages.transaction.signFailed));
       setProcessing(false);
     } finally {
+      signingInProgress.current = false;
       if (isHardwareWallet) {
         try {
           await chrome.runtime.sendMessage({ type: "ledger-busy", busy: false });
@@ -28934,6 +29696,17 @@ function DAppApproval({ wallet, onComplete }) {
     }
   };
   const handleSignAllTransactions = async () => {
+    if (signingInProgress.current) {
+      logger$1.warn("[DAppApproval] Sign already in progress, ignoring");
+      return;
+    }
+    const now = Date.now();
+    if (now - lastSignAttempt.current < 2e3) {
+      logger$1.warn("[DAppApproval] Sign attempt too soon, ignoring");
+      return;
+    }
+    lastSignAttempt.current = now;
+    signingInProgress.current = true;
     setProcessing(true);
     setError(null);
     if (isHardwareWallet) {
@@ -28999,6 +29772,7 @@ function DAppApproval({ wallet, onComplete }) {
       setError(getUserFriendlyError(err, ErrorMessages.transaction.signFailed));
       setProcessing(false);
     } finally {
+      signingInProgress.current = false;
       if (isHardwareWallet) {
         try {
           await chrome.runtime.sendMessage({ type: "ledger-busy", busy: false });
@@ -29010,6 +29784,17 @@ function DAppApproval({ wallet, onComplete }) {
   };
   const handleSignAndSendTransaction = async () => {
     var _a3, _b3, _c2, _d2, _e2;
+    if (signingInProgress.current) {
+      logger$1.warn("[DAppApproval] Sign already in progress, ignoring");
+      return;
+    }
+    const now = Date.now();
+    if (now - lastSignAttempt.current < 2e3) {
+      logger$1.warn("[DAppApproval] Sign attempt too soon, ignoring");
+      return;
+    }
+    lastSignAttempt.current = now;
+    signingInProgress.current = true;
     setProcessing(true);
     setError(null);
     if (isHardwareWallet) {
@@ -29209,6 +29994,7 @@ function DAppApproval({ wallet, onComplete }) {
       setError(getUserFriendlyError(err, ErrorMessages.transaction.failed));
       setProcessing(false);
     } finally {
+      signingInProgress.current = false;
       if (isHardwareWallet) {
         try {
           await chrome.runtime.sendMessage({ type: "ledger-busy", busy: false });
@@ -29219,11 +30005,17 @@ function DAppApproval({ wallet, onComplete }) {
     }
   };
   const handleSignMessage = async () => {
-    var _a3, _b3, _c2, _d2, _e2, _f2, _g2, _h2, _i, _j, _k, _l;
+    var _a3, _b3, _c2, _d2, _e2, _f2, _g2, _h2, _i, _j, _k;
     if (signingInProgress.current) {
       logger$1.warn("[DAppApproval] Sign already in progress, ignoring duplicate call");
       return;
     }
+    const now = Date.now();
+    if (now - lastSignAttempt.current < 2e3) {
+      logger$1.warn("[DAppApproval] Sign attempt too soon after last attempt, ignoring");
+      return;
+    }
+    lastSignAttempt.current = now;
     signingInProgress.current = true;
     setProcessing(true);
     setError(null);
@@ -29263,15 +30055,7 @@ function DAppApproval({ wallet, onComplete }) {
         stack: err == null ? void 0 : err.stack,
         statusCode: err == null ? void 0 : err.statusCode
       });
-      const errorMsg = (err == null ? void 0 : err.message) || ((_b3 = err == null ? void 0 : err.toString) == null ? void 0 : _b3.call(err)) || "Unknown error";
-      try {
-        await chrome.runtime.sendMessage({
-          type: "approve-sign-message",
-          error: errorMsg
-        });
-      } catch (e) {
-      }
-      const isLedgerReconnectError = isHardwareWallet && (((_c2 = err.message) == null ? void 0 : _c2.includes("Could not connect")) || ((_d2 = err.message) == null ? void 0 : _d2.includes("Solana app")) || ((_e2 = err.message) == null ? void 0 : _e2.includes("session expired")) || ((_f2 = err.message) == null ? void 0 : _f2.includes("Ledger session")) || ((_g2 = err.message) == null ? void 0 : _g2.includes("not ready")) || ((_h2 = err.message) == null ? void 0 : _h2.includes("0x6a81")) || ((_i = err.message) == null ? void 0 : _i.includes("UNKNOWN_ERROR")) || ((_j = err.message) == null ? void 0 : _j.includes("Please open")) || ((_k = err.message) == null ? void 0 : _k.includes("unlock")) || ((_l = err.message) == null ? void 0 : _l.includes("Ledger not connected")) || err.statusCode === 27265 || // 0x6a81
+      const isLedgerReconnectError = isHardwareWallet && (((_b3 = err.message) == null ? void 0 : _b3.includes("Could not connect")) || ((_c2 = err.message) == null ? void 0 : _c2.includes("Solana app")) || ((_d2 = err.message) == null ? void 0 : _d2.includes("session expired")) || ((_e2 = err.message) == null ? void 0 : _e2.includes("Ledger session")) || ((_f2 = err.message) == null ? void 0 : _f2.includes("not ready")) || ((_g2 = err.message) == null ? void 0 : _g2.includes("0x6a81")) || ((_h2 = err.message) == null ? void 0 : _h2.includes("UNKNOWN_ERROR")) || ((_i = err.message) == null ? void 0 : _i.includes("Please open")) || ((_j = err.message) == null ? void 0 : _j.includes("unlock")) || ((_k = err.message) == null ? void 0 : _k.includes("Ledger not connected")) || err.statusCode === 27265 || // 0x6a81
       err.statusCode === 27265 || err.name === "TransportStatusError");
       if (isLedgerReconnectError) {
         logger$1.log("[DAppApproval] Ledger needs reconnection, showing connect UI");
@@ -29326,6 +30110,11 @@ function DAppApproval({ wallet, onComplete }) {
   const handleApproveClick = async () => {
     if (processing || signingInProgress.current) {
       console.log("[DAppApproval] Ignoring click - already processing");
+      return;
+    }
+    const now = Date.now();
+    if (now - lastSignAttempt.current < 2e3) {
+      console.log("[DAppApproval] Ignoring click - too soon after last attempt");
       return;
     }
     const handler = getHandler();
@@ -29605,38 +30394,56 @@ function DAppApproval({ wallet, onComplete }) {
           "button",
           {
             onClick: async () => {
-              var _a3, _b3, _c2, _d2;
+              var _a3, _b3, _c2, _d2, _e2, _f2, _g2, _h2, _i;
               try {
                 setError(null);
-                setHwStatus("Select your Ledger device...");
+                setHwStatus("Connecting to Ledger...");
                 setProcessing(true);
                 try {
                   await hardwareWallet.disconnect();
                 } catch (e) {
                 }
                 hardwareWallet.sessionInvalid = false;
-                const TransportModule = await __vitePreload(() => import("./TransportWebHID.js"), true ? __vite__mapDeps([3,1,2,4]) : void 0);
-                const Transport = TransportModule.default;
-                const transport = await Transport.create();
-                if (transport) {
-                  hardwareWallet.transport = transport;
-                  hardwareWallet.state = "connected";
+                try {
+                  logger$1.log("[DAppApproval] Calling hardwareWallet.connect()...");
+                  await hardwareWallet.connect("usb");
+                  logger$1.log("[DAppApproval] Connect succeeded, transport:", !!hardwareWallet.transport);
+                } catch (connectErr) {
+                  logger$1.error("[DAppApproval] hardwareWallet.connect() failed:", connectErr);
+                  if (((_a3 = connectErr.message) == null ? void 0 : _a3.includes("No device selected")) || ((_b3 = connectErr.message) == null ? void 0 : _b3.includes("cancelled"))) {
+                    throw connectErr;
+                  }
+                  if ((_c2 = connectErr.message) == null ? void 0 : _c2.includes("NotAllowedError")) {
+                    throw new Error("Chrome blocked device access. Please ensure the popup has focus and try again.");
+                  }
+                  throw connectErr;
+                }
+                if (hardwareWallet.transport) {
                   setHwStatus("Opening Solana app...");
                   await hardwareWallet.openApp();
                   setHwStatus("");
                   setProcessing(false);
                   setLedgerPopupError(false);
+                } else {
+                  throw new Error("Failed to establish transport connection");
                 }
               } catch (err) {
                 logger$1.error("[DAppApproval] Ledger authorization failed:", err);
+                logger$1.error("[DAppApproval] Error details:", {
+                  name: err == null ? void 0 : err.name,
+                  message: err == null ? void 0 : err.message,
+                  stack: err == null ? void 0 : err.stack
+                });
                 setHwStatus("");
                 setProcessing(false);
-                if (err.name === "TransportOpenUserCancelled" || ((_a3 = err.message) == null ? void 0 : _a3.includes("cancelled"))) {
+                if (err.name === "TransportOpenUserCancelled" || ((_d2 = err.message) == null ? void 0 : _d2.includes("cancelled"))) {
                   setError("Ledger connection was cancelled. Please try again.");
-                } else if ((_b3 = err.message) == null ? void 0 : _b3.includes("No device")) {
+                } else if ((_e2 = err.message) == null ? void 0 : _e2.includes("No device")) {
                   setError("No Ledger device found. Make sure it is connected and unlocked.");
-                } else if (((_c2 = err.message) == null ? void 0 : _c2.includes("Solana app")) || ((_d2 = err.message) == null ? void 0 : _d2.includes("open the"))) {
+                } else if (((_f2 = err.message) == null ? void 0 : _f2.includes("Solana app")) || ((_g2 = err.message) == null ? void 0 : _g2.includes("open the"))) {
                   setError("Please open the Solana app on your Ledger, then try again.");
+                } else if (((_h2 = err.message) == null ? void 0 : _h2.includes("NotAllowedError")) || ((_i = err.message) == null ? void 0 : _i.includes("blocked"))) {
+                  setError("Chrome blocked device access. Click this window to give it focus, then try again.");
                 } else {
                   setError(`Failed to connect: ${err.message}`);
                 }
@@ -29803,9 +30610,12 @@ function LockScreen({ onUnlock, walletUnlock }) {
         onUnlock(password);
         return;
       }
-      const storedHash = storage.get("passwordHash", null);
-      const inputHash = btoa(password);
-      if (storedHash === inputHash) {
+      const { checkPassword } = await __vitePreload(async () => {
+        const { checkPassword: checkPassword2 } = await import("./wallet.js");
+        return { checkPassword: checkPassword2 };
+      }, true ? [] : void 0);
+      const isValid = await checkPassword(password);
+      if (isValid) {
         onUnlock(password);
       } else {
         throw new Error("Incorrect password");
@@ -29884,26 +30694,61 @@ function App() {
     setBalanceRefreshKey((prev) => prev + 1);
   }, []);
   reactExports.useEffect(() => {
+    let port = null;
     const checkDAppRequest = async () => {
       try {
         const urlParams = new URLSearchParams(window.location.search);
         const isApprovalWindow = urlParams.has("request");
-        if (!isApprovalWindow) {
-          setHasDAppRequest(false);
+        if (isApprovalWindow) {
+          if (typeof chrome !== "undefined" && chrome.runtime) {
+            const response = await chrome.runtime.sendMessage({ type: "get-pending-request" });
+            const pendingReq = (response == null ? void 0 : response.request) || response;
+            setHasDAppRequest(pendingReq && pendingReq.type ? true : false);
+          }
           return;
         }
         if (typeof chrome !== "undefined" && chrome.runtime) {
           const response = await chrome.runtime.sendMessage({ type: "get-pending-request" });
           const pendingReq = (response == null ? void 0 : response.request) || response;
-          setHasDAppRequest(pendingReq && pendingReq.type ? true : false);
+          if (pendingReq && pendingReq.type) {
+            setHasDAppRequest(true);
+          }
         }
       } catch (err) {
-        setHasDAppRequest(false);
       }
     };
+    const connectPort = () => {
+      if (typeof chrome !== "undefined" && chrome.runtime) {
+        try {
+          port = chrome.runtime.connect({ name: "x1-wallet-popup" });
+          port.onMessage.addListener((message) => {
+            if (message.type === "pending-request" && message.request) {
+              logger$1.log("[App] Received pending request via port:", message.request.type);
+              setHasDAppRequest(true);
+            }
+          });
+          port.onDisconnect.addListener(() => {
+            logger$1.log("[App] Port disconnected from background");
+            port = null;
+          });
+          logger$1.log("[App] Connected to background via port");
+        } catch (err) {
+          logger$1.log("[App] Failed to connect port:", err.message);
+        }
+      }
+    };
+    connectPort();
     checkDAppRequest();
     const interval = setInterval(checkDAppRequest, 500);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      if (port) {
+        try {
+          port.disconnect();
+        } catch (e) {
+        }
+      }
+    };
   }, []);
   const fetchUserTokens = reactExports.useCallback(async () => {
     var _a3;
@@ -29919,7 +30764,25 @@ function App() {
   reactExports.useEffect(() => {
   }, [(_b2 = wallet.wallet) == null ? void 0 : _b2.publicKey, wallet.network]);
   const passwordProtection = storage.get("passwordProtection", false);
-  const hasPassword = storage.get("passwordHash", null) !== null;
+  const [hasPasswordAsync, setHasPasswordAsync] = reactExports.useState(false);
+  reactExports.useEffect(() => {
+    const checkHasPassword = async () => {
+      try {
+        const { hasPassword: checkHasPass } = await __vitePreload(async () => {
+          const { hasPassword: checkHasPass2 } = await import("./wallet.js");
+          return { hasPassword: checkHasPass2 };
+        }, true ? [] : void 0);
+        const result = await checkHasPass();
+        setHasPasswordAsync(result);
+      } catch {
+        setHasPasswordAsync(
+          storage.get("passwordHash", null) !== null || !!localStorage.getItem("x1wallet_auth")
+        );
+      }
+    };
+    checkHasPassword();
+  }, []);
+  const hasPassword = hasPasswordAsync;
   const autoLockMinutes = storage.get("autoLock", 5);
   const updateActivity = reactExports.useCallback(() => {
     const now = Date.now();
@@ -29984,18 +30847,34 @@ function App() {
     lastActivityRef.current = now;
     storage.set("lastActivity", now);
   };
-  const handleCreateComplete = async (mnemonic, name) => {
+  const handleCreateComplete = async (mnemonic, name, password) => {
     try {
+      const { setupPassword } = await __vitePreload(async () => {
+        const { setupPassword: setupPassword2 } = await import("./wallet.js");
+        return { setupPassword: setupPassword2 };
+      }, true ? [] : void 0);
+      await wallet.enableEncryption(password);
       await wallet.createWallet(mnemonic, name);
+      await setupPassword(password);
+      storage.set("passwordProtection", true);
+      storage.set("lastActivity", Date.now());
       setScreen("main");
     } catch (err) {
       logger$1.error("Failed to create wallet:", err);
       showAlert(err.message || "Failed to create wallet", "Wallet Already Exists", "warning");
     }
   };
-  const handleImportComplete = async (mnemonic, name) => {
+  const handleImportComplete = async (mnemonic, name, password) => {
     try {
+      const { setupPassword } = await __vitePreload(async () => {
+        const { setupPassword: setupPassword2 } = await import("./wallet.js");
+        return { setupPassword: setupPassword2 };
+      }, true ? [] : void 0);
+      await wallet.enableEncryption(password);
       await wallet.importWallet(mnemonic, name);
+      await setupPassword(password);
+      storage.set("passwordProtection", true);
+      storage.set("lastActivity", Date.now());
       setScreen("main");
     } catch (err) {
       logger$1.error("Failed to import wallet:", err);
@@ -30004,6 +30883,16 @@ function App() {
   };
   const handleImportPrivateKey = async (walletData) => {
     try {
+      const password = walletData.password;
+      if (!password) {
+        showAlert("Password is required for wallet encryption", "Security Error", "error");
+        return;
+      }
+      const { setupPassword } = await __vitePreload(async () => {
+        const { setupPassword: setupPassword2 } = await import("./wallet.js");
+        return { setupPassword: setupPassword2 };
+      }, true ? [] : void 0);
+      await wallet.enableEncryption(password);
       const newWallet = {
         id: Date.now().toString(),
         name: walletData.name || "Imported Wallet",
@@ -30021,7 +30910,7 @@ function App() {
         }],
         activeAddressIndex: 0
       };
-      const existingWallets = JSON.parse(localStorage.getItem("x1wallet_wallets") || "[]");
+      const existingWallets = wallet.wallets || [];
       const existingMatch = existingWallets.find(
         (w2) => {
           var _a3;
@@ -30032,11 +30921,11 @@ function App() {
         showAlert(`This wallet has already been imported as "${existingMatch.name}"`, "Wallet Already Exists", "warning");
         return;
       }
-      existingWallets.push(newWallet);
-      localStorage.setItem("x1wallet_wallets", JSON.stringify(existingWallets));
-      localStorage.setItem("x1wallet_active", newWallet.id);
-      await wallet.loadWallets();
+      await wallet.saveWallets([...existingWallets, newWallet]);
       wallet.selectWallet(newWallet.id);
+      await setupPassword(password);
+      storage.set("passwordProtection", true);
+      storage.set("lastActivity", Date.now());
       setScreen("main");
     } catch (err) {
       logger$1.error("Failed to import private key wallet:", err);
@@ -30431,6 +31320,15 @@ function App() {
       /* @__PURE__ */ jsxRuntimeExports.jsx(BottomNav, {})
     ] });
   }
+  if (hasDAppRequest && wallet.wallet) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+      DAppApproval,
+      {
+        wallet,
+        onComplete: () => setHasDAppRequest(false)
+      }
+    ) });
+  }
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app", children: [
     alertModal.show && /* @__PURE__ */ jsxRuntimeExports.jsx(
       AlertModal,
@@ -30439,13 +31337,6 @@ function App() {
         message: alertModal.message,
         type: alertModal.type,
         onClose: closeAlert
-      }
-    ),
-    hasDAppRequest && wallet.wallet && /* @__PURE__ */ jsxRuntimeExports.jsx(
-      DAppApproval,
-      {
-        wallet,
-        onComplete: () => setHasDAppRequest(false)
       }
     ),
     /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -30487,6 +31378,10 @@ client.createRoot(document.getElementById("root")).render(
   /* @__PURE__ */ jsxRuntimeExports.jsx(React.StrictMode, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(App, {}) })
 );
 export {
+  getAugmentedNamespace as a,
+  commonjsGlobal as c,
   getDefaultExportFromCjs as g,
-  logger$1 as l
+  hashPassword as h,
+  logger$1 as l,
+  verifyPassword as v
 };
