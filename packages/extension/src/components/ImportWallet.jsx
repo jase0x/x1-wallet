@@ -1,6 +1,6 @@
 // Import Wallet Component with Private Key Support
 import { logger, getUserFriendlyError, ErrorMessages } from '@x1-wallet/core';
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { validateMnemonic, WORDLIST } from '@x1-wallet/core/utils/bip39';
 
 export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey }) {
@@ -8,7 +8,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
   const [seedLength, setSeedLength] = useState(12);
   const [words, setWords] = useState(Array(12).fill(''));
   const [walletName, setWalletName] = useState('');
-  const [step, setStep] = useState('import'); // import, name, password, name-pk, password-pk
+  const [step, setStep] = useState('import'); // import, name, password, verify-password, name-pk, password-pk, verify-password-pk
   const [error, setError] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [activeInput, setActiveInput] = useState(-1);
@@ -21,6 +21,37 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [existingPasswordDetected, setExistingPasswordDetected] = useState(false);
+  const [passwordRequired, setPasswordRequired] = useState(true); // Whether password step is needed
+  const [verifying, setVerifying] = useState(false);
+  
+  // Check for existing password on mount using wallet service
+  useEffect(() => {
+    const checkPassword = async () => {
+      try {
+        // IMPORT wallet: ALWAYS requires password (existing funds need protection)
+        // This will also turn ON password protection if it was OFF
+        setPasswordRequired(true);
+        
+        // Check if password already exists (to determine verify vs create)
+        const { hasPassword } = await import('@x1-wallet/core/services/wallet');
+        const has = await hasPassword();
+        
+        // Check if there are any wallets
+        const walletsData = localStorage.getItem('x1wallet_wallets');
+        const isEmpty = !walletsData || walletsData === '[]' || walletsData === 'null' || walletsData === '';
+        
+        // If no wallets, create new password. If wallets exist and password exists, verify.
+        setExistingPasswordDetected(has && !isEmpty);
+        logger.log('[ImportWallet] Password required, existing:', has && !isEmpty);
+      } catch (e) {
+        logger.error('[ImportWallet] Error checking password:', e);
+        setExistingPasswordDetected(false);
+        setPasswordRequired(true);
+      }
+    };
+    checkPassword();
+  }, []);
 
   const handleLengthChange = (len) => {
     setSeedLength(len);
@@ -135,10 +166,56 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
     return null;
   };
 
-  // Move to password step after naming
+  // Move to password step after naming (or verify if password exists, or skip if not required)
   const handleNameContinue = () => {
-    setStep('password');
+    if (!passwordRequired) {
+      // Password protection is OFF - complete without password
+      onComplete(words.join(' '), walletName || 'Imported Wallet', null);
+      return;
+    }
+    
+    if (existingPasswordDetected) {
+      // Password already exists - require verification
+      setStep('verify-password');
+      setPassword('');
+      setError('');
+    } else {
+      setStep('password');
+      setError('');
+    }
+  };
+  
+  // Verify existing password and complete import
+  const handleVerifyAndComplete = async () => {
+    if (!password) {
+      setError('Please enter your password');
+      return;
+    }
+    
+    setVerifying(true);
     setError('');
+    
+    try {
+      const { checkPassword } = await import('@x1-wallet/core/services/wallet');
+      const isValid = await checkPassword(password);
+      if (!isValid) {
+        setError('Incorrect password');
+        setVerifying(false);
+        return;
+      }
+      
+      // Password verified - complete import with password for encryption
+      onComplete(words.join(' '), walletName || 'Imported Wallet', password);
+    } catch (err) {
+      logger.error('Password verification error:', err);
+      // If verification throws an error, it might mean no valid password exists
+      // Fall back to creating a new password
+      logger.log('[ImportWallet] Verification failed, falling back to password creation');
+      setStep('password');
+      setPassword('');
+      setError('');
+      setVerifying(false);
+    }
   };
 
   // Complete with password (seed phrase import)
@@ -234,10 +311,93 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
     }
   };
   
-  // Move to password step after naming (private key)
-  const handleNamePkContinue = () => {
-    setStep('password-pk');
+  // Move to password step after naming (private key) - or verify if password exists, or skip if not required
+  const handleNamePkContinue = async () => {
+    if (!passwordRequired) {
+      // Password protection is OFF - complete without password
+      await completePrivateKeyImport(null);
+      return;
+    }
+    
+    if (existingPasswordDetected) {
+      // Password already exists - require verification
+      setStep('verify-password-pk');
+      setPassword('');
+      setError('');
+    } else {
+      setStep('password-pk');
+      setError('');
+    }
+  };
+  
+  // Verify existing password and complete private key import
+  const handleVerifyAndCompletePk = async () => {
+    if (!password) {
+      setError('Please enter your password');
+      return;
+    }
+    
+    setVerifying(true);
     setError('');
+    
+    try {
+      const { checkPassword } = await import('@x1-wallet/core/services/wallet');
+      const isValid = await checkPassword(password);
+      if (!isValid) {
+        setError('Incorrect password');
+        setVerifying(false);
+        return;
+      }
+      
+      // Password verified - complete import with password for encryption
+      await completePrivateKeyImport(password);
+    } catch (err) {
+      logger.error('Password verification error:', err);
+      // If verification throws an error, fall back to creating a new password
+      logger.log('[ImportWallet] Verification failed, falling back to password creation');
+      setStep('password-pk');
+      setPassword('');
+      setError('');
+      setVerifying(false);
+    }
+  };
+  
+  // Helper to complete private key import
+  const completePrivateKeyImport = async (pwd) => {
+    try {
+      const trimmedInput = privateKeyInput.trim();
+      const { decodeBase58, encodeBase58 } = await import('@x1-wallet/core/utils/base58');
+      
+      // Parse the private key (it should already be base58 at this point)
+      let keyBytes;
+      if (trimmedInput.startsWith('[')) {
+        keyBytes = new Uint8Array(JSON.parse(trimmedInput));
+      } else {
+        keyBytes = decodeBase58(trimmedInput);
+      }
+      
+      // Get public key
+      let publicKeyBytes;
+      if (keyBytes.length === 64) {
+        publicKeyBytes = keyBytes.slice(32);
+      } else {
+        const { getPublicKey } = await import('@x1-wallet/core/utils/bip44');
+        publicKeyBytes = getPublicKey(keyBytes);
+      }
+      
+      const publicKeyBase58 = encodeBase58(publicKeyBytes);
+      const privateKeyBase58 = trimmedInput;
+      
+      onCompletePrivateKey({
+        publicKey: publicKeyBase58,
+        privateKey: privateKeyBase58,
+        name: walletName || 'Imported Wallet',
+        password: pwd
+      });
+    } catch (err) {
+      logger.error('Private key import error:', err);
+      setError('Failed to import: ' + err.message);
+    }
   };
   
   const handleCompletePrivateKey = async () => {
@@ -398,7 +558,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
               className="form-input"
               value={confirmPassword}
               onChange={e => { setConfirmPassword(e.target.value); setError(''); }}
-              placeholder="Confirm password"
+              
             />
           </div>
 
@@ -410,6 +570,92 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
           {error && <div className="error-message" style={{ marginBottom: 16 }}>{error}</div>}
 
           <button className="btn-primary" onClick={handleComplete}>Import Wallet</button>
+        </div>
+      </div>
+    );
+  }
+  
+  // Verify existing password step (mnemonic)
+  if (step === 'verify-password') {
+    return (
+      <div className="screen no-nav">
+        <div className="page-header">
+          <div className="header-left">
+            <button className="back-btn" onClick={() => setStep('name')}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M19 12H5M12 19l-7-7 7-7" />
+              </svg>
+            </button>
+          </div>
+          <h2 className="header-title">Verify Password</h2>
+          <div className="header-right" />
+        </div>
+        <div className="screen-content seed-container" style={{ paddingTop: 0 }}>
+          <div style={{ textAlign: 'center', marginBottom: 24 }}>
+            <div style={{ 
+              width: 64, 
+              height: 64, 
+              borderRadius: '50%', 
+              background: 'rgba(var(--x1-blue-rgb), 0.1)', 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center',
+              margin: '0 auto 16px'
+            }}>
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--x1-blue)" strokeWidth="2">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+            </div>
+            <p className="seed-subtitle">Enter your existing password to import this wallet</p>
+          </div>
+
+          <div className="form-group" style={{ marginBottom: 16 }}>
+            <label>Password</label>
+            <div style={{ position: 'relative' }}>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                className="form-input"
+                value={password}
+                onChange={e => { setPassword(e.target.value); setError(''); }}
+                placeholder="Enter your password"
+                autoFocus
+                onKeyDown={e => e.key === 'Enter' && handleVerifyAndComplete()}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                style={{
+                  position: 'absolute',
+                  right: 12,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: 4
+                }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth="2">
+                  {showPassword ? (
+                    <><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></>
+                  ) : (
+                    <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>
+                  )}
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          {error && <div className="error-message" style={{ marginBottom: 16 }}>{error}</div>}
+
+          <button 
+            className="btn-primary" 
+            onClick={handleVerifyAndComplete}
+            disabled={verifying}
+          >
+            {verifying ? 'Verifying...' : 'Import Wallet'}
+          </button>
         </div>
       </div>
     );
@@ -520,7 +766,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
               className="form-input"
               value={confirmPassword}
               onChange={e => { setConfirmPassword(e.target.value); setError(''); }}
-              placeholder="Confirm password"
+              
             />
           </div>
 
@@ -532,6 +778,92 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
           {error && <div className="error-message" style={{ marginBottom: 16 }}>{error}</div>}
 
           <button className="btn-primary" onClick={handleCompletePrivateKey}>Import Wallet</button>
+        </div>
+      </div>
+    );
+  }
+  
+  // Verify existing password step (private key)
+  if (step === 'verify-password-pk') {
+    return (
+      <div className="screen no-nav">
+        <div className="page-header">
+          <div className="header-left">
+            <button className="back-btn" onClick={() => setStep('name-pk')}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M19 12H5M12 19l-7-7 7-7" />
+              </svg>
+            </button>
+          </div>
+          <h2 className="header-title">Verify Password</h2>
+          <div className="header-right" />
+        </div>
+        <div className="screen-content seed-container" style={{ paddingTop: 0 }}>
+          <div style={{ textAlign: 'center', marginBottom: 24 }}>
+            <div style={{ 
+              width: 64, 
+              height: 64, 
+              borderRadius: '50%', 
+              background: 'rgba(var(--x1-blue-rgb), 0.1)', 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center',
+              margin: '0 auto 16px'
+            }}>
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--x1-blue)" strokeWidth="2">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+            </div>
+            <p className="seed-subtitle">Enter your existing password to import this wallet</p>
+          </div>
+
+          <div className="form-group" style={{ marginBottom: 16 }}>
+            <label>Password</label>
+            <div style={{ position: 'relative' }}>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                className="form-input"
+                value={password}
+                onChange={e => { setPassword(e.target.value); setError(''); }}
+                placeholder="Enter your password"
+                autoFocus
+                onKeyDown={e => e.key === 'Enter' && handleVerifyAndCompletePk()}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                style={{
+                  position: 'absolute',
+                  right: 12,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: 4
+                }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth="2">
+                  {showPassword ? (
+                    <><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></>
+                  ) : (
+                    <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>
+                  )}
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          {error && <div className="error-message" style={{ marginBottom: 16 }}>{error}</div>}
+
+          <button 
+            className="btn-primary" 
+            onClick={handleVerifyAndCompletePk}
+            disabled={verifying}
+          >
+            {verifying ? 'Verifying...' : 'Import Wallet'}
+          </button>
         </div>
       </div>
     );
@@ -635,7 +967,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
             <label>Private Key</label>
             <textarea
               className="form-input private-key-input"
-              placeholder="Paste private key (base58 or byte array)"
+              placeholder="Paste Key (private or byte array)"
               value={privateKeyInput}
               onChange={(e) => { setPrivateKeyInput(e.target.value); setError(''); }}
               rows={4}

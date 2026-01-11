@@ -210,15 +210,30 @@ export function useWallet() {
       throw new Error('Password must be at least 12 characters');
     }
     
-    // Re-save all wallets with encryption
+    // Set the encryption password for future saves
     setEncryptionPassword(password);
-    const jsonData = JSON.stringify(wallets);
-    const encrypted = await encryptData(jsonData, password);
-    localStorage.setItem(STORAGE_KEY, encrypted);
     localStorage.setItem(ENCRYPTION_ENABLED_KEY, 'true');
+    
+    // Only save if there are existing wallets to encrypt
+    // For new imports, the wallet will be saved encrypted when created
+    if (wallets.length > 0) {
+      const jsonData = JSON.stringify(wallets);
+      const encrypted = await encryptData(jsonData, password);
+      localStorage.setItem(STORAGE_KEY, encrypted);
+    }
     
     return true;
   }, [wallets]);
+
+  // Set encryption password without re-encrypting existing wallets
+  // Use this when importing a new wallet to avoid corrupting existing data if import fails
+  const setEncryptionPasswordOnly = useCallback((password) => {
+    if (!password || password.length < 12) {
+      throw new Error('Password must be at least 12 characters');
+    }
+    setEncryptionPassword(password);
+    localStorage.setItem(ENCRYPTION_ENABLED_KEY, 'true');
+  }, []);
 
   // Change encryption password
   // X1W-SEC-008 FIX: Standardized to 12 char minimum
@@ -288,12 +303,22 @@ export function useWallet() {
       const publicKey = encodeBase58(keypair.publicKey);
       const privateKey = encodeBase58(keypair.secretKey);
       
+      // Check current storage state directly (not just React state which may be stale)
+      let currentWallets = wallets;
+      const savedData = localStorage.getItem(STORAGE_KEY);
+      if (!savedData || savedData === '[]' || savedData === 'null') {
+        // Storage is empty - fresh start
+        currentWallets = [];
+      }
+      
       // Check if this wallet already exists (same public key)
-      const existingWallet = wallets.find(w => 
-        w.addresses?.some(a => a.publicKey === publicKey)
-      );
-      if (existingWallet) {
-        throw new Error('This wallet has already been imported');
+      if (currentWallets.length > 0) {
+        const existingWallet = currentWallets.find(w => 
+          w.addresses?.some(a => a.publicKey === publicKey)
+        );
+        if (existingWallet) {
+          throw new Error('This wallet has already been imported');
+        }
       }
       
       const walletName = name || 'My Wallet';
@@ -312,7 +337,7 @@ export function useWallet() {
         activeAddressIndex: 0
       };
       
-      const newWallets = [...wallets, newWallet];
+      const newWallets = [...currentWallets, newWallet];
       await saveWallets(newWallets);
       setActiveWalletId(newWallet.id);
       localStorage.setItem(ACTIVE_KEY, newWallet.id);
@@ -522,16 +547,41 @@ export function useWallet() {
   // Remove wallet
   const removeWallet = useCallback(async (walletId) => {
     const newWallets = wallets.filter(w => w.id !== walletId);
+    
+    // If this will remove all wallets, clear wallet data only (keep user settings)
+    if (newWallets.length === 0) {
+      // Clear wallet data storage keys only
+      localStorage.removeItem(STORAGE_KEY);  // x1wallet_wallets
+      localStorage.removeItem('x1wallet');   // legacy key from wallet.js
+      localStorage.removeItem(ACTIVE_KEY);
+      localStorage.removeItem(ENCRYPTION_ENABLED_KEY);
+      localStorage.removeItem('x1wallet_encrypted');
+      // NOTE: Do NOT clear passwordProtection, x1wallet_auth, or passwordHash
+      // These are user settings that should persist across wallet removal
+      if (typeof chrome !== 'undefined' && chrome.storage) {
+        try {
+          await chrome.storage.local.remove([
+            STORAGE_KEY, 
+            'x1wallet',
+            'x1wallet_encrypted'
+          ]);
+        } catch (e) {}
+      }
+      // Clear state
+      setWallets([]);
+      setActiveWalletId(null);
+      setEncryptionPassword(null);
+      setIsLocked(false);
+      return;
+    }
+    
+    // Normal case: save remaining wallets
     await saveWallets(newWallets);
     
     if (activeWalletId === walletId) {
-      const newActive = newWallets.length > 0 ? newWallets[0].id : null;
+      const newActive = newWallets[0].id;
       setActiveWalletId(newActive);
-      if (newActive) {
-        localStorage.setItem(ACTIVE_KEY, newActive);
-      } else {
-        localStorage.removeItem(ACTIVE_KEY);
-      }
+      localStorage.setItem(ACTIVE_KEY, newActive);
     }
   }, [wallets, activeWalletId, saveWallets]);
 
@@ -544,10 +594,26 @@ export function useWallet() {
   }, [wallets, saveWallets]);
 
   // Clear all wallets
-  const clearWallet = useCallback(() => {
-    localStorage.removeItem(STORAGE_KEY);
+  const clearWallet = useCallback(async () => {
+    // Clear ALL wallet storage keys (both old and new)
+    localStorage.removeItem(STORAGE_KEY);  // x1wallet_wallets
+    localStorage.removeItem('x1wallet');   // legacy key from wallet.js
     localStorage.removeItem(ACTIVE_KEY);
     localStorage.removeItem(ENCRYPTION_ENABLED_KEY);
+    localStorage.removeItem('x1wallet_auth');
+    localStorage.removeItem('x1wallet_encrypted');
+    localStorage.removeItem('passwordProtection');
+    localStorage.removeItem('passwordHash');
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      try {
+        await chrome.storage.local.remove([
+          'x1wallet_auth', 
+          STORAGE_KEY, 
+          'x1wallet',
+          'x1wallet_encrypted'
+        ]);
+      } catch (e) {}
+    }
     setWallets([]);
     setActiveWalletId(null);
     setEncryptionPassword(null);
@@ -708,6 +774,7 @@ export function useWallet() {
     unlockWallet,
     lockWallet,
     enableEncryption,
+    setEncryptionPasswordOnly,
     changePassword,
     disableEncryption,
     

@@ -157,7 +157,6 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
   const [inputMode, setInputMode] = useState('from'); // 'from' | 'to' - which field user is editing
   const [selectingToken, setSelectingToken] = useState(null); // 'from' | 'to' | null
   const [slippage, setSlippage] = useState(0.5);
-  const [showSlippageSettings, setShowSlippageSettings] = useState(false);
   const [customSlippage, setCustomSlippage] = useState('');
   const slippageOptions = [0.1, 0.5, 1.0, 3.0];
   const [loading, setLoading] = useState(false);
@@ -882,6 +881,10 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
   }
 
   const handleFromAmountChange = (value) => {
+    // Reject negative values
+    if (value.startsWith('-') || parseFloat(value) < 0) {
+      return;
+    }
     setFromAmount(value);
     setError('');
   };
@@ -2300,12 +2303,6 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
                   ~{(0.000005 + (swapPriority === 'custom' ? parseFloat(customFee) || 0 : PRIORITY_OPTIONS.find(p => p.id === swapPriority)?.fee || 0)).toFixed(6)} {networkConfig.symbol}
                 </span>
               </div>
-              {!isWrapOperation && (
-                <div className="send-summary-row">
-                  <span className="send-summary-label">Slippage</span>
-                  <span className="send-summary-value">{slippage}%</span>
-                </div>
-              )}
             </div>
 
             {/* Priority Selector */}
@@ -2338,6 +2335,7 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
                 <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                   <input
                     type="number"
+                    min="0"
                     style={{
                       width: 100,
                       padding: '8px 12px',
@@ -2350,15 +2348,80 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
                     }}
                     placeholder="0.0001"
                     value={customFee}
-                    onChange={(e) => setCustomFee(e.target.value)}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value.startsWith('-') || parseFloat(value) < 0) return;
+                      setCustomFee(value);
+                    }}
                     step="0.0001"
-                    min="0"
                     disabled={loading}
                   />
                   <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>{networkConfig.symbol}</span>
                 </div>
               )}
             </div>
+
+            {/* Slippage Settings - only for non-wrap operations */}
+            {!isWrapOperation && (
+              <div className="send-priority-section" style={{ marginTop: 16 }}>
+                <div className="send-priority-label">Slippage Tolerance</div>
+                <div className="send-priority-selector">
+                  {slippageOptions.map(opt => (
+                    <button
+                      key={opt}
+                      className={`send-priority-btn ${slippage === opt && !customSlippage ? 'active' : ''}`}
+                      onClick={() => {
+                        setSlippage(opt);
+                        setCustomSlippage('');
+                      }}
+                      type="button"
+                    >
+                      {opt}%
+                    </button>
+                  ))}
+                  <button
+                    className={`send-priority-btn ${customSlippage ? 'active' : ''}`}
+                    onClick={() => {
+                      const input = document.getElementById('slippage-custom-input');
+                      if (input) input.focus();
+                    }}
+                    type="button"
+                    style={{ padding: 0, minWidth: 60 }}
+                  >
+                    <input
+                      id="slippage-custom-input"
+                      type="number"
+                      min="0"
+                      value={customSlippage}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val.startsWith('-') || parseFloat(val) < 0) return;
+                        setCustomSlippage(val);
+                        if (val && !isNaN(parseFloat(val))) {
+                          setSlippage(parseFloat(val));
+                        }
+                      }}
+                      placeholder="Custom"
+                      style={{
+                        width: '100%',
+                        padding: '8px 4px',
+                        border: 'none',
+                        background: 'transparent',
+                        color: 'var(--text-primary)',
+                        fontSize: 12,
+                        textAlign: 'center',
+                        outline: 'none'
+                      }}
+                    />
+                  </button>
+                </div>
+                {slippage > 5 && (
+                  <div style={{ marginTop: 8, fontSize: 11, color: 'var(--warning)', textAlign: 'center' }}>
+                    ⚠️ High slippage may result in unfavorable trades
+                  </div>
+                )}
+              </div>
+            )}
 
             {error && <div className="error-message" style={{ marginTop: 16 }}>{error}</div>}
 
@@ -2395,26 +2458,6 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
         <h2 className="header-title">Swap</h2>
         <div className="header-right" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <button 
-            onClick={() => setShowSlippageSettings(!showSlippageSettings)}
-            title="Slippage Settings"
-            style={{
-              background: 'transparent',
-              border: 'none',
-              padding: 4,
-              cursor: 'pointer',
-              opacity: showSlippageSettings ? 1 : 0.5,
-              color: 'var(--text-muted)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-            </svg>
-          </button>
-          <button 
             className="header-btn primary"
             onClick={() => setShowManageTokens(true)}
             title="Add Token"
@@ -2425,86 +2468,6 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
           </button>
         </div>
       </div>
-
-      {/* Slippage Settings Dropdown */}
-      {showSlippageSettings && (
-        <div style={{
-          background: 'var(--bg-secondary)',
-          border: '1px solid var(--border-color)',
-          borderRadius: 12,
-          padding: 16,
-          marginBottom: 16
-        }}>
-          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Slippage Tolerance</div>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-            {slippageOptions.map(opt => (
-              <button
-                key={opt}
-                onClick={() => {
-                  setSlippage(opt);
-                  setCustomSlippage('');
-                }}
-                style={{
-                  flex: 1,
-                  padding: '8px 12px',
-                  borderRadius: 8,
-                  border: slippage === opt && !customSlippage ? '2px solid var(--x1-blue)' : '1px solid var(--border-color)',
-                  background: slippage === opt && !customSlippage ? 'rgba(2, 116, 251, 0.1)' : 'var(--bg-tertiary)',
-                  color: 'var(--text-primary)',
-                  fontSize: 13,
-                  fontWeight: 500,
-                  cursor: 'pointer'
-                }}
-              >
-                {opt}%
-              </button>
-            ))}
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Custom:</span>
-            <input
-              type="number"
-              value={customSlippage}
-              onChange={(e) => {
-                const val = e.target.value;
-                setCustomSlippage(val);
-                if (val && parseFloat(val) > 0 && parseFloat(val) <= 50) {
-                  setSlippage(parseFloat(val));
-                }
-              }}
-              placeholder="0.5"
-              style={{
-                flex: 1,
-                padding: '8px 12px',
-                borderRadius: 8,
-                border: customSlippage ? '2px solid var(--x1-blue)' : '1px solid var(--border-color)',
-                background: 'var(--bg-tertiary)',
-                color: 'var(--text-primary)',
-                fontSize: 13,
-                outline: 'none'
-              }}
-            />
-            <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>%</span>
-          </div>
-          {slippage > 5 && (
-            <div style={{ 
-              marginTop: 8, 
-              fontSize: 12, 
-              color: '#ff9500',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 4
-            }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                <line x1="12" y1="9" x2="12" y2="13" />
-                <line x1="12" y1="17" x2="12.01" y2="17" />
-              </svg>
-              High slippage may result in unfavorable trades
-            </div>
-          )}
-        </div>
-      )}
 
       <div className="slide-panel-content">
         {/* Loading state when wallet is not ready */}
@@ -2587,12 +2550,16 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
             <div className="swap-input-area">
               <input
                 type="number"
+                min="0"
                 className="swap-amount-input"
                 placeholder={quoteLoading && inputMode === 'to' ? '...' : '0.00'}
                 value={quoteLoading && inputMode === 'to' ? '' : fromAmount}
                 onChange={e => {
+                  const value = e.target.value;
+                  // Reject negative values
+                  if (value.startsWith('-') || parseFloat(value) < 0) return;
                   setInputMode('from');
-                  handleFromAmountChange(e.target.value);
+                  handleFromAmountChange(value);
                 }}
                 onFocus={() => setInputMode('from')}
                 disabled={loading}
@@ -2633,12 +2600,16 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
             <div className="swap-input-area">
               <input
                 type="number"
+                min="0"
                 className="swap-amount-input"
                 placeholder={quoteLoading && inputMode === 'from' ? '...' : '0.00'}
                 value={quoteLoading && inputMode === 'from' ? '' : toAmount}
                 onChange={(e) => {
+                  const value = e.target.value;
+                  // Reject negative values
+                  if (value.startsWith('-') || parseFloat(value) < 0) return;
                   setInputMode('to');
-                  setToAmount(e.target.value);
+                  setToAmount(value);
                 }}
                 onFocus={() => setInputMode('to')}
               />

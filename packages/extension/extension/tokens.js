@@ -250,6 +250,40 @@ async function checkAndApplyLPBranding(rpcUrl, token, network) {
   return false;
 }
 const metadataCache = /* @__PURE__ */ new Map();
+const PRICE_CACHE_KEY = "x1wallet_price_cache";
+const PRICE_CACHE_TTL = 5 * 60 * 1e3;
+function getPriceCache() {
+  try {
+    const cached = localStorage.getItem(PRICE_CACHE_KEY);
+    if (cached) {
+      return JSON.parse(cached);
+    }
+  } catch (e) {
+  }
+  return {};
+}
+function setPriceCache(prices) {
+  try {
+    localStorage.setItem(PRICE_CACHE_KEY, JSON.stringify({
+      ...prices,
+      _timestamp: Date.now()
+    }));
+  } catch (e) {
+  }
+}
+function getCachedPrice(mint) {
+  const cache = getPriceCache();
+  if (cache[mint] !== void 0 && cache._timestamp && Date.now() - cache._timestamp < PRICE_CACHE_TTL) {
+    return cache[mint];
+  }
+  return void 0;
+}
+function updatePriceCache(mint, price) {
+  const cache = getPriceCache();
+  cache[mint] = price;
+  cache._timestamp = Date.now();
+  setPriceCache(cache);
+}
 async function fetchTokenMetadataFromAPI(mint) {
   try {
     const url = `${API_SERVER}/tokens?mint=${encodeURIComponent(mint)}&verified=true`;
@@ -351,6 +385,7 @@ async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null, onUpdate
         Object.assign(token, cached);
         if (((_a = xdexPrices[token.mint]) == null ? void 0 : _a.price) !== void 0) {
           token.price = parseFloat(xdexPrices[token.mint].price);
+          updatePriceCache(token.mint, token.price);
         }
         continue;
       }
@@ -362,6 +397,7 @@ async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null, onUpdate
         token.price = known.price;
         if (((_b = xdexPrices[token.mint]) == null ? void 0 : _b.price) !== void 0) {
           token.price = parseFloat(xdexPrices[token.mint].price);
+          updatePriceCache(token.mint, token.price);
         }
         metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
         continue;
@@ -370,6 +406,7 @@ async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null, onUpdate
         const xdexData = xdexPrices[token.mint];
         if (xdexData.price !== void 0 && xdexData.price !== null) {
           token.price = parseFloat(xdexData.price);
+          updatePriceCache(token.mint, token.price);
         }
         if (xdexData.symbol) token.symbol = xdexData.symbol;
         if (xdexData.name) token.name = xdexData.name;
@@ -382,6 +419,12 @@ async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null, onUpdate
             price: token.price
           });
           continue;
+        }
+      }
+      if (token.price === void 0 || token.price === null) {
+        const cachedPrice = getCachedPrice(token.mint);
+        if (cachedPrice !== void 0) {
+          token.price = cachedPrice;
         }
       }
       if (!token.symbol) {

@@ -1,31 +1,126 @@
 // Settings Screen
 import { logger, getUserFriendlyError, ErrorMessages } from '@x1-wallet/core';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import X1Logo from './X1Logo';
 import { NETWORKS, getRpcOverride, setRpcOverride, clearRpcOverride } from '@x1-wallet/core/services/networks';
 
+// Use chrome.storage.local for persistence across extension toggles
 const storage = {
   get: (key, defaultValue) => {
     try { return JSON.parse(localStorage.getItem(`x1wallet_${key}`)) ?? defaultValue; }
     catch { return defaultValue; }
   },
-  set: (key, value) => localStorage.setItem(`x1wallet_${key}`, JSON.stringify(value))
+  set: (key, value) => {
+    localStorage.setItem(`x1wallet_${key}`, JSON.stringify(value));
+    // Also save to chrome.storage.local for persistence
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      chrome.storage.local.set({ [`x1wallet_${key}`]: value }).catch(() => {});
+    }
+  }
 };
 
-export default function SettingsScreen({ wallet, onBack, onLock }) {
+// Sync settings from chrome.storage.local on load
+async function syncFromChromeStorage() {
+  if (typeof chrome !== 'undefined' && chrome.storage) {
+    try {
+      const keys = ['darkMode', 'autoLock', 'currency', 'notifications', 'skipSimulation', 
+                    'passwordProtection', 'biometricEnabled', 'customExplorer', 'passwordHash'];
+      const result = await chrome.storage.local.get(keys.map(k => `x1wallet_${k}`));
+      for (const key of keys) {
+        const chromeKey = `x1wallet_${key}`;
+        if (result[chromeKey] !== undefined) {
+          localStorage.setItem(chromeKey, JSON.stringify(result[chromeKey]));
+        }
+      }
+    } catch (e) {
+      // Ignore errors
+    }
+  }
+}
+
+// Check if password exists (either legacy base64 or new PBKDF2)
+async function hasPasswordSet() {
+  // Check localStorage first
+  const legacyHash = localStorage.getItem('x1wallet_passwordHash');
+  if (legacyHash && legacyHash !== 'null') return true;
+  
+  // Check chrome.storage for PBKDF2 auth
+  if (typeof chrome !== 'undefined' && chrome.storage) {
+    try {
+      const result = await chrome.storage.local.get('x1wallet_auth');
+      if (result.x1wallet_auth) return true;
+    } catch (e) {}
+  }
+  
+  // Check localStorage for PBKDF2 auth
+  const localAuth = localStorage.getItem('x1wallet_auth');
+  if (localAuth) return true;
+  
+  return false;
+}
+
+export default function SettingsScreen({ wallet, onBack, onLock, initialPasswordProtection }) {
   const [subScreen, setSubScreen] = useState(null);
   const [darkMode, setDarkMode] = useState(() => storage.get('darkMode', true));
   const [autoLock, setAutoLock] = useState(() => storage.get('autoLock', 5));
   const [currency, setCurrency] = useState(() => storage.get('currency', 'USD'));
   const [notifications, setNotifications] = useState(() => storage.get('notifications', true));
   const [skipSimulation, setSkipSimulation] = useState(() => storage.get('skipSimulation', false));
-  const [passwordProtection, setPasswordProtection] = useState(() => {
-    const hasHash = storage.get('passwordHash', null) !== null;
-    return hasHash ? storage.get('passwordProtection', true) : false;
-  });
+  // Always read fresh from storage - props may be stale
+  const [passwordProtection, setPasswordProtection] = useState(() => storage.get('passwordProtection', false));
+  const [hasPassword, setHasPassword] = useState(false);
   const [biometricEnabled, setBiometricEnabled] = useState(() => storage.get('biometricEnabled', false));
   const [customExplorer, setCustomExplorer] = useState(() => storage.get('customExplorer', ''));
   const [copied, setCopied] = useState(false);
+  const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
+  const [appVersion, setAppVersion] = useState('0.0.0');
+  
+  // Load version from manifest
+  useEffect(() => {
+    try {
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getManifest) {
+        const manifest = chrome.runtime.getManifest();
+        setAppVersion(manifest.version || '0.0.0');
+      }
+    } catch (e) {
+      // Fallback version if manifest not available
+    }
+  }, []);
+  
+  // Re-read passwordProtection on every mount to get latest value
+  useEffect(() => {
+    const currentValue = storage.get('passwordProtection', false);
+    setPasswordProtection(currentValue);
+  }, []);
+  
+  // Also sync from prop if it changes (for immediate updates within same session)
+  useEffect(() => {
+    if (initialPasswordProtection !== undefined && initialPasswordProtection !== passwordProtection) {
+      setPasswordProtection(initialPasswordProtection);
+    }
+  }, [initialPasswordProtection]);
+  
+  // Sync settings from chrome storage and check password on mount
+  useEffect(() => {
+    syncFromChromeStorage().then(() => {
+      // Re-read settings after sync
+      setDarkMode(storage.get('darkMode', true));
+      setAutoLock(storage.get('autoLock', 5));
+      // Also re-read passwordProtection after chrome sync
+      setPasswordProtection(storage.get('passwordProtection', false));
+    });
+    
+    // Check if password is set
+    hasPasswordSet().then(has => {
+      setHasPassword(has);
+      
+      // If password exists but passwordProtection wasn't explicitly set, default to true
+      if (has && storage.get('passwordProtection', null) === null) {
+        setPasswordProtection(true);
+        storage.set('passwordProtection', true);
+      }
+    });
+  }, []);
   
   // Check if biometric is available (not available in browser extensions)
   const [biometricAvailable, setBiometricAvailable] = useState(false);
@@ -61,6 +156,7 @@ export default function SettingsScreen({ wallet, onBack, onLock }) {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [passwordSuccess, setPasswordSuccess] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
   
   // Recovery phrase state - must be at top level
   const [recoveryView, setRecoveryView] = useState('menu');
@@ -118,7 +214,8 @@ export default function SettingsScreen({ wallet, onBack, onLock }) {
   useEffect(() => { storage.set('currency', currency); }, [currency]);
   useEffect(() => { storage.set('notifications', notifications); }, [notifications]);
   useEffect(() => { storage.set('skipSimulation', skipSimulation); }, [skipSimulation]);
-  useEffect(() => { storage.set('passwordProtection', passwordProtection); }, [passwordProtection]);
+  // NOTE: passwordProtection is saved manually in toggle handler, not auto-saved
+  // to prevent race conditions with async loading
   useEffect(() => { storage.set('biometricEnabled', biometricEnabled); }, [biometricEnabled]);
   useEffect(() => { storage.set('customExplorer', customExplorer); }, [customExplorer]);
   
@@ -1001,26 +1098,73 @@ export default function SettingsScreen({ wallet, onBack, onLock }) {
           )}
           <div className="form-group">
             <label>New Password</label>
-            <input 
-              type="password" 
-              className="form-input" 
-              placeholder="Enter new password (min 12 chars)"
-              value={newPassword}
-              onChange={e => setNewPassword(e.target.value)}
-            />
+            <div style={{ position: 'relative' }}>
+              <input 
+                type={showNewPassword ? 'text' : 'password'} 
+                className="form-input" 
+                placeholder="Enter new password (min 12 chars)"
+                value={newPassword}
+                onChange={e => setNewPassword(e.target.value)}
+              />
+              <button
+                type="button"
+                onClick={() => setShowNewPassword(!showNewPassword)}
+                style={{
+                  position: 'absolute',
+                  right: 12,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: 4
+                }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth="2">
+                  {showNewPassword ? (
+                    <><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></>
+                  ) : (
+                    <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>
+                  )}
+                </svg>
+              </button>
+            </div>
             <div className="password-requirements" style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>
               Requirements: 12+ chars, uppercase, lowercase, number, special character
             </div>
           </div>
           <div className="form-group">
             <label>Confirm New Password</label>
-            <input 
-              type="password" 
-              className="form-input" 
-              placeholder="Confirm new password"
-              value={confirmPassword}
-              onChange={e => setConfirmPassword(e.target.value)}
-            />
+            <div style={{ position: 'relative' }}>
+              <input 
+                type={showNewPassword ? 'text' : 'password'} 
+                className="form-input" 
+                value={confirmPassword}
+                onChange={e => setConfirmPassword(e.target.value)}
+              />
+              <button
+                type="button"
+                onClick={() => setShowNewPassword(!showNewPassword)}
+                style={{
+                  position: 'absolute',
+                  right: 12,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: 4
+                }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth="2">
+                  {showNewPassword ? (
+                    <><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></>
+                  ) : (
+                    <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>
+                  )}
+                </svg>
+              </button>
+            </div>
           </div>
           {passwordError && <div className="error-message">{passwordError}</div>}
           {passwordSuccess && <div className="success-message">Password {hasExistingPassword ? 'updated' : 'set'} successfully!</div>}
@@ -1029,25 +1173,99 @@ export default function SettingsScreen({ wallet, onBack, onLock }) {
           </button>
         </div>
       </div>
-    );
+  );
   }
 
   // Manage Password sub-screen
   if (subScreen === 'password') {
-    const hasPassword = storage.get('passwordHash', null) !== null;
-    
     const handleRemovePassword = () => {
-      if (confirm('Are you sure you want to remove your password? Your wallet will no longer be protected.')) {
-        storage.set('passwordHash', null);
-        storage.set('passwordProtection', false);
-        setPasswordProtection(false);
+      storage.set('passwordHash', null);
+      storage.set('passwordProtection', false);
+      // Also clear from chrome.storage
+      if (typeof chrome !== 'undefined' && chrome.storage) {
+        chrome.storage.local.remove(['x1wallet_auth', 'x1wallet_passwordHash']).catch(() => {});
       }
+      localStorage.removeItem('x1wallet_auth');
+      setPasswordProtection(false);
+      setHasPassword(false);
+      setShowRemoveConfirm(false);
     };
     
     return (
       <div className="screen settings-screen">
+        {/* Remove Password Confirmation Modal */}
+        {showRemoveConfirm && (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0, 0, 0, 0.8)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: 20
+          }}>
+            <div style={{
+              background: 'var(--bg-secondary)',
+              borderRadius: 16,
+              padding: 24,
+              maxWidth: 320,
+              width: '100%',
+              textAlign: 'center'
+            }}>
+              <div style={{
+                width: 56,
+                height: 56,
+                borderRadius: '50%',
+                background: 'rgba(255, 59, 48, 0.15)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto 16px'
+              }}>
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--error)" strokeWidth="2">
+                  <path d="M12 9v4M12 17h.01" />
+                  <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                </svg>
+              </div>
+              <h3 style={{ marginBottom: 8, fontSize: 18 }}>Remove Password?</h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: 14, marginBottom: 24, lineHeight: 1.5 }}>
+                Your wallet will no longer be protected. Anyone with access to this device can access your funds.
+              </p>
+              <div style={{ display: 'flex', gap: 12 }}>
+                <button
+                  className="btn-secondary"
+                  onClick={() => setShowRemoveConfirm(false)}
+                  style={{ flex: 1 }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleRemovePassword}
+                  style={{
+                    flex: 1,
+                    padding: '12px 20px',
+                    borderRadius: 12,
+                    border: 'none',
+                    background: 'var(--error)',
+                    color: 'white',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    fontSize: 14
+                  }}
+                >
+                  Remove
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        
         <div className="settings-header">
-          <button className="back-btn" onClick={() => setSubScreen(null)}>
+          <button className="back-btn" onClick={() => { setShowRemoveConfirm(false); setSubScreen(null); }}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M19 12H5M12 19l-7-7 7-7" />
             </svg>
@@ -1095,7 +1313,7 @@ export default function SettingsScreen({ wallet, onBack, onLock }) {
             </div>
             
             {hasPassword && (
-              <div className="settings-item" onClick={handleRemovePassword}>
+              <div className="settings-item" onClick={() => setShowRemoveConfirm(true)}>
                 <div className="settings-item-left">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--error)" strokeWidth="2">
                     <polyline points="3 6 5 6 21 6" />
@@ -1539,10 +1757,15 @@ export default function SettingsScreen({ wallet, onBack, onLock }) {
               <label>Decimals</label>
               <input
                 type="number"
+                min="0"
                 className="form-input"
                 placeholder="9"
                 value={customRpc.decimals}
-                onChange={e => setCustomRpc({ ...customRpc, decimals: e.target.value })}
+                onChange={e => {
+                  const value = e.target.value;
+                  if (value.startsWith('-') || parseFloat(value) < 0) return;
+                  setCustomRpc({ ...customRpc, decimals: value });
+                }}
               />
             </div>
             <div className="form-group">
@@ -1799,7 +2022,7 @@ export default function SettingsScreen({ wallet, onBack, onLock }) {
         <div className="settings-content" style={{ textAlign: 'center', paddingTop: 40 }}>
           <X1Logo size={64} />
           <h3 style={{ marginTop: 16, marginBottom: 4 }}>X1 Wallet</h3>
-          <p style={{ color: 'var(--text-muted)', marginBottom: 8 }}>Version 0.10.65</p>
+          <p style={{ color: 'var(--text-muted)', marginBottom: 8 }}>Version {appVersion}</p>
           <p style={{ color: 'var(--text-muted)', marginBottom: 24, fontSize: 12 }}>
             Network: {wallet?.network || 'Unknown'}
           </p>

@@ -4,7 +4,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { generateMnemonic, validateMnemonic, WORDLIST } from '@x1-wallet/core/utils/bip39';
 
 export default function CreateWallet({ onComplete, onBack }) {
-  const [step, setStep] = useState('choose'); // choose, generate, custom, verify, name, password
+  const [step, setStep] = useState('choose'); // choose, generate, custom, verify, name, password, verify-password
   const [seedLength, setSeedLength] = useState(12);
   const [mnemonic, setMnemonic] = useState('');
   const [customWords, setCustomWords] = useState(Array(12).fill(''));
@@ -22,6 +22,46 @@ export default function CreateWallet({ onComplete, onBack }) {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [existingPasswordDetected, setExistingPasswordDetected] = useState(false);
+  const [passwordRequired, setPasswordRequired] = useState(true); // Whether password step is needed
+  const [verifying, setVerifying] = useState(false);
+  
+  // Check for existing password on mount using wallet service
+  useEffect(() => {
+    const checkPassword = async () => {
+      try {
+        // Check if password protection is enabled
+        const storedValue = localStorage.getItem('x1wallet_passwordProtection');
+        const passwordProtection = storedValue ? JSON.parse(storedValue) : false;
+        
+        // CREATE wallet: respect the setting
+        // If protection is OFF, no password needed for new wallets
+        if (!passwordProtection) {
+          setPasswordRequired(false);
+          setExistingPasswordDetected(false);
+          logger.log('[CreateWallet] Protection OFF - no password required for new wallet');
+          return;
+        }
+        
+        // Protection is ON - check if password already exists
+        const { hasPassword } = await import('@x1-wallet/core/services/wallet');
+        const has = await hasPassword();
+        
+        // Check if there are any wallets (to determine verify vs create)
+        const walletsData = localStorage.getItem('x1wallet_wallets');
+        const isEmpty = !walletsData || walletsData === '[]' || walletsData === 'null' || walletsData === '';
+        
+        setPasswordRequired(true);
+        setExistingPasswordDetected(has && !isEmpty);
+        logger.log('[CreateWallet] Protection ON, existing password:', has && !isEmpty);
+      } catch (e) {
+        logger.error('[CreateWallet] Error checking password:', e);
+        setExistingPasswordDetected(false);
+        setPasswordRequired(true);
+      }
+    };
+    checkPassword();
+  }, []);
   
   // X1W-NEW-002 FIX: Mnemonic masking for shoulder-surfing protection
   const [wordsRevealed, setWordsRevealed] = useState(new Set());
@@ -250,10 +290,55 @@ export default function CreateWallet({ onComplete, onBack }) {
     return null;
   };
 
-  // Move to password step after naming
+  // Move to password step after naming (or verify if password exists, or skip if not required)
   const handleNameContinue = () => {
-    setStep('password');
+    if (!passwordRequired) {
+      // Password protection is OFF - complete without password
+      onComplete(mnemonic, walletName.trim() || 'My Wallet', null);
+      return;
+    }
+    
+    if (existingPasswordDetected) {
+      // Password already exists - require verification
+      setStep('verify-password');
+      setPassword('');
+      setError('');
+    } else {
+      setStep('password');
+      setError('');
+    }
+  };
+  
+  // Verify existing password and complete wallet creation
+  const handleVerifyAndComplete = async () => {
+    if (!password) {
+      setError('Please enter your password');
+      return;
+    }
+    
+    setVerifying(true);
     setError('');
+    
+    try {
+      const { checkPassword } = await import('@x1-wallet/core/services/wallet');
+      const isValid = await checkPassword(password);
+      if (!isValid) {
+        setError('Incorrect password');
+        setVerifying(false);
+        return;
+      }
+      
+      // Password verified - complete with password for encryption
+      onComplete(mnemonic, walletName.trim() || 'My Wallet', password);
+    } catch (err) {
+      logger.error('Password verification error:', err);
+      // If verification throws an error, fall back to creating a new password
+      logger.log('[CreateWallet] Verification failed, falling back to password creation');
+      setStep('password');
+      setPassword('');
+      setError('');
+      setVerifying(false);
+    }
   };
 
   // Complete wallet creation with password
@@ -675,13 +760,36 @@ export default function CreateWallet({ onComplete, onBack }) {
 
         <div className="form-group" style={{ marginBottom: 16 }}>
           <label>Confirm Password</label>
-          <input
-            type={showPassword ? 'text' : 'password'}
-            className="form-input"
-            value={confirmPassword}
-            onChange={e => { setConfirmPassword(e.target.value); setError(''); }}
-            placeholder="Confirm password"
-          />
+          <div style={{ position: 'relative' }}>
+            <input
+              type={showPassword ? 'text' : 'password'}
+              className="form-input"
+              value={confirmPassword}
+              onChange={e => { setConfirmPassword(e.target.value); setError(''); }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              style={{
+                position: 'absolute',
+                right: 12,
+                top: '50%',
+                transform: 'translateY(-50%)',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                padding: 4
+              }}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth="2">
+                {showPassword ? (
+                  <><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></>
+                ) : (
+                  <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>
+                )}
+              </svg>
+            </button>
+          </div>
         </div>
 
         <div className="info-box" style={{ marginBottom: 16 }}>
@@ -693,6 +801,86 @@ export default function CreateWallet({ onComplete, onBack }) {
 
         <button className="btn-primary" onClick={handleComplete}>
           Create Wallet
+        </button>
+      </div>
+    );
+  }
+  
+  // Verify existing password screen
+  if (step === 'verify-password') {
+    return (
+      <div className="screen seed-container no-nav">
+        <button className="back-btn" onClick={() => setStep('name')} style={{ alignSelf: 'flex-start', marginBottom: 16 }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M19 12H5M12 19l-7-7 7-7" />
+          </svg>
+        </button>
+        
+        <div style={{ textAlign: 'center', marginBottom: 24 }}>
+          <div style={{ 
+            width: 64, 
+            height: 64, 
+            borderRadius: '50%', 
+            background: 'rgba(var(--x1-blue-rgb), 0.1)', 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            margin: '0 auto 16px'
+          }}>
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--x1-blue)" strokeWidth="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
+          </div>
+          <h2>Verify Password</h2>
+          <p className="seed-subtitle">Enter your existing password to create this wallet.</p>
+        </div>
+
+        <div className="form-group" style={{ marginBottom: 16 }}>
+          <label>Password</label>
+          <div style={{ position: 'relative' }}>
+            <input
+              type={showPassword ? 'text' : 'password'}
+              className="form-input"
+              value={password}
+              onChange={e => { setPassword(e.target.value); setError(''); }}
+              placeholder="Enter your password"
+              autoFocus
+              onKeyDown={e => e.key === 'Enter' && handleVerifyAndComplete()}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              style={{
+                position: 'absolute',
+                right: 12,
+                top: '50%',
+                transform: 'translateY(-50%)',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                padding: 4
+              }}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth="2">
+                {showPassword ? (
+                  <><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></>
+                ) : (
+                  <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>
+                )}
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {error && <div className="error-message" style={{ marginBottom: 16 }}>{error}</div>}
+
+        <button 
+          className="btn-primary" 
+          onClick={handleVerifyAndComplete}
+          disabled={verifying}
+        >
+          {verifying ? 'Verifying...' : 'Create Wallet'}
         </button>
       </div>
     );

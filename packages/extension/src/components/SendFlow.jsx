@@ -1049,6 +1049,7 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
                 <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                   <input
                     type="number"
+                    min="0"
                     style={{
                       width: 100,
                       padding: '8px 12px',
@@ -1061,7 +1062,11 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
                     }}
                     placeholder="0.0001"
                     value={customFee}
-                    onChange={(e) => setCustomFee(e.target.value)}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value.startsWith('-') || parseFloat(value) < 0) return;
+                      setCustomFee(value);
+                    }}
                     step="0.0001"
                     min="0"
                     disabled={sending}

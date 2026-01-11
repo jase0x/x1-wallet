@@ -150,8 +150,51 @@ async function checkAndApplyLPBranding(rpcUrl, token, network) {
 // KNOWN TOKENS - Imported from knownTokens.js
 // ============================================
 
-// Metadata cache
+// Metadata cache (in-memory)
 const metadataCache = new Map();
+
+// Persistent price cache using localStorage
+// This prevents price flicker during refreshes
+const PRICE_CACHE_KEY = 'x1wallet_price_cache';
+const PRICE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+function getPriceCache() {
+  try {
+    const cached = localStorage.getItem(PRICE_CACHE_KEY);
+    if (cached) {
+      return JSON.parse(cached);
+    }
+  } catch (e) {
+    // Ignore
+  }
+  return {};
+}
+
+function setPriceCache(prices) {
+  try {
+    localStorage.setItem(PRICE_CACHE_KEY, JSON.stringify({
+      ...prices,
+      _timestamp: Date.now()
+    }));
+  } catch (e) {
+    // Ignore
+  }
+}
+
+function getCachedPrice(mint) {
+  const cache = getPriceCache();
+  if (cache[mint] !== undefined && cache._timestamp && (Date.now() - cache._timestamp < PRICE_CACHE_TTL)) {
+    return cache[mint];
+  }
+  return undefined;
+}
+
+function updatePriceCache(mint, price) {
+  const cache = getPriceCache();
+  cache[mint] = price;
+  cache._timestamp = Date.now();
+  setPriceCache(cache);
+}
 
 // ============================================
 // API FUNCTIONS
@@ -283,6 +326,7 @@ export async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null, o
         // Keep XDEX price if we got one (prices update more frequently)
         if (xdexPrices[token.mint]?.price !== undefined) {
           token.price = parseFloat(xdexPrices[token.mint].price);
+          updatePriceCache(token.mint, token.price);
         }
         continue;
       }
@@ -297,6 +341,7 @@ export async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null, o
         token.price = known.price;
         if (xdexPrices[token.mint]?.price !== undefined) {
           token.price = parseFloat(xdexPrices[token.mint].price);
+          updatePriceCache(token.mint, token.price);
         }
         metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
         continue;
@@ -307,6 +352,7 @@ export async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null, o
         const xdexData = xdexPrices[token.mint];
         if (xdexData.price !== undefined && xdexData.price !== null) {
           token.price = parseFloat(xdexData.price);
+          updatePriceCache(token.mint, token.price);
         }
         // Use XDEX metadata
         if (xdexData.symbol) token.symbol = xdexData.symbol;
@@ -322,6 +368,14 @@ export async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null, o
             price: token.price 
           });
           continue;
+        }
+      }
+      
+      // If no price found, check persistent cache
+      if (token.price === undefined || token.price === null) {
+        const cachedPrice = getCachedPrice(token.mint);
+        if (cachedPrice !== undefined) {
+          token.price = cachedPrice;
         }
       }
       

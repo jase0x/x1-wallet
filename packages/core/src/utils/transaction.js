@@ -14,6 +14,11 @@ const ASSOCIATED_TOKEN_PROGRAM_ID = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8kn
 // ComputeBudget Program ID for priority fees
 const COMPUTE_BUDGET_PROGRAM_ID = 'ComputeBudget111111111111111111111111111111';
 
+// Metaplex Bubblegum Program for compressed NFTs
+const BUBBLEGUM_PROGRAM_ID = 'BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY';
+const SPL_NOOP_PROGRAM_ID = 'noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV';
+const SPL_ACCOUNT_COMPRESSION_PROGRAM_ID = 'cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK';
+
 // Decode base58 to fixed-size byte array with padding
 function decodeToFixedSize(base58Str, size) {
   const decoded = decodeBase58(base58Str);
@@ -120,37 +125,67 @@ export async function createTokenTransferTransaction({
     let needsCreateATA = false;
     
     if (!toTokenAccount && rpcUrl) {
-      // Try to find existing ATA for recipient
-      toTokenAccount = await findExistingATA(rpcUrl, toPubkey, mint);
-      if (toTokenAccount) {
-        logger.log('Found existing destination ATA:', toTokenAccount);
+      // Always derive the canonical ATA address
+      // We'll use CreateAssociatedTokenAccountIdempotent which handles both cases:
+      // - If ATA exists: instruction does nothing
+      // - If ATA doesn't exist: creates it
+      const result = await findATAAddress(toPubkey, mint, tokenProgramId);
+      toTokenAccount = result.address;
+      logger.log('Derived canonical ATA address (bump', result.bump + '):', toTokenAccount);
+      
+      // Check if this ATA already exists
+      const existingATA = await findExistingATA(rpcUrl, toPubkey, mint);
+      if (existingATA && existingATA === toTokenAccount) {
+        logger.log('ATA already exists at derived address, will transfer directly');
+        needsCreateATA = false;
+      } else if (existingATA) {
+        // Recipient has a token account but at different address (non-canonical)
+        // Use their existing account instead
+        logger.log('Found non-canonical token account:', existingATA);
+        toTokenAccount = existingATA;
+        needsCreateATA = false;
       } else {
-        logger.log('No existing ATA found, will derive and create one');
+        logger.log('ATA does not exist, will create with idempotent instruction');
         needsCreateATA = true;
-        
-        // Verify our derivation logic is correct using sender's account
-        logger.log('Verifying ATA derivation logic against sender account...');
-        const verificationResult = await verifyATADerivation(rpcUrl, fromPubkey, mint, fromTokenAccount, tokenProgramId);
-        
-        if (verificationResult.valid) {
-          logger.log('Derivation verified! Found sender at bump', verificationResult.bump);
-        } else {
-          logger.warn('Could not verify derivation against sender account');
-        }
-        
-        // Derive the ATA address for recipient, using sender as payer for simulation
-        toTokenAccount = await deriveATAAddressWithValidation(rpcUrl, toPubkey, mint, tokenProgramId, fromPubkey);
-        logger.log('Derived ATA address:', toTokenAccount);
       }
     } else if (!toTokenAccount) {
       // No RPC URL and no provided account, use standard derivation
-      toTokenAccount = await deriveATAAddressStandard(toPubkey, mint, tokenProgramId);
+      const result = await findATAAddress(toPubkey, mint, tokenProgramId);
+      toTokenAccount = result.address;
+      needsCreateATA = true; // Assume we need to create when no RPC check
       logger.log('Derived ATA (no RPC):', toTokenAccount);
     } else {
       logger.log('Using provided token account:', toTokenAccount);
     }
     
     logger.log('Final destination token account:', toTokenAccount);
+    logger.log('Needs ATA creation:', needsCreateATA);
+    
+    // CRITICAL: Validate derived ATA doesn't conflict with other accounts
+    logger.log('[TOKEN TRANSFER] Validating account addresses:');
+    logger.log('  fromPubkey:', fromPubkey);
+    logger.log('  toPubkey:', toPubkey);
+    logger.log('  fromTokenAccount:', fromTokenAccount);
+    logger.log('  toTokenAccount:', toTokenAccount);
+    logger.log('  mint:', mint);
+    
+    if (toTokenAccount === fromPubkey) {
+      throw new Error('Derived ATA matches sender wallet - invalid derivation');
+    }
+    if (toTokenAccount === toPubkey) {
+      throw new Error('Derived ATA matches recipient wallet - invalid derivation');
+    }
+    if (toTokenAccount === fromTokenAccount) {
+      throw new Error('Derived ATA matches source token account - cannot send to same account. This may happen if sending to your own wallet.');
+    }
+    if (toTokenAccount === mint) {
+      throw new Error('Derived ATA matches mint address - invalid derivation');
+    }
+    
+    // Also check if fromPubkey accidentally matches toPubkey (self-transfer)
+    if (fromPubkey === toPubkey) {
+      throw new Error('Cannot transfer to your own wallet address');
+    }
     
     // Build the appropriate message
     let message;
@@ -192,6 +227,301 @@ export async function createTokenTransferTransaction({
     logger.error('Token transfer error:', error);
     throw error;
   }
+}
+
+/**
+ * Create a compressed NFT transfer transaction using Bubblegum
+ */
+export async function createCompressedNftTransfer({
+  assetId,
+  owner,
+  newOwner,
+  proof,
+  asset,
+  recentBlockhash,
+  privateKey
+}) {
+  try {
+    logger.log('[cNFT Transfer] Starting transfer:', assetId?.slice(0, 8));
+    
+    // Decode private key
+    let secretKey;
+    if (typeof privateKey === 'string') {
+      secretKey = decodeBase58(privateKey);
+    } else {
+      secretKey = privateKey;
+    }
+    
+    if (!secretKey || secretKey.length !== 64) {
+      throw new Error('Invalid private key');
+    }
+    
+    // Verify the public key from secret key matches the owner
+    const pubkeyFromSecret = secretKey.slice(32);
+    const expectedPubkey = encodeBase58(pubkeyFromSecret);
+    
+    if (expectedPubkey !== owner) {
+      throw new Error('Private key does not match owner address');
+    }
+    
+    // Extract compression data from asset
+    const compression = asset.compression;
+    if (!compression) {
+      throw new Error('Asset is not compressed');
+    }
+    
+    const treeId = proof.tree_id;
+    const root = proof.root;
+    const dataHash = compression.data_hash;
+    const creatorHash = compression.creator_hash;
+    const leafIndex = compression.leaf_id;
+    const proofPath = proof.proof || [];
+    
+    // Derive tree authority PDA
+    const treeAuthority = await deriveTreeAuthority(treeId);
+    
+    // Build the message
+    const message = buildCompressedNftTransferMessage({
+      treeAuthority,
+      leafOwner: owner,
+      leafDelegate: owner,
+      newLeafOwner: newOwner,
+      merkleTree: treeId,
+      root,
+      dataHash,
+      creatorHash,
+      nonce: leafIndex,
+      index: leafIndex,
+      proofPath,
+      recentBlockhash
+    });
+    
+    // Sign the message
+    const signature = await sign(message, secretKey);
+    
+    // Serialize the transaction
+    const serializedTx = serializeTransaction(signature, message);
+    
+    logger.log('[cNFT Transfer] Transaction built successfully');
+    return btoa(String.fromCharCode(...serializedTx));
+  } catch (error) {
+    logger.error('[cNFT Transfer] Error:', error.message);
+    throw error;
+  }
+}
+
+/**
+ * Derive tree authority PDA for Bubblegum
+ */
+async function deriveTreeAuthority(treeId) {
+  const treeBytes = decodeToFixedSize(treeId, 32);
+  const bubblegumBytes = decodeToFixedSize(BUBBLEGUM_PROGRAM_ID, 32);
+  const marker = new TextEncoder().encode('ProgramDerivedAddress');
+  
+  // Seeds: [merkle_tree]
+  for (let bump = 255; bump >= 0; bump--) {
+    const bumpSeed = new Uint8Array([bump]);
+    
+    const buffer = new Uint8Array(32 + 1 + 32 + marker.length);
+    let offset = 0;
+    buffer.set(treeBytes, offset); offset += 32;
+    buffer.set(bumpSeed, offset); offset += 1;
+    buffer.set(bubblegumBytes, offset); offset += 32;
+    buffer.set(marker, offset);
+    
+    const hash = await crypto.subtle.digest('SHA-256', buffer);
+    const hashBytes = new Uint8Array(hash);
+    
+    // Check if NOT on curve (valid PDA) - use existing isOnCurve function
+    if (!isOnCurve(hashBytes)) {
+      return encodeBase58(hashBytes);
+    }
+  }
+  
+  throw new Error('Failed to derive tree authority');
+}
+
+/**
+ * Build compressed NFT transfer message for Bubblegum
+ */
+function buildCompressedNftTransferMessage({
+  treeAuthority,
+  leafOwner,
+  leafDelegate,
+  newLeafOwner,
+  merkleTree,
+  root,
+  dataHash,
+  creatorHash,
+  nonce,
+  index,
+  proofPath,
+  recentBlockhash
+}) {
+  // Handle account deduplication - if leafDelegate == leafOwner, they share an index
+  const isDelegateSameAsOwner = leafDelegate === leafOwner;
+  
+  const treeAuthorityBytes = decodeToFixedSize(treeAuthority, 32);
+  const leafOwnerBytes = decodeToFixedSize(leafOwner, 32);
+  const leafDelegateBytes = isDelegateSameAsOwner ? leafOwnerBytes : decodeToFixedSize(leafDelegate, 32);
+  const newLeafOwnerBytes = decodeToFixedSize(newLeafOwner, 32);
+  const merkleTreeBytes = decodeToFixedSize(merkleTree, 32);
+  const bubblegumBytes = decodeToFixedSize(BUBBLEGUM_PROGRAM_ID, 32);
+  const noopBytes = decodeToFixedSize(SPL_NOOP_PROGRAM_ID, 32);
+  const compressionBytes = decodeToFixedSize(SPL_ACCOUNT_COMPRESSION_PROGRAM_ID, 32);
+  const systemBytes = decodeToFixedSize(SYSTEM_PROGRAM_ID, 32);
+  const blockhashBytes = decodeToFixedSize(recentBlockhash, 32);
+  
+  // Decode root and hashes from base58
+  const rootBytes = decodeToFixedSize(root, 32);
+  const dataHashBytes = decodeToFixedSize(dataHash, 32);
+  const creatorHashBytes = decodeToFixedSize(creatorHash, 32);
+  
+  // Decode proof path
+  const proofBytes = proofPath.map(p => decodeToFixedSize(p, 32));
+  const numProofAccounts = proofBytes.length;
+  
+  // Build unique account list (deduplicated)
+  // Order: signer first, then writable, then readonly
+  // 0: leafOwner (signer, writable - pays fees)
+  // 1: merkleTree (writable)
+  // 2: treeAuthority (readonly)
+  // 3: leafDelegate (readonly) - ONLY if different from leafOwner
+  // N: newLeafOwner (readonly)
+  // N+1: logWrapper/noop (readonly)
+  // N+2: compressionProgram (readonly)
+  // N+3: systemProgram (readonly)
+  // N+4 to ...: proof accounts (readonly)
+  // last: bubblegum program (readonly)
+  
+  let accountList = [];
+  accountList.push({ bytes: leafOwnerBytes, name: 'leafOwner' });      // idx 0
+  accountList.push({ bytes: merkleTreeBytes, name: 'merkleTree' });    // idx 1
+  accountList.push({ bytes: treeAuthorityBytes, name: 'treeAuthority' }); // idx 2
+  
+  let leafDelegateIdx = 0; // Same as leafOwner by default
+  if (!isDelegateSameAsOwner) {
+    leafDelegateIdx = accountList.length;
+    accountList.push({ bytes: leafDelegateBytes, name: 'leafDelegate' });
+  }
+  
+  const newLeafOwnerIdx = accountList.length;
+  accountList.push({ bytes: newLeafOwnerBytes, name: 'newLeafOwner' });
+  
+  const noopIdx = accountList.length;
+  accountList.push({ bytes: noopBytes, name: 'noop' });
+  
+  const compressionIdx = accountList.length;
+  accountList.push({ bytes: compressionBytes, name: 'compression' });
+  
+  const systemIdx = accountList.length;
+  accountList.push({ bytes: systemBytes, name: 'system' });
+  
+  const proofStartIdx = accountList.length;
+  for (const proofAcc of proofBytes) {
+    accountList.push({ bytes: proofAcc, name: 'proof' });
+  }
+  
+  const bubblegumIdx = accountList.length;
+  accountList.push({ bytes: bubblegumBytes, name: 'bubblegum' });
+  
+  const numAccounts = accountList.length;
+  
+  // Build account keys array
+  const accountKeys = new Uint8Array(32 * numAccounts);
+  for (let i = 0; i < numAccounts; i++) {
+    accountKeys.set(accountList[i].bytes, i * 32);
+  }
+  
+  // Header: 1 signer (leafOwner at 0), 0 readonly signed, rest are readonly unsigned
+  // Writable accounts: leafOwner(0), merkleTree(1) = 2 writable
+  // Readonly unsigned: numAccounts - 2
+  const numReadonlyUnsigned = numAccounts - 2;
+  const header = new Uint8Array([1, 0, numReadonlyUnsigned]);
+  
+  // Bubblegum transfer instruction discriminator (Anchor)
+  const discriminator = new Uint8Array([163, 52, 200, 231, 140, 3, 69, 186]);
+  
+  // Instruction data: discriminator + root + dataHash + creatorHash + nonce (u64) + index (u32)
+  const instructionData = new Uint8Array(8 + 32 + 32 + 32 + 8 + 4);
+  let dataOffset = 0;
+  
+  instructionData.set(discriminator, dataOffset); dataOffset += 8;
+  instructionData.set(rootBytes, dataOffset); dataOffset += 32;
+  instructionData.set(dataHashBytes, dataOffset); dataOffset += 32;
+  instructionData.set(creatorHashBytes, dataOffset); dataOffset += 32;
+  
+  // nonce as u64 LE
+  const nonceBI = BigInt(nonce);
+  for (let i = 0; i < 8; i++) {
+    instructionData[dataOffset + i] = Number((nonceBI >> BigInt(i * 8)) & BigInt(0xff));
+  }
+  dataOffset += 8;
+  
+  // index as u32 LE
+  instructionData[dataOffset] = index & 0xff;
+  instructionData[dataOffset + 1] = (index >> 8) & 0xff;
+  instructionData[dataOffset + 2] = (index >> 16) & 0xff;
+  instructionData[dataOffset + 3] = (index >> 24) & 0xff;
+  
+  // Build instruction account indices
+  // Bubblegum expects: tree_authority, leaf_owner, leaf_delegate, new_leaf_owner, merkle_tree, log_wrapper, compression, system, proof...
+  const accountIndices = [
+    2,                 // tree_authority -> our idx 2
+    0,                 // leaf_owner -> our idx 0
+    leafDelegateIdx,   // leaf_delegate -> our idx 0 or 3
+    newLeafOwnerIdx,   // new_leaf_owner
+    1,                 // merkle_tree -> our idx 1
+    noopIdx,           // log_wrapper
+    compressionIdx,    // compression_program
+    systemIdx          // system_program
+  ];
+  
+  // Add proof account indices
+  for (let i = 0; i < numProofAccounts; i++) {
+    accountIndices.push(proofStartIdx + i);
+  }
+  
+  const numInstrAccounts = accountIndices.length;
+  
+  // Calculate instruction size
+  let instrSize = 1; // program index
+  instrSize += 1; // compact array length (assuming < 128 accounts)
+  instrSize += numInstrAccounts; // account indices
+  instrSize += (instructionData.length < 128) ? 1 : 2; // data length
+  instrSize += instructionData.length;
+  
+  const instruction = new Uint8Array(instrSize);
+  let instrOffset = 0;
+  
+  instruction[instrOffset++] = bubblegumIdx; // program id index
+  instruction[instrOffset++] = numInstrAccounts; // compact-u16, assuming < 128
+  for (const idx of accountIndices) {
+    instruction[instrOffset++] = idx;
+  }
+  
+  // Data length as compact-u16
+  if (instructionData.length < 128) {
+    instruction[instrOffset++] = instructionData.length;
+  } else {
+    instruction[instrOffset++] = (instructionData.length & 0x7f) | 0x80;
+    instruction[instrOffset++] = instructionData.length >> 7;
+  }
+  instruction.set(instructionData, instrOffset);
+  
+  // Build full message
+  const messageLength = 3 + 1 + (32 * numAccounts) + 32 + 1 + instruction.length;
+  const message = new Uint8Array(messageLength);
+  
+  let msgOffset = 0;
+  message.set(header, msgOffset); msgOffset += 3;
+  message[msgOffset] = numAccounts; msgOffset += 1;
+  message.set(accountKeys, msgOffset); msgOffset += 32 * numAccounts;
+  message.set(blockhashBytes, msgOffset); msgOffset += 32;
+  message[msgOffset] = 1; msgOffset += 1; // 1 instruction
+  message.set(instruction, msgOffset);
+  
+  return message;
 }
 
 /**
@@ -327,37 +657,60 @@ async function verifyATADerivation(rpcUrl, owner, mint, existingTokenAccount, to
 }
 
 // Find existing ATA for an owner/mint combination
-export async function findExistingATA(rpcUrl, owner, mint) {
+export async function findExistingATA(rpcUrl, owner, mint, tokenProgramId = null) {
   try {
-    const response = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    logger.log('[findExistingATA] Looking for mint:', mint?.slice(0, 8), 'owner:', owner?.slice(0, 8));
+    
+    // Search both token programs in parallel
+    const [response1, response2] = await Promise.all([
+      fetchRpcRetry(rpcUrl, {
         jsonrpc: '2.0',
         id: 1,
         method: 'getTokenAccountsByOwner',
         params: [
           owner,
-          { mint: mint },
+          { programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' },
+          { encoding: 'jsonParsed' }
+        ]
+      }),
+      fetchRpcRetry(rpcUrl, {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'getTokenAccountsByOwner',
+        params: [
+          owner,
+          { programId: 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb' },
           { encoding: 'jsonParsed' }
         ]
       })
-    });
+    ]);
     
-    const data = await response.json();
+    const [data1, data2] = await Promise.all([
+      response1.json(),
+      response2.json()
+    ]);
     
-    if (data.error) {
-      logger.warn('Error finding ATA:', data.error);
-      return null;
+    // Combine all accounts
+    const allAccounts = [
+      ...(data1.result?.value || []),
+      ...(data2.result?.value || [])
+    ];
+    
+    logger.log('[findExistingATA] Found', allAccounts.length, 'total token accounts');
+    
+    // Find the account with matching mint
+    for (const acc of allAccounts) {
+      const accMint = acc.account?.data?.parsed?.info?.mint;
+      if (accMint === mint) {
+        logger.log('[findExistingATA] Found matching account:', acc.pubkey?.slice(0, 8));
+        return acc.pubkey;
+      }
     }
     
-    if (data.result?.value && data.result.value.length > 0) {
-      return data.result.value[0].pubkey;
-    }
-    
+    logger.warn('[findExistingATA] No token account found for mint:', mint?.slice(0, 8));
     return null;
   } catch (error) {
-    logger.warn('Failed to find existing ATA:', error);
+    logger.warn('[findExistingATA] Failed:', error.message);
     return null;
   }
 }
@@ -370,38 +723,37 @@ async function deriveATAAddressWithValidation(rpcUrl, owner, mint, tokenProgramI
   logger.log('[ATA-RPC] Deriving ATA for owner:', owner);
   logger.log('[ATA-RPC] Mint:', mint);
   logger.log('[ATA-RPC] Token program:', tokenProgramId);
-  logger.log('[ATA-RPC] Using payer for simulation:', payer);
   
-  // Try bump seeds from 255 down to find valid PDA
-  // We'll try each bump and verify using RPC simulation
-  for (let bump = 255; bump >= 250; bump--) {
-    const address = await computeATAAddress(owner, mint, tokenProgramId, bump);
+  // First, try bump 255 - this works 99%+ of the time
+  const address255 = await computeATAAddress(owner, mint, tokenProgramId, 255);
+  logger.log('[ATA-RPC] Testing bump 255:', address255);
+  
+  const isValid255 = await validateATAWithRPC(rpcUrl, owner, mint, address255, tokenProgramId, 255, payer);
+  if (isValid255) {
+    logger.log('[ATA-RPC] ✓ Found valid ATA with bump 255:', address255);
+    return address255;
+  }
+  
+  // If 255 failed, try a few more common bumps with delays to avoid rate limiting
+  const bumpsToTry = [254, 253, 252, 251, 250];
+  for (const bump of bumpsToTry) {
+    // Small delay between attempts to avoid rate limiting
+    await new Promise(r => setTimeout(r, 200));
     
+    const address = await computeATAAddress(owner, mint, tokenProgramId, bump);
     logger.log(`[ATA-RPC] Testing bump ${bump}: ${address}`);
     
-    // Validate by checking if this address would be accepted
     const isValid = await validateATAWithRPC(rpcUrl, owner, mint, address, tokenProgramId, bump, payer);
-    
-    if (isValid) {
-      logger.log(`[ATA-RPC] ✓ Found valid ATA with bump ${bump}: ${address}`);
-      return address;
-    } else {
-      logger.log(`[ATA-RPC] ✗ Bump ${bump} invalid`);
-    }
-  }
-  
-  // Try remaining bumps without logging each one
-  for (let bump = 249; bump >= 0; bump--) {
-    const address = await computeATAAddress(owner, mint, tokenProgramId, bump);
-    const isValid = await validateATAWithRPC(rpcUrl, owner, mint, address, tokenProgramId, bump, payer);
-    
     if (isValid) {
       logger.log(`[ATA-RPC] ✓ Found valid ATA with bump ${bump}: ${address}`);
       return address;
     }
+    logger.log(`[ATA-RPC] ✗ Bump ${bump} invalid`);
   }
   
-  throw new Error('Failed to derive ATA address - no valid bump found after trying all 256 values');
+  // As fallback, use bump 255 anyway (most common case, RPC might have been wrong)
+  logger.warn('[ATA-RPC] No valid bump found, using 255 as fallback');
+  return address255;
 }
 
 /**
@@ -507,22 +859,50 @@ function isOnCurve(bytes) {
 }
 
 /**
+ * Helper to fetch RPC with 429 retry and exponential backoff
+ */
+async function fetchRpcRetry(rpcUrl, body, maxRetries = 5) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: typeof body === 'string' ? body : JSON.stringify(body)
+      });
+      
+      if (response.status === 429) {
+        // Rate limited - exponential backoff with jitter
+        const baseDelay = 1000 * Math.pow(2, attempt - 1);
+        const jitter = Math.random() * 500;
+        const delay = Math.min(baseDelay + jitter, 8000);
+        logger.warn(`[RPC] Rate limited (429), waiting ${Math.round(delay)}ms (attempt ${attempt}/${maxRetries})`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      
+      return response;
+    } catch (err) {
+      if (attempt === maxRetries) throw err;
+      // Network error - delay before retry
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+  throw new Error('RPC request failed after max retries');
+}
+
+/**
  * Validate ATA address using RPC
  * Checks if the derived address matches what the ATA program would create
  * @param payer - Real account with funds for simulation (allows ATA program to run)
  */
 async function validateATAWithRPC(rpcUrl, owner, mint, ataAddress, tokenProgramId, bump, payer) {
   try {
-    // Get a blockhash for simulation
-    const bhResponse = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'getLatestBlockhash',
-        params: [{ commitment: 'finalized' }]
-      })
+    // Get a blockhash for simulation with retry
+    const bhResponse = await fetchRpcRetry(rpcUrl, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'getLatestBlockhash',
+      params: [{ commitment: 'finalized' }]
     });
     const bhData = await bhResponse.json();
     const blockhash = bhData.result?.value?.blockhash;
@@ -543,20 +923,16 @@ async function validateATAWithRPC(rpcUrl, owner, mint, ataAddress, tokenProgramI
     
     const txBase64 = btoa(String.fromCharCode(...tx));
     
-    // Simulate with accounts override to provide funds
-    const response = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'simulateTransaction',
-        params: [txBase64, { 
-          encoding: 'base64',
-          sigVerify: false,
-          replaceRecentBlockhash: true
-        }]
-      })
+    // Simulate with retry for rate limits
+    const response = await fetchRpcRetry(rpcUrl, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'simulateTransaction',
+      params: [txBase64, { 
+        encoding: 'base64',
+        sigVerify: false,
+        replaceRecentBlockhash: true
+      }]
     });
     
     const data = await response.json();
@@ -721,6 +1097,23 @@ function buildTokenTransferMessage({
   recentBlockhash,
   tokenProgramId 
 }) {
+  // Check for duplicates first
+  logger.log('[BUILD TX Simple] Checking accounts:');
+  logger.log('  owner:', fromPubkey);
+  logger.log('  source:', fromTokenAccount);
+  logger.log('  dest:', toTokenAccount);
+  logger.log('  program:', tokenProgramId);
+  
+  if (fromPubkey === fromTokenAccount) {
+    throw new Error('Owner cannot be the same as source token account');
+  }
+  if (fromPubkey === toTokenAccount) {
+    throw new Error('Owner cannot be the same as destination token account');
+  }
+  if (fromTokenAccount === toTokenAccount) {
+    throw new Error('Source and destination token accounts cannot be the same');
+  }
+  
   const ownerBytes = decodeToFixedSize(fromPubkey, 32);
   const sourceBytes = decodeToFixedSize(fromTokenAccount, 32);
   const destBytes = decodeToFixedSize(toTokenAccount, 32);
@@ -783,6 +1176,30 @@ function buildTokenTransferWithCreateATAMessage({
   const ataProgramBytes = decodeToFixedSize(ASSOCIATED_TOKEN_PROGRAM_ID, 32);
   const systemProgramBytes = decodeToFixedSize(SYSTEM_PROGRAM_ID, 32);
   const blockhashBytes = decodeToFixedSize(recentBlockhash, 32);
+  
+  // Check for duplicate accounts (would cause "Account loaded twice" error)
+  const accounts = [
+    { name: 'payer', bytes: payerBytes, address: fromPubkey },
+    { name: 'destATA', bytes: destATABytes, address: toTokenAccount },
+    { name: 'source', bytes: sourceBytes, address: fromTokenAccount },
+    { name: 'destOwner', bytes: destOwnerBytes, address: toPubkey },
+    { name: 'mint', bytes: mintBytes, address: mint },
+    { name: 'system', bytes: systemProgramBytes, address: SYSTEM_PROGRAM_ID },
+    { name: 'tokenProgram', bytes: tokenProgramBytes, address: tokenProgramId },
+    { name: 'ataProgram', bytes: ataProgramBytes, address: ASSOCIATED_TOKEN_PROGRAM_ID }
+  ];
+  
+  logger.log('[BUILD TX] Checking for duplicate accounts...');
+  for (let i = 0; i < accounts.length; i++) {
+    for (let j = i + 1; j < accounts.length; j++) {
+      // Compare as base58 strings
+      if (accounts[i].address === accounts[j].address) {
+        logger.error(`[BUILD TX] DUPLICATE DETECTED: ${accounts[i].name} === ${accounts[j].name} === ${accounts[i].address}`);
+        throw new Error(`Duplicate account detected: ${accounts[i].name} and ${accounts[j].name} are the same (${accounts[i].address})`);
+      }
+    }
+  }
+  logger.log('[BUILD TX] No duplicates found, building transaction...');
   
   // Header: 1 signer, 0 readonly signed, 5 readonly unsigned
   // Accounts must be ordered: writable signed, writable unsigned, readonly unsigned
@@ -1205,30 +1622,8 @@ export async function fetchBlockchainTransactions(rpcUrl, walletAddress, limit =
             }
           }
           
-          // 3. Try Explorer API
-          if (!symbol) {
-            try {
-              const controller = new AbortController();
-              const timeout = setTimeout(() => controller.abort(), 3000);
-              const explorerResponse = await fetch(
-                'https://explorer.mainnet.x1.xyz/api/v2/addresses/' + mint,
-                { signal: controller.signal }
-              );
-              clearTimeout(timeout);
-              
-              if (explorerResponse.ok) {
-                const explorerData = await explorerResponse.json();
-                if (explorerData.token?.symbol) {
-                  symbol = explorerData.token.symbol;
-                  logger.log('[fetchBlockchainTransactions] Explorer found:', mint.slice(0, 8), '->', symbol);
-                }
-              }
-            } catch (e) {
-              // Continue to fallback
-            }
-          }
-          
-          // 4. Fallback to shortened mint
+          // 3. Explorer API removed - endpoint doesn't exist
+          // Fallback to shortened mint directly
           if (!symbol) {
             symbol = mint.slice(0, 4) + '..' + mint.slice(-3);
             logger.log('[fetchBlockchainTransactions] Using fallback for:', mint.slice(0, 8));
@@ -1371,10 +1766,19 @@ function parseTransaction(txData, walletAddress, signature, network = '') {
     const sentTokens = tokenChanges.filter(t => t.change < 0).sort((a, b) => b.amount - a.amount);
     const receivedTokens = tokenChanges.filter(t => t.change > 0).sort((a, b) => b.amount - a.amount);
     
-    // Determine transaction type - if we have both sent and received, it's a swap
-    const isSwap = sentTokens.length > 0 && receivedTokens.length > 0;
+    // Check for stake reward pattern: both sent and received are same token, net positive
+    // This happens when claiming rewards: receive 0.06 XNT reward, pay 0.01 XNT to bot
     const sent = sentTokens[0];
     const received = receivedTokens[0];
+    
+    // Detect stake reward: same token in/out, net gain, involves dApp
+    const isSameTokenInOut = sent && received && 
+      ((sent.isNative && received.isNative) || (sent.mint === received.mint));
+    const netGain = received && sent ? received.amount - sent.amount : 0;
+    const isLikelyReward = isSameTokenInOut && netGain > 0;
+    
+    // Determine if this is a true swap (different tokens) or just has both in/out
+    const isSwap = sentTokens.length > 0 && receivedTokens.length > 0 && !isLikelyReward;
     
     // Check if this involves a dApp (complex program)
     const instructions = message.instructions || [];
@@ -1408,6 +1812,25 @@ function parseTransaction(txData, walletAddress, signature, network = '') {
       source: 'blockchain',
       dappProgram
     };
+    
+    // Handle stake reward (same token in/out, net positive) - show as receive with net amount
+    if (isLikelyReward) {
+      let symbol = received.isNative ? nativeSymbol : null;
+      if (!symbol && received.decimals === 6) symbol = 'USDC';
+      if (!symbol) symbol = 'Token';
+      
+      return {
+        ...baseTx,
+        type: 'reward',
+        isReward: true,
+        amount: netGain,  // Show NET gain, not gross amounts
+        symbol,
+        tokenMint: received.mint !== 'native' ? received.mint : null,
+        from: '',
+        to: walletAddress,
+        description: `Reward: +${netGain.toFixed(4)} ${symbol} (received ${received.amount.toFixed(4)}, fee ${sent.amount.toFixed(4)})`
+      };
+    }
     
     // Handle swap transactions - PRIORITY over dApp interaction
     if (isSwap) {

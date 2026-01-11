@@ -1,6 +1,6 @@
 // Wallet service - handles wallet creation, storage, and transactions
 import { logger } from '../utils/logger.js';
-import { encryptData, decryptData, isEncrypted, hashPassword, verifyPassword } from '../utils/encryption.js';
+import { encryptData, decryptData, isEncrypted, hashPassword, verifyPassword as verifyPasswordHash } from '../utils/encryption.js';
 
 import * as base58 from '../utils/base58';
 import * as crypto from '../utils/crypto';
@@ -49,14 +49,39 @@ export async function importWallet(mnemonic) {
 // Check if a password has been set up
 export async function hasPassword() {
   try {
+    let authData = null;
+    
     if (typeof chrome !== 'undefined' && chrome.storage) {
-      const result = await chrome.storage.local.get(AUTH_KEY);
-      return !!result[AUTH_KEY];
+      try {
+        const result = await chrome.storage.local.get(AUTH_KEY);
+        authData = result[AUTH_KEY];
+      } catch (e) {
+        // Fall through to localStorage
+      }
     }
+    
+    if (!authData) {
+      authData = localStorage.getItem(AUTH_KEY);
+    }
+    
+    if (!authData) return false;
+    
+    // Validate that authData is valid JSON with expected structure
+    try {
+      const parsed = JSON.parse(authData);
+      // Must have both hash and salt to be valid
+      if (parsed && parsed.hash && parsed.salt) {
+        return true;
+      }
+    } catch (e) {
+      // Invalid JSON - not a valid password
+    }
+    
+    return false;
   } catch (e) {
-    // Fall through to localStorage
+    logger.error('[Wallet] Error checking password:', e);
+    return false;
   }
-  return !!localStorage.getItem(AUTH_KEY);
 }
 
 // Set up password for wallet encryption
@@ -70,14 +95,15 @@ export async function setupPassword(password) {
   const { hash, salt } = await hashPassword(password);
   const authData = JSON.stringify({ hash, salt });
   
-  try {
-    if (typeof chrome !== 'undefined' && chrome.storage) {
+  // Save to both chrome.storage and localStorage for consistency
+  localStorage.setItem(AUTH_KEY, authData);
+  
+  if (typeof chrome !== 'undefined' && chrome.storage) {
+    try {
       await chrome.storage.local.set({ [AUTH_KEY]: authData });
-    } else {
-      localStorage.setItem(AUTH_KEY, authData);
+    } catch (e) {
+      // localStorage fallback already done above
     }
-  } catch (e) {
-    localStorage.setItem(AUTH_KEY, authData);
   }
 }
 
@@ -166,7 +192,7 @@ export async function checkPassword(password) {
     if (!authData) return false;
     
     const { hash, salt } = JSON.parse(authData);
-    const isValid = await verifyPassword(password, hash, salt);
+    const isValid = await verifyPasswordHash(password, hash, salt);
     
     // Update rate limit based on result
     await updateRateLimit(isValid);
@@ -177,6 +203,28 @@ export async function checkPassword(password) {
       throw e;
     }
     logger.error('Password verification error');
+    return false;
+  }
+}
+
+/**
+ * Clear stale password/auth data
+ * Used when wallet data is cleared but auth remains
+ */
+export async function clearPassword() {
+  try {
+    localStorage.removeItem(AUTH_KEY);
+    localStorage.removeItem('x1wallet_passwordProtection');
+    localStorage.removeItem('x1wallet_encrypted');
+    
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      await chrome.storage.local.remove([AUTH_KEY, 'x1wallet_passwordProtection', 'x1wallet_encrypted']).catch(() => {});
+    }
+    
+    logger.log('[wallet] Cleared stale auth data');
+    return true;
+  } catch (e) {
+    logger.error('[wallet] Error clearing auth:', e);
     return false;
   }
 }

@@ -26,7 +26,13 @@ const storage = {
     try { return JSON.parse(localStorage.getItem(`x1wallet_${key}`)) ?? defaultValue; }
     catch { return defaultValue; }
   },
-  set: (key, value) => localStorage.setItem(`x1wallet_${key}`, JSON.stringify(value))
+  set: (key, value) => {
+    localStorage.setItem(`x1wallet_${key}`, JSON.stringify(value));
+    // Also sync to chrome.storage.local for persistence across sessions
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      chrome.storage.local.set({ [`x1wallet_${key}`]: value }).catch(() => {});
+    }
+  }
 };
 
 // Alert Modal Component - Styled to match app design
@@ -350,28 +356,52 @@ function App() {
 
   // Check if password protection is enabled and if there's a password set
   // X1W-SEC-006: Check both legacy passwordHash and new PBKDF2 auth
-  const passwordProtection = storage.get('passwordProtection', false);
+  const [passwordProtection, setPasswordProtection] = useState(() => storage.get('passwordProtection', false));
   const [hasPasswordAsync, setHasPasswordAsync] = useState(false);
+  const [autoLockMinutes, setAutoLockMinutes] = useState(() => storage.get('autoLock', 5));
+  const [passwordCheckComplete, setPasswordCheckComplete] = useState(false);
   
   useEffect(() => {
     const checkHasPassword = async () => {
       try {
+        // Sync from chrome storage first
+        if (typeof chrome !== 'undefined' && chrome.storage) {
+          try {
+            const result = await chrome.storage.local.get(['x1wallet_passwordProtection', 'x1wallet_autoLock']);
+            if (result.x1wallet_passwordProtection !== undefined) {
+              localStorage.setItem('x1wallet_passwordProtection', JSON.stringify(result.x1wallet_passwordProtection));
+              setPasswordProtection(result.x1wallet_passwordProtection);
+            }
+            if (result.x1wallet_autoLock !== undefined) {
+              localStorage.setItem('x1wallet_autoLock', JSON.stringify(result.x1wallet_autoLock));
+              setAutoLockMinutes(result.x1wallet_autoLock);
+            }
+          } catch (e) {
+            // Continue with localStorage values
+          }
+        }
+        
+        // Re-read from storage after sync
+        setPasswordProtection(storage.get('passwordProtection', false));
+        setAutoLockMinutes(storage.get('autoLock', 5));
+        
         const { hasPassword: checkHasPass } = await import('@x1-wallet/core/services/wallet');
         const result = await checkHasPass();
         setHasPasswordAsync(result);
+        setPasswordCheckComplete(true);
       } catch {
         // Fallback to legacy check
         setHasPasswordAsync(
           storage.get('passwordHash', null) !== null || 
           !!localStorage.getItem('x1wallet_auth')
         );
+        setPasswordCheckComplete(true);
       }
     };
     checkHasPassword();
   }, []);
   
   const hasPassword = hasPasswordAsync;
-  const autoLockMinutes = storage.get('autoLock', 5);
 
   // Track user activity - persist to storage so it survives popup close
   const updateActivity = useCallback(() => {
@@ -406,12 +436,12 @@ function App() {
     };
   }, [passwordProtection, hasPassword, autoLockMinutes, isLocked, screen, updateActivity]);
 
-  // Check for existing wallet on mount - only run ONCE
+  // Check for existing wallet on mount - wait for password check
   useEffect(() => {
-    if (wallet.loading || initialCheckDone) return;
+    if (wallet.loading || initialCheckDone || !passwordCheckComplete) return;
     
     const checkWallet = async () => {
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, 100));
       
       // Check URL params for hardware wallet redirect
       const urlParams = new URLSearchParams(window.location.search);
@@ -419,14 +449,19 @@ function App() {
       
       if (wallet.wallets.length > 0) {
         // Check if should be locked on open based on ACTUAL elapsed time
+        logger.log('[App] Password check - protection:', passwordProtection, 'hasPassword:', hasPassword, 'autoLock:', autoLockMinutes);
+        
         if (passwordProtection && hasPassword) {
           // Get last activity from persistent storage
           const lastActivity = storage.get('lastActivity', 0);
           const elapsedMinutes = (Date.now() - lastActivity) / 1000 / 60;
           
+          logger.log('[App] Last activity:', lastActivity, 'elapsed:', elapsedMinutes, 'autoLock:', autoLockMinutes);
+          
           // Only lock if auto-lock timeout has actually elapsed
           // Or if no activity recorded yet (first time setup)
           if (lastActivity === 0 || (autoLockMinutes !== -1 && elapsedMinutes >= autoLockMinutes)) {
+            logger.log('[App] Locking wallet - timeout exceeded');
             setIsLocked(true);
           } else {
             // Restore the last activity time to the ref
@@ -454,7 +489,14 @@ function App() {
     };
     
     checkWallet();
-  }, [wallet.loading, initialCheckDone]);
+  }, [wallet.loading, initialCheckDone, passwordCheckComplete, passwordProtection, hasPassword, autoLockMinutes]);
+
+  // Redirect to welcome when all wallets are removed
+  useEffect(() => {
+    if (initialCheckDone && !wallet.loading && wallet.wallets.length === 0 && screen === 'main') {
+      setScreen('welcome');
+    }
+  }, [wallet.wallets.length, wallet.loading, initialCheckDone, screen]);
 
   // Handle unlock - supports both legacy password and encrypted wallet
   const handleUnlock = async (password) => {
@@ -464,76 +506,116 @@ function App() {
     storage.set('lastActivity', now); // Persist unlock time
   };
 
-  // Handle wallet creation with mandatory encryption
+  // Handle wallet creation - password only if protection is ON
   const handleCreateComplete = async (mnemonic, name, password) => {
     try {
-      // X1W-SEC-006 FIX: Use PBKDF2 password hashing from wallet service
-      const { setupPassword } = await import('@x1-wallet/core/services/wallet');
-      
-      // First enable encryption with the password
-      await wallet.enableEncryption(password);
-      
-      // Then create the wallet (will be saved encrypted)
-      await wallet.createWallet(mnemonic, name);
-      
-      // Set up password hash with PBKDF2 (not base64)
-      await setupPassword(password);
-      storage.set('passwordProtection', true);
-      storage.set('lastActivity', Date.now());
-      
-      setScreen('main');
-    } catch (err) {
-      logger.error('Failed to create wallet:', err);
-      showAlert(err.message || 'Failed to create wallet', 'Wallet Already Exists', 'warning');
-    }
-  };
-
-  // Handle wallet import with mandatory encryption
-  const handleImportComplete = async (mnemonic, name, password) => {
-    try {
-      // X1W-SEC-006 FIX: Use PBKDF2 password hashing from wallet service
-      const { setupPassword } = await import('@x1-wallet/core/services/wallet');
-      
-      // First enable encryption with the password
-      await wallet.enableEncryption(password);
-      
-      // Then import the wallet (will be saved encrypted)
-      await wallet.importWallet(mnemonic, name);
-      
-      // Set up password hash with PBKDF2 (not base64)
-      await setupPassword(password);
-      storage.set('passwordProtection', true);
-      storage.set('lastActivity', Date.now());
-      
-      setScreen('main');
-    } catch (err) {
-      logger.error('Failed to import wallet:', err);
-      showAlert(err.message || 'Failed to import wallet', 'Wallet Already Exists', 'warning');
-    }
-  };
-
-  // Handle private key import with mandatory encryption
-  const handleImportPrivateKey = async (walletData) => {
-    try {
-      const password = walletData.password;
-      if (!password) {
-        showAlert('Password is required for wallet encryption', 'Security Error', 'error');
+      // If protection is OFF and no password provided, create unencrypted
+      if (!passwordProtection && !password) {
+        await wallet.createWallet(mnemonic, name);
+        storage.set('lastActivity', Date.now());
+        setScreen('main');
         return;
       }
       
-      // X1W-SEC-006 FIX: Use PBKDF2 password hashing from wallet service
-      const { setupPassword } = await import('@x1-wallet/core/services/wallet');
+      // Protection is ON - password required
+      if (!password) {
+        throw new Error('Password is required');
+      }
       
-      // Enable encryption first
-      await wallet.enableEncryption(password);
+      const { setupPassword, hasPassword: checkHasPassword } = await import('@x1-wallet/core/services/wallet');
+      const passwordExists = await checkHasPassword();
+      const hasWallets = wallet.wallets && wallet.wallets.length > 0;
+      const effectivePasswordExists = passwordExists && hasWallets;
       
-      // Add wallet directly with private key data
+      // Set encryption password and create wallet
+      wallet.setEncryptionPasswordOnly(password);
+      await wallet.createWallet(mnemonic, name);
+      
+      // Set up password hash if first time
+      if (!effectivePasswordExists) {
+        await setupPassword(password);
+      }
+      
+      setHasPasswordAsync(true);
+      localStorage.setItem('x1wallet_encrypted', 'true');
+      storage.set('lastActivity', Date.now());
+      setScreen('main');
+    } catch (err) {
+      logger.error('Failed to create wallet:', err);
+      showAlert(err.message || 'Failed to create wallet', 'Creation Failed', 'warning');
+    }
+  };
+
+  // Handle wallet import - ALWAYS requires password (turns protection ON)
+  const handleImportComplete = async (mnemonic, name, password) => {
+    try {
+      // Import ALWAYS requires password (existing funds need protection)
+      if (!password) {
+        throw new Error('Password is required');
+      }
+      
+      const { setupPassword, hasPassword: checkHasPassword } = await import('@x1-wallet/core/services/wallet');
+      const passwordExists = await checkHasPassword();
+      const hasWallets = wallet.wallets && wallet.wallets.length > 0;
+      const effectivePasswordExists = passwordExists && hasWallets;
+      
+      // Set encryption password and import wallet
+      wallet.setEncryptionPasswordOnly(password);
+      await wallet.importWallet(mnemonic, name);
+      
+      // Set up password hash if first time
+      if (!effectivePasswordExists) {
+        await setupPassword(password);
+      }
+      
+      // Import always turns ON password protection
+      storage.set('passwordProtection', true);
+      setPasswordProtection(true);
+      setHasPasswordAsync(true);
+      localStorage.setItem('x1wallet_encrypted', 'true');
+      
+      storage.set('lastActivity', Date.now());
+      setScreen('main');
+    } catch (err) {
+      logger.error('Failed to import wallet:', err);
+      showAlert(err.message || 'Failed to import wallet', 'Import Failed', 'warning');
+    }
+  };
+
+  // Handle private key import - ALWAYS requires password (turns protection ON)
+  const handleImportPrivateKey = async (walletData) => {
+    try {
+      const password = walletData.password;
+      
+      // Import ALWAYS requires password (existing funds need protection)
+      if (!password) {
+        showAlert('Password is required', 'Security Error', 'error');
+        return;
+      }
+      
+      // Check if wallet already exists
+      const existingWallets = wallet.wallets || [];
+      const existingMatch = existingWallets.find(w => 
+        w.publicKey === walletData.publicKey || 
+        w.addresses?.some(a => a.publicKey === walletData.publicKey)
+      );
+      if (existingMatch) {
+        showAlert(`This wallet has already been imported as "${existingMatch.name}"`, 'Wallet Already Exists', 'warning');
+        return;
+      }
+      
+      const { setupPassword, hasPassword: checkHasPassword } = await import('@x1-wallet/core/services/wallet');
+      const passwordExists = await checkHasPassword();
+      const hasWallets = existingWallets.length > 0;
+      const effectivePasswordExists = passwordExists && hasWallets;
+      
+      // Build the new wallet object
       const newWallet = {
         id: Date.now().toString(),
         name: walletData.name || 'Imported Wallet',
         publicKey: walletData.publicKey,
         privateKey: walletData.privateKey,
-        mnemonic: null, // No mnemonic for private key imports
+        mnemonic: null,
         type: 'imported',
         createdAt: new Date().toISOString(),
         addresses: [{
@@ -545,28 +627,23 @@ function App() {
         activeAddressIndex: 0
       };
       
-      // Get existing wallets (need to check encrypted storage)
-      const existingWallets = wallet.wallets || [];
-      
-      // Check if already exists
-      const existingMatch = existingWallets.find(w => 
-        w.publicKey === newWallet.publicKey || 
-        w.addresses?.some(a => a.publicKey === newWallet.publicKey)
-      );
-      if (existingMatch) {
-        showAlert(`This wallet has already been imported as "${existingMatch.name}"`, 'Wallet Already Exists', 'warning');
-        return;
-      }
-      
-      // Save via wallet hook (will encrypt)
+      // Set encryption password and save
+      wallet.setEncryptionPasswordOnly(password);
       await wallet.saveWallets([...existingWallets, newWallet]);
       wallet.selectWallet(newWallet.id);
       
-      // Set up password hash with PBKDF2 (not base64)
-      await setupPassword(password);
-      storage.set('passwordProtection', true);
-      storage.set('lastActivity', Date.now());
+      // Set up password hash if first time
+      if (!effectivePasswordExists) {
+        await setupPassword(password);
+      }
       
+      // Import always turns ON password protection
+      storage.set('passwordProtection', true);
+      setPasswordProtection(true);
+      setHasPasswordAsync(true);
+      localStorage.setItem('x1wallet_encrypted', 'true');
+      
+      storage.set('lastActivity', Date.now());
       setScreen('main');
     } catch (err) {
       logger.error('Failed to import private key wallet:', err);
@@ -765,9 +842,11 @@ function App() {
     return (
       <div className="app">
         <SettingsScreen
+          key={`settings-${passwordProtection}`}
           wallet={wallet}
           onBack={() => setScreen('main')}
           onLock={handleLock}
+          initialPasswordProtection={passwordProtection}
         />
         <BottomNav />
       </div>

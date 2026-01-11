@@ -132,10 +132,15 @@ export default function TokenManager({ wallet, onBack, onTokensChange }) {
             <label>Decimals</label>
             <input
               type="number"
+              min="0"
               className="form-input"
               placeholder="9"
               value={newToken.decimals}
-              onChange={e => setNewToken({ ...newToken, decimals: parseInt(e.target.value) || 9 })}
+              onChange={e => {
+                const value = e.target.value;
+                if (value.startsWith('-') || parseFloat(value) < 0) return;
+                setNewToken({ ...newToken, decimals: parseInt(value) || 9 });
+              }}
             />
           </div>
 

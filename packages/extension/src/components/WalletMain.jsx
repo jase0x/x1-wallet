@@ -11,6 +11,54 @@ import { fetchTransactions as fetchAPITransactions, registerWallet } from '@x1-w
 // Global image cache to prevent re-fetching across screens
 const imageCache = new Map();
 
+// ============================================
+// TOKEN LIST CACHE - Persists across wallet switches
+// ============================================
+const TOKEN_CACHE_KEY = 'x1wallet_token_cache';
+const TOKEN_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+function getTokenCacheKey(walletAddress, network) {
+  return `${walletAddress}:${network}`;
+}
+
+function getCachedTokens(walletAddress, network) {
+  try {
+    const cache = JSON.parse(localStorage.getItem(TOKEN_CACHE_KEY) || '{}');
+    const key = getTokenCacheKey(walletAddress, network);
+    const entry = cache[key];
+    if (entry && entry.tokens && entry.timestamp) {
+      // Return cached tokens even if expired - better than nothing
+      // Fresh fetch will update in background
+      logger.log('[TokenCache] Found cached tokens for', key, '- count:', entry.tokens.length);
+      return entry.tokens;
+    }
+  } catch (e) {
+    logger.warn('[TokenCache] Error reading cache:', e);
+  }
+  return null;
+}
+
+function setCachedTokens(walletAddress, network, tokens) {
+  try {
+    const cache = JSON.parse(localStorage.getItem(TOKEN_CACHE_KEY) || '{}');
+    const key = getTokenCacheKey(walletAddress, network);
+    cache[key] = {
+      tokens: tokens,
+      timestamp: Date.now()
+    };
+    // Keep only last 10 wallet/network combos to prevent bloat
+    const keys = Object.keys(cache);
+    if (keys.length > 10) {
+      const oldest = keys.sort((a, b) => (cache[a]?.timestamp || 0) - (cache[b]?.timestamp || 0))[0];
+      delete cache[oldest];
+    }
+    localStorage.setItem(TOKEN_CACHE_KEY, JSON.stringify(cache));
+    logger.log('[TokenCache] Saved', tokens.length, 'tokens for', key);
+  } catch (e) {
+    logger.warn('[TokenCache] Error saving cache:', e);
+  }
+}
+
 // Preload and cache an image
 function preloadImage(url) {
   if (!url || imageCache.has(url)) return;
@@ -27,12 +75,96 @@ function preloadTokenImages(tokens) {
   });
 }
 
+// ============================================
+// RPC FETCH WITH RETRY - Handles 429 rate limits
+// ============================================
+async function fetchRpcWithRetry(rpcUrl, body, maxRetries = 5) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: typeof body === 'string' ? body : JSON.stringify(body)
+      });
+      
+      if (response.status === 429) {
+        // Rate limited - exponential backoff with jitter
+        const baseDelay = 1000 * Math.pow(2, attempt - 1);
+        const jitter = Math.random() * 500;
+        const delay = Math.min(baseDelay + jitter, 8000);
+        logger.warn(`[RPC] Rate limited (429), waiting ${Math.round(delay)}ms (attempt ${attempt}/${maxRetries})`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      
+      return response;
+    } catch (err) {
+      if (attempt === maxRetries) throw err;
+      // Network error - delay before retry
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+  
+  throw new Error('RPC request failed after max retries');
+}
+
 // Activity List Component
+// Activity cache for instant loading
+const ACTIVITY_CACHE_KEY = 'x1wallet_activity_cache';
+
+function getCachedActivity(walletAddress, network) {
+  try {
+    const cache = JSON.parse(localStorage.getItem(ACTIVITY_CACHE_KEY) || '{}');
+    const key = `${walletAddress}:${network}`;
+    const entry = cache[key];
+    if (entry && entry.transactions) {
+      logger.log('[ActivityCache] Found cached activity for', key, '- count:', entry.transactions.length);
+      return entry.transactions;
+    }
+  } catch (e) {
+    logger.warn('[ActivityCache] Error reading cache:', e);
+  }
+  return null;
+}
+
+function setCachedActivity(walletAddress, network, transactions) {
+  try {
+    const cache = JSON.parse(localStorage.getItem(ACTIVITY_CACHE_KEY) || '{}');
+    const key = `${walletAddress}:${network}`;
+    cache[key] = {
+      transactions: transactions.slice(0, 50), // Keep only last 50 to prevent bloat
+      timestamp: Date.now()
+    };
+    // Keep only last 10 wallet/network combos
+    const keys = Object.keys(cache);
+    if (keys.length > 10) {
+      const oldest = keys.sort((a, b) => (cache[a]?.timestamp || 0) - (cache[b]?.timestamp || 0))[0];
+      delete cache[oldest];
+    }
+    localStorage.setItem(ACTIVITY_CACHE_KEY, JSON.stringify(cache));
+    logger.log('[ActivityCache] Saved', transactions.length, 'transactions for', key);
+  } catch (e) {
+    logger.warn('[ActivityCache] Error saving cache:', e);
+  }
+}
+
 function ActivityList({ walletAddress, network, networkConfig, refreshKey }) {
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [sortOrder, setSortOrder] = useState('desc'); // 'desc' = newest first, 'asc' = oldest first
+
+  // Load cached activity on mount
+  useEffect(() => {
+    if (walletAddress && network) {
+      const cached = getCachedActivity(walletAddress, network);
+      if (cached && cached.length > 0) {
+        logger.log('[ActivityList] Loading cached activity:', cached.length);
+        setTransactions(cached);
+        setLoading(false);
+      }
+    }
+  }, [walletAddress, network]);
 
   // Normalize timestamp to milliseconds for consistent sorting
   const normalizeTimestamp = (tx) => {
@@ -46,7 +178,8 @@ function ActivityList({ walletAddress, network, networkConfig, refreshKey }) {
 
   const fetchTransactions = async (showLoading = true) => {
     if (!walletAddress) return;
-    if (showLoading) setLoading(true);
+    // Only show loading if we have no cached data
+    if (showLoading && transactions.length === 0) setLoading(true);
     setIsRefreshing(true);
     
     try {
@@ -155,8 +288,11 @@ function ActivityList({ walletAddress, network, networkConfig, refreshKey }) {
       });
       
       setTransactions(allTxs);
+      // Save to cache for instant loading
+      setCachedActivity(walletAddress, network, allTxs);
     } catch (e) {
       logger.error('Failed to fetch transactions:', e);
+      // Don't clear transactions on error - keep cached data
     } finally {
       setLoading(false);
       setIsRefreshing(false);
@@ -226,6 +362,7 @@ function ActivityList({ walletAddress, network, networkConfig, refreshKey }) {
           const isSwap = tx.type === 'swap' || tx.type === 'wrap' || tx.type === 'unwrap' || tx.isSwap;
           const isStake = tx.type === 'stake';
           const isUnstake = tx.type === 'unstake';
+          const isReward = tx.type === 'reward' || tx.isReward;
           const isDapp = tx.type === 'dapp' || tx.isDappInteraction;
           
           // Determine send/receive from current wallet's perspective
@@ -237,7 +374,7 @@ function ActivityList({ walletAddress, network, networkConfig, refreshKey }) {
           } else if (tx.type === 'send' || tx.type === 'sent') {
             // Check if current wallet is the sender
             isSend = tx.from === walletAddress || tx.walletAddress === walletAddress && tx.to !== walletAddress;
-          } else if (tx.type === 'receive' || tx.type === 'received') {
+          } else if (tx.type === 'receive' || tx.type === 'received' || isReward) {
             isSend = false;
           } else if (tx.from && tx.to) {
             // Determine based on from/to addresses relative to current wallet
@@ -248,12 +385,13 @@ function ActivityList({ walletAddress, network, networkConfig, refreshKey }) {
           }
           
           // Determine icon type
-          const iconType = isFailed ? 'failed' : isDapp ? 'dapp' : isStake ? 'stake' : isUnstake ? 'unstake' : isSwap ? 'swap' : isSend ? 'send' : 'receive';
+          const iconType = isFailed ? 'failed' : isDapp ? 'dapp' : isStake ? 'stake' : isUnstake ? 'unstake' : isReward ? 'reward' : isSwap ? 'swap' : isSend ? 'send' : 'receive';
           
           // Get display title
           const getTitle = () => {
             if (isDapp) return 'dApp Interaction';
-            // Check stake/unstake BEFORE swap (stake transactions may have isSwap flag from blockchain parsing)
+            // Check stake/unstake/reward BEFORE swap
+            if (isReward) return `Staking Reward`;
             if (isStake) return `Staked ${tx.symbol || 'XNT'}`;
             if (isUnstake) return `Unstaked ${tx.symbol || 'XNT'}`;
             if (isSwap) {
@@ -274,7 +412,10 @@ function ActivityList({ walletAddress, network, networkConfig, refreshKey }) {
               }
               return isSend ? 'Outgoing' : 'Incoming';
             }
-            // Check stake/unstake BEFORE swap
+            // Check stake/unstake/reward BEFORE swap
+            if (isReward) {
+              return 'Net gain from staking';
+            }
             if (isStake) {
               const match = tx.description?.match(/([\d.]+)\s*pXNT/);
               return match ? `→ ${match[1]} pXNT` : '→ pXNT';
@@ -305,7 +446,8 @@ function ActivityList({ walletAddress, network, networkConfig, refreshKey }) {
             if (isDapp) {
               return isSend ? `-${amount} ${symbol}` : `+${amount} ${symbol}`;
             }
-            // Check stake/unstake BEFORE swap
+            // Check stake/unstake/reward BEFORE swap
+            if (isReward) return `+${amount} ${symbol}`;
             if (isStake) return `${amount} ${tx.symbol || 'XNT'}`;
             if (isUnstake) return `+${amount} ${tx.symbol || 'XNT'}`;
             if (isSwap) {
@@ -341,6 +483,11 @@ function ActivityList({ walletAddress, network, networkConfig, refreshKey }) {
                     <rect x="14" y="3" width="7" height="7" rx="1" />
                     <rect x="3" y="14" width="7" height="7" rx="1" />
                     <rect x="14" y="14" width="7" height="7" rx="1" />
+                  </svg>
+                ) : isReward ? (
+                  /* Reward - star/gift icon */
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
                   </svg>
                 ) : isStake || isUnstake ? (
                   /* Stake/Unstake - layers icon */
@@ -394,11 +541,33 @@ function NFTsTab({ wallet, networkConfig }) {
   const [sendError, setSendError] = useState('');
   const [sendSuccess, setSendSuccess] = useState(false);
   const [txHash, setTxHash] = useState('');
+  const [showHidden, setShowHidden] = useState(false);
+  const [hiddenNfts, setHiddenNfts] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('x1wallet_hidden_nfts') || '[]');
+    } catch { return []; }
+  });
 
   const walletAddress = wallet?.wallet?.publicKey || wallet?.publicKey;
   const privateKey = wallet?.wallet?.privateKey;
   const network = wallet?.network;
   const rpcUrl = networkConfig?.rpcUrl;
+  
+  // Hide/unhide NFT
+  const toggleHideNft = (mint) => {
+    setHiddenNfts(prev => {
+      const newHidden = prev.includes(mint) 
+        ? prev.filter(m => m !== mint)
+        : [...prev, mint];
+      localStorage.setItem('x1wallet_hidden_nfts', JSON.stringify(newHidden));
+      return newHidden;
+    });
+    setSelectedNft(null);
+  };
+  
+  // Filter visible NFTs
+  const visibleNfts = showHidden ? nfts : nfts.filter(nft => !hiddenNfts.includes(nft.mint));
+  const hiddenCount = nfts.filter(nft => hiddenNfts.includes(nft.mint)).length;
 
   // Send NFT function
   const handleSendNft = async () => {
@@ -413,16 +582,12 @@ function NFTsTab({ wallet, networkConfig }) {
         throw new Error('Invalid recipient address');
       }
       
-      // Get recent blockhash
-      const blockhashResponse = await fetch(rpcUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'getLatestBlockhash',
-          params: [{ commitment: 'finalized' }]
-        })
+      // Get recent blockhash with retry for rate limits
+      const blockhashResponse = await fetchRpcWithRetry(rpcUrl, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'getLatestBlockhash',
+        params: [{ commitment: 'finalized' }]
       });
       
       const blockhashData = await blockhashResponse.json();
@@ -436,6 +601,82 @@ function NFTsTab({ wallet, networkConfig }) {
         ? 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb' 
         : 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
       
+      // Check if this is a compressed NFT (cNFT)
+      if (selectedNft.isCompressed || !selectedNft.address) {
+        // Get asset proof from DAS API
+        const proofResponse = await fetchRpcWithRetry(rpcUrl, {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getAssetProof',
+          params: { id: selectedNft.mint }
+        });
+        
+        const proofData = await proofResponse.json();
+        if (proofData.error) {
+          throw new Error('Failed to get asset proof: ' + proofData.error.message);
+        }
+        
+        const proof = proofData.result;
+        if (!proof || !proof.proof) {
+          throw new Error('This NFT cannot be transferred. It may not be a valid compressed NFT.');
+        }
+        
+        // Get asset details for transfer
+        const assetResponse = await fetchRpcWithRetry(rpcUrl, {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getAsset',
+          params: { id: selectedNft.mint }
+        });
+        
+        const assetData = await assetResponse.json();
+        if (assetData.error || !assetData.result) {
+          throw new Error('Failed to get asset details');
+        }
+        
+        const asset = assetData.result;
+        
+        // Import cNFT transfer utility
+        const { createCompressedNftTransfer } = await import('@x1-wallet/core/utils/transaction');
+        
+        const tx = await createCompressedNftTransfer({
+          assetId: selectedNft.mint,
+          owner: walletAddress,
+          newOwner: recipient.trim(),
+          proof: proof,
+          asset: asset,
+          recentBlockhash: blockhash,
+          privateKey: privateKey
+        });
+        
+        // Send transaction
+        const sendResponse = await fetchRpcWithRetry(rpcUrl, {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'sendTransaction',
+          params: [tx, { encoding: 'base64', preflightCommitment: 'confirmed' }]
+        });
+        
+        const sendData = await sendResponse.json();
+        if (sendData.error) throw new Error(sendData.error.message);
+        
+        setTxHash(sendData.result);
+        setSendSuccess(true);
+        setNfts(prev => prev.filter(n => n.mint !== selectedNft.mint));
+        return;
+      }
+      
+      // Standard NFT transfer (non-compressed)
+      let fromTokenAccount = selectedNft.address;
+      
+      if (!fromTokenAccount) {
+        const { findExistingATA } = await import('@x1-wallet/core/utils/transaction');
+        fromTokenAccount = await findExistingATA(rpcUrl, walletAddress, selectedNft.mint, programId);
+        if (!fromTokenAccount) {
+          throw new Error('Could not find your token account for this NFT. This may be a compressed NFT (cNFT) which cannot be transferred with standard methods.');
+        }
+      }
+      
       // Import token transfer utility
       const { createTokenTransferTransaction } = await import('@x1-wallet/core/utils/transaction');
       
@@ -446,23 +687,19 @@ function NFTsTab({ wallet, networkConfig }) {
         mint: selectedNft.mint,
         amount: 1,
         decimals: 0,
-        fromTokenAccount: selectedNft.address,
+        fromTokenAccount: fromTokenAccount,
         recentBlockhash: blockhash,
         privateKey: privateKey,
         programId: programId,
         rpcUrl: rpcUrl
       });
       
-      // Send transaction
-      const sendResponse = await fetch(rpcUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'sendTransaction',
-          params: [tx, { encoding: 'base64', preflightCommitment: 'confirmed' }]
-        })
+      // Send transaction with retry for rate limits
+      const sendResponse = await fetchRpcWithRetry(rpcUrl, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'sendTransaction',
+        params: [tx, { encoding: 'base64', preflightCommitment: 'confirmed' }]
       });
       
       const sendData = await sendResponse.json();
@@ -582,8 +819,6 @@ function NFTsTab({ wallet, networkConfig }) {
         
         // For Solana with Helius RPC, use DAS API (much more reliable)
         if (isSolana && isHelius) {
-          logger.log('[NFT] Using Helius DAS API for Solana NFTs, wallet:', walletAddress);
-          
           try {
             const dasResponse = await fetch(rpcUrl, {
               method: 'POST',
@@ -601,36 +836,86 @@ function NFTsTab({ wallet, networkConfig }) {
             });
             
             const dasData = await dasResponse.json();
-            logger.log('[NFT] DAS raw response:', dasData);
             
             if (dasData?.result?.items && dasData.result.items.length > 0) {
-              // Log all interface types found
-              const interfaces = [...new Set(dasData.result.items.map(i => i.interface))];
-              logger.log('[NFT] Interface types found:', interfaces);
-              
-              // Filter for NFTs - be more permissive
-              // Exclude fungible tokens but include everything else
-              const nftItems = dasData.result.items
+              // Filter for NFTs - exclude fungible tokens
+              const nftItemsFromDAS = dasData.result.items
                 .filter(item => {
                   const iface = item.interface;
                   // Exclude fungible tokens
                   if (iface === 'FungibleToken' || iface === 'FungibleAsset') return false;
                   // Include NFT types
                   return true;
-                })
-                .map(item => ({
+                });
+              
+              // DAS API doesn't return token account addresses, so we need to look them up
+              let mintToTokenAccount = new Map();
+              
+              try {
+                const [tokenAccountsResponse, token2022Response] = await Promise.all([
+                  fetchRpcWithRetry(rpcUrl, {
+                    jsonrpc: '2.0',
+                    id: 1,
+                    method: 'getTokenAccountsByOwner',
+                    params: [
+                      walletAddress,
+                      { programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' },
+                      { encoding: 'jsonParsed' }
+                    ]
+                  }),
+                  fetchRpcWithRetry(rpcUrl, {
+                    jsonrpc: '2.0',
+                    id: 2,
+                    method: 'getTokenAccountsByOwner',
+                    params: [
+                      walletAddress,
+                      { programId: 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb' },
+                      { encoding: 'jsonParsed' }
+                    ]
+                  })
+                ]);
+                
+                const [tokenAccountsData, token2022Data] = await Promise.all([
+                  tokenAccountsResponse.json(),
+                  token2022Response.json()
+                ]);
+                
+                // Build a map of mint -> token account address
+                const allTokenAccounts = [
+                  ...(tokenAccountsData?.result?.value || []),
+                  ...(token2022Data?.result?.value || [])
+                ];
+                
+                for (const acc of allTokenAccounts) {
+                  const info = acc.account?.data?.parsed?.info;
+                  if (info?.mint) {
+                    mintToTokenAccount.set(info.mint, acc.pubkey);
+                  }
+                }
+              } catch (err) {
+                logger.warn('[NFT] Failed to fetch token accounts:', err);
+              }
+              
+              // Now build NFT items - use token account if found, otherwise check if compressed
+              const nftItems = nftItemsFromDAS.map(item => {
+                const tokenAccountAddress = mintToTokenAccount.get(item.id);
+                const isCompressed = item.compression?.compressed === true;
+                
+                return {
                   mint: item.id,
-                  address: item.id,
+                  address: tokenAccountAddress || null,
                   name: item.content?.metadata?.name || `NFT ${item.id?.slice(0, 8)}...`,
                   symbol: item.content?.metadata?.symbol || '',
                   image: item.content?.links?.image || item.content?.files?.[0]?.uri || item.content?.json_uri || null,
                   description: item.content?.metadata?.description || '',
                   attributes: item.content?.metadata?.attributes || [],
                   isToken2022: item.interface === 'ProgrammableNFT',
+                  isCompressed: isCompressed,
                   loading: false
-                }));
+                };
+              });
               
-              logger.log('[NFT] Found', nftItems.length, 'NFTs via DAS API');
+              logger.log('[NFT] Loaded', nftItems.length, 'NFTs via DAS');
               
               if (nftItems.length > 0) {
                 setNfts(nftItems);
@@ -638,8 +923,6 @@ function NFTsTab({ wallet, networkConfig }) {
                 return;
               }
             }
-            
-            logger.log('[NFT] DAS returned no items, falling back to standard method');
           } catch (dasError) {
             logger.error('[NFT] DAS API error:', dasError);
             // Fall through to standard method
@@ -647,8 +930,6 @@ function NFTsTab({ wallet, networkConfig }) {
         }
         
         // Fallback: Standard method for X1 or non-Helius RPCs
-        logger.log('[NFT] Using standard token account method');
-        
         // Fetch both token programs in PARALLEL
         const [tokenResponse, token2022Response] = await Promise.all([
           fetch(rpcUrl, {
@@ -1037,17 +1318,57 @@ function NFTsTab({ wallet, networkConfig }) {
         {selectedNft.symbol && <p style={{ color: 'var(--text-muted)', marginBottom: 8 }}>{selectedNft.symbol}</p>}
         {selectedNft.description && <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 16 }}>{selectedNft.description}</p>}
         
+        {/* Compressed NFT indicator */}
+        {selectedNft.isCompressed && (
+          <div style={{ 
+            background: 'rgba(99, 102, 241, 0.1)', 
+            border: '1px solid rgba(99, 102, 241, 0.3)',
+            borderRadius: 8, 
+            padding: 10, 
+            marginBottom: 12,
+            fontSize: 12,
+            color: 'var(--text-muted)'
+          }}>
+            <span style={{ color: '#818cf8' }}>✦</span> Compressed NFT (cNFT)
+          </div>
+        )}
+        
         {/* Send Button */}
         <button 
           className="btn-primary"
           onClick={() => setSendMode(true)}
-          style={{ marginBottom: 16 }}
+          style={{ marginBottom: 12 }}
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 8 }}>
             <path d="M22 2L11 13" />
             <path d="M22 2l-7 20-4-9-9-4 20-7z" />
           </svg>
           Send NFT
+        </button>
+        
+        {/* Hide/Unhide Button */}
+        <button 
+          className="btn-secondary"
+          onClick={() => toggleHideNft(selectedNft.mint)}
+          style={{ marginBottom: 16, width: '100%' }}
+        >
+          {hiddenNfts.includes(selectedNft.mint) ? (
+            <>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 8 }}>
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+              Unhide NFT
+            </>
+          ) : (
+            <>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 8 }}>
+                <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24" />
+                <line x1="1" y1="1" x2="23" y2="23" />
+              </svg>
+              Hide NFT
+            </>
+          )}
         </button>
         
         <div style={{ background: 'var(--bg-secondary)', borderRadius: 8, padding: 12, marginBottom: 12 }}>
@@ -1111,45 +1432,95 @@ function NFTsTab({ wallet, networkConfig }) {
   }
 
   return (
-    <div className="nft-grid">
-      {nfts.map((nft, index) => (
-        <div key={nft.mint || index} className="nft-card" onClick={() => setSelectedNft(nft)} style={{ cursor: 'pointer' }}>
-          <div className="nft-image">
-            {nft.image ? (
-              <img 
-                src={nft.image} 
-                alt={nft.name} 
-                style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 8 }}
-                onError={(e) => {
-                  logger.warn('[NFT] Grid image failed to load:', nft.image);
-                  e.target.style.display = 'none';
-                  e.target.nextSibling.style.display = 'flex';
-                }}
-                onLoad={() => logger.log('[NFT] Image loaded:', nft.name)}
-              />
-            ) : null}
-            <div style={{ 
-              display: nft.image ? 'none' : 'flex',
-              width: '100%',
-              height: '100%',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: 'var(--bg-tertiary)',
-              borderRadius: 8
-            }}>
-              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="1.5">
-                <rect x="3" y="3" width="18" height="18" rx="2" />
-                <circle cx="8.5" cy="8.5" r="1.5" />
-                <path d="M21 15l-5-5L5 21" />
-              </svg>
+    <div>
+      {/* Hidden NFTs toggle */}
+      {hiddenCount > 0 && (
+        <div 
+          onClick={() => setShowHidden(!showHidden)}
+          style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'space-between',
+            padding: '8px 12px',
+            marginBottom: 12,
+            background: 'var(--bg-tertiary)',
+            borderRadius: 8,
+            cursor: 'pointer',
+            fontSize: 13
+          }}
+        >
+          <span style={{ color: 'var(--text-muted)' }}>
+            {showHidden ? 'Showing' : 'Hiding'} {hiddenCount} hidden NFT{hiddenCount > 1 ? 's' : ''}
+          </span>
+          <span style={{ color: 'var(--x1-blue)' }}>
+            {showHidden ? 'Hide' : 'Show'}
+          </span>
+        </div>
+      )}
+      
+      <div className="nft-grid">
+        {visibleNfts.map((nft, index) => (
+          <div 
+            key={nft.mint || index} 
+            className="nft-card" 
+            onClick={() => setSelectedNft(nft)} 
+            style={{ 
+              cursor: 'pointer',
+              opacity: hiddenNfts.includes(nft.mint) ? 0.5 : 1
+            }}
+          >
+            <div className="nft-image">
+              {nft.image ? (
+                <img 
+                  src={nft.image} 
+                  alt={nft.name} 
+                  style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 8 }}
+                  onError={(e) => {
+                    logger.warn('[NFT] Grid image failed to load:', nft.image);
+                    e.target.style.display = 'none';
+                    e.target.nextSibling.style.display = 'flex';
+                  }}
+                  onLoad={() => logger.log('[NFT] Image loaded:', nft.name)}
+                />
+              ) : null}
+              <div style={{ 
+                display: nft.image ? 'none' : 'flex',
+                width: '100%',
+                height: '100%',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: 'var(--bg-tertiary)',
+                borderRadius: 8
+              }}>
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="1.5">
+                  <rect x="3" y="3" width="18" height="18" rx="2" />
+                  <circle cx="8.5" cy="8.5" r="1.5" />
+                  <path d="M21 15l-5-5L5 21" />
+                </svg>
+              </div>
+              {/* Hidden indicator */}
+              {hiddenNfts.includes(nft.mint) && (
+                <div style={{
+                  position: 'absolute',
+                  top: 4,
+                  right: 4,
+                  background: 'rgba(0,0,0,0.7)',
+                  borderRadius: 4,
+                  padding: '2px 6px',
+                  fontSize: 10,
+                  color: '#999'
+                }}>
+                  Hidden
+                </div>
+              )}
+            </div>
+            <div className="nft-info">
+              <span className="nft-name">{nft.name}</span>
+              <span className="nft-mint">{nft.mint?.slice(0, 4)}...{nft.mint?.slice(-4)}</span>
             </div>
           </div>
-          <div className="nft-info">
-            <span className="nft-name">{nft.name}</span>
-            <span className="nft-mint">{nft.mint?.slice(0, 4)}...{nft.mint?.slice(-4)}</span>
-          </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }
@@ -2233,7 +2604,9 @@ function RecoveryPhrasePanel({ wallet, onClose }) {
   const words = phrase ? phrase.split(' ') : [];
   
   // Check if password protection is enabled
-  const passwordProtection = localStorage.getItem('passwordProtection') !== 'false';
+  // Note: App.jsx stores this as x1wallet_passwordProtection with JSON.stringify
+  const storedPwdProtection = localStorage.getItem('x1wallet_passwordProtection');
+  const passwordProtection = storedPwdProtection ? JSON.parse(storedPwdProtection) : false;
   // X1W-SEC-006 FIX: Check for PBKDF2 auth data instead of base64 hash
   const [hasAuthData, setHasAuthData] = useState(false);
   
@@ -2738,7 +3111,7 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
   const editingWallet = editingWalletId ? wallet.wallets?.find(w => w.id === editingWalletId) : null;
 
   // Fetch tokens function
-  const fetchTokens = async () => {
+  const fetchTokens = async (isInitialLoad = false) => {
     if (!wallet.wallet?.publicKey || !networkConfig?.rpcUrl) {
       logger.log('[WalletMain] Cannot fetch tokens - missing:', {
         publicKey: wallet.wallet?.publicKey,
@@ -2749,7 +3122,13 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
     }
     
     logger.log('[WalletMain] Fetching tokens for:', wallet.wallet.publicKey, 'on', wallet.network, 'RPC:', networkConfig.rpcUrl);
-    setTokensLoading(true);
+    
+    // Only show loading state on initial load when we have no tokens
+    // This prevents flicker during 5-second refresh intervals
+    if (isInitialLoad && tokens.length === 0) {
+      setTokensLoading(true);
+    }
+    
     try {
       const { fetchTokenAccounts } = await import('@x1-wallet/core/services/tokens');
       
@@ -2761,6 +3140,8 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
         });
         logger.log('[WalletMain] Background token update:', tokenList.length, 'tokens');
         setTokens(tokenList);
+        // Update cache with fresh data
+        setCachedTokens(wallet.wallet.publicKey, wallet.network, tokenList);
         if (onTokensUpdate) onTokensUpdate(tokenList);
       };
       
@@ -2777,13 +3158,16 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
       
       logger.log('[WalletMain] Fetched tokens:', tokenList.length, '(filtered', allTokens.length - tokenList.length, 'NFTs)');
       setTokens(tokenList);
+      // Save to cache for instant loading on wallet switch
+      setCachedTokens(wallet.wallet.publicKey, wallet.network, tokenList);
       // Preload token images for faster rendering
       preloadTokenImages(tokenList);
       // Sync with parent App state
       if (onTokensUpdate) onTokensUpdate(tokenList);
     } catch (err) {
       logger.error('[WalletMain] Failed to fetch tokens:', err);
-      setTokens([]);
+      // Don't clear existing tokens on error - keep showing cached data
+      // setTokens([]);  // REMOVED: This caused flicker
     } finally {
       setTokensLoading(false);
     }
@@ -2834,21 +3218,35 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
     prevNetworkRef.current = wallet.network;
     prevWalletRef.current = wallet.wallet?.publicKey;
     
-    // Reset tokens when wallet OR network changes
+    // Handle wallet OR network change - load cached tokens immediately
     if (walletChanged || networkChanged) {
-      logger.log('[WalletMain] Clearing tokens - network changed:', networkChanged, 'wallet changed:', walletChanged);
-      setTokens([]);
-      setTokensLoading(true);
+      logger.log('[WalletMain] Wallet/network changed - network:', networkChanged, 'wallet:', walletChanged);
       
-      // Immediately fetch new data
+      // Try to load cached tokens immediately (prevents blank screen)
       if (wallet.wallet?.publicKey) {
-        logger.log('[WalletMain] Fetching data for new wallet/network');
+        const cachedTokens = getCachedTokens(wallet.wallet.publicKey, wallet.network);
+        if (cachedTokens && cachedTokens.length > 0) {
+          logger.log('[WalletMain] Using cached tokens:', cachedTokens.length);
+          setTokens(cachedTokens);
+          setTokensLoading(false); // We have data, don't show loading
+          preloadTokenImages(cachedTokens);
+        } else {
+          // No cache - show loading
+          setTokens([]);
+          setTokensLoading(true);
+        }
+        
+        // Fetch fresh data in background (will update silently)
+        logger.log('[WalletMain] Fetching fresh data in background');
         Promise.all([
           wallet.refreshBalance(),
-          fetchTokens()
+          fetchTokens(cachedTokens?.length === 0)  // Only show loading if no cache
         ]).catch(logger.error);
         // Also trigger activity refresh on wallet/network change
         setInternalRefreshKey(prev => prev + 1);
+      } else {
+        setTokens([]);
+        setTokensLoading(true);
       }
     }
     
@@ -2876,12 +3274,22 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
       }
     }, 30000);
     
-    // Immediate fetch on mount
+    // Immediate fetch on mount - load from cache first
     if (wallet.wallet?.publicKey) {
-      logger.log('[WalletMain] Fetching - immediate load');
+      // Try cache first for instant display
+      const cachedTokens = getCachedTokens(wallet.wallet.publicKey, wallet.network);
+      if (cachedTokens && cachedTokens.length > 0 && tokens.length === 0) {
+        logger.log('[WalletMain] Loading cached tokens on mount:', cachedTokens.length);
+        setTokens(cachedTokens);
+        setTokensLoading(false);
+        preloadTokenImages(cachedTokens);
+      }
+      
+      // Then fetch fresh data
+      logger.log('[WalletMain] Fetching fresh data on mount');
       Promise.all([
         wallet.refreshBalance(),
-        fetchTokens()
+        fetchTokens(!cachedTokens?.length)  // Only show loading if no cache
       ]).catch(logger.error);
     }
     

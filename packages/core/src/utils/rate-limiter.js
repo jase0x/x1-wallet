@@ -30,6 +30,9 @@ export class RateLimiter {
 // Global rate limiter for XDEX API (5 requests per second)
 const xdexRateLimiter = new RateLimiter(5, 1000);
 
+// Global rate limiter for RPC calls (10 requests per second)
+const rpcRateLimiter = new RateLimiter(10, 1000);
+
 // Cache for failed requests to avoid retrying them repeatedly
 const failedRequestsCache = new Map();
 const FAILED_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
@@ -61,6 +64,37 @@ export function clearFailed(key) {
 export async function fetchWithRateLimit(url, options = {}) {
   await xdexRateLimiter.acquire();
   return fetch(url, options);
+}
+
+// Fetch RPC with rate limiting and 429 retry
+export async function fetchRpcWithRetry(rpcUrl, body, maxRetries = 3) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    await rpcRateLimiter.acquire();
+    
+    try {
+      const response = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: typeof body === 'string' ? body : JSON.stringify(body)
+      });
+      
+      if (response.status === 429) {
+        // Rate limited - exponential backoff
+        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+        console.log(`[RPC] Rate limited (429), waiting ${delay}ms before retry ${attempt}/${maxRetries}`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      
+      return response;
+    } catch (err) {
+      if (attempt === maxRetries) throw err;
+      // Network error - short delay before retry
+      await new Promise(r => setTimeout(r, 500));
+    }
+  }
+  
+  throw new Error('RPC request failed after max retries');
 }
 
 // Batch processor for token metadata enrichment

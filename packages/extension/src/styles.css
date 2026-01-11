@@ -7430,6 +7430,11 @@ body {
   color: #f59e0b;
 }
 
+.activity-icon.reward {
+  background: rgba(234, 179, 8, 0.15);
+  color: #eab308;
+}
+
 .activity-icon.failed {
   background: rgba(255, 71, 87, 0.15);
   color: var(--error);
@@ -7488,6 +7493,10 @@ body {
 
 .activity-amount.unstake {
   color: #f59e0b;
+}
+
+.activity-amount.reward {
+  color: #eab308;
 }
 
 .activity-amount.failed {
@@ -8161,6 +8170,56 @@ details[open] .dapp-tx-row-arrow {
 .dapp-btn-reject:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* Error screen styles */
+.dapp-error-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  text-align: center;
+  min-height: 300px;
+}
+
+.dapp-error-screen .error-icon {
+  margin-bottom: 16px;
+}
+
+.dapp-error-screen .error-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 12px;
+}
+
+.dapp-error-screen .error-message {
+  font-size: 14px;
+  color: var(--error);
+  margin-bottom: 24px;
+  padding: 12px 16px;
+  background: rgba(239, 68, 68, 0.1);
+  border-radius: 8px;
+  max-width: 100%;
+  word-break: break-word;
+}
+
+.dapp-btn-primary {
+  width: 100%;
+  padding: 14px 20px;
+  border: none;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: var(--x1-blue);
+  color: white;
+}
+
+.dapp-btn-primary:hover {
+  background: rgba(2, 116, 251, 0.85);
 }
 
 /* Spinner */

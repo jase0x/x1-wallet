@@ -1334,7 +1334,32 @@ export default function DAppApproval({ wallet, onComplete }) {
 
   // Loading state
   if (loading) return null;
-  if (!pendingRequest) return null;
+  
+  // Show error screen if no pending request but we had an error
+  if (!pendingRequest) {
+    // If there was an error, show it with a close button
+    if (error) {
+      return (
+        <div className="dapp-approval">
+          <div className="dapp-error-screen">
+            <div className="error-icon">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--error)" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="15" y1="9" x2="9" y2="15" />
+                <line x1="9" y1="9" x2="15" y2="15" />
+              </svg>
+            </div>
+            <div className="error-title">Transaction Failed</div>
+            <div className="error-message">{error}</div>
+            <button className="dapp-btn-primary" onClick={() => window.close()}>
+              Close
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return null;
+  }
 
   const originDisplay = pendingRequest.origin?.replace(/^https?:\/\//, '').split('/')[0] || 'Unknown';
   
@@ -1649,12 +1674,16 @@ export default function DAppApproval({ wallet, onComplete }) {
                 <div className="dapp-custom-fee-wrapper">
                   <input
                     type="number"
+                    min="0"
                     className="dapp-custom-fee-input"
                     placeholder="0.0001"
                     value={customFee}
-                    onChange={(e) => setCustomFee(e.target.value)}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value.startsWith('-') || parseFloat(value) < 0) return;
+                      setCustomFee(value);
+                    }}
                     step="0.0001"
-                    min="0"
                     disabled={processing}
                   />
                   <span className="dapp-custom-fee-symbol">{currentNetwork?.includes('Solana') ? 'SOL' : 'XNT'}</span>

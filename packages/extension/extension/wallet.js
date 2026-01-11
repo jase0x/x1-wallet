@@ -1,4 +1,4 @@
-import { h as hashPassword, v as verifyPassword, l as logger } from "./popup.js";
+import { l as logger, v as verifyPassword, h as hashPassword } from "./popup.js";
 const AUTH_KEY = "x1wallet_auth";
 const RATE_LIMIT_KEY = "x1wallet_rate_limit";
 const MAX_ATTEMPTS_BEFORE_DELAY = 3;
@@ -6,13 +6,30 @@ const MAX_ATTEMPTS_BEFORE_LOCKOUT = 20;
 const LOCKOUT_DURATION_MS = 24 * 60 * 60 * 1e3;
 async function hasPassword() {
   try {
+    let authData = null;
     if (typeof chrome !== "undefined" && chrome.storage) {
-      const result = await chrome.storage.local.get(AUTH_KEY);
-      return !!result[AUTH_KEY];
+      try {
+        const result = await chrome.storage.local.get(AUTH_KEY);
+        authData = result[AUTH_KEY];
+      } catch (e) {
+      }
     }
+    if (!authData) {
+      authData = localStorage.getItem(AUTH_KEY);
+    }
+    if (!authData) return false;
+    try {
+      const parsed = JSON.parse(authData);
+      if (parsed && parsed.hash && parsed.salt) {
+        return true;
+      }
+    } catch (e) {
+    }
+    return false;
   } catch (e) {
+    logger.error("[Wallet] Error checking password:", e);
+    return false;
   }
-  return !!localStorage.getItem(AUTH_KEY);
 }
 async function setupPassword(password) {
   const passwordValidation = validatePasswordStrength(password);
@@ -21,14 +38,12 @@ async function setupPassword(password) {
   }
   const { hash, salt } = await hashPassword(password);
   const authData = JSON.stringify({ hash, salt });
-  try {
-    if (typeof chrome !== "undefined" && chrome.storage) {
+  localStorage.setItem(AUTH_KEY, authData);
+  if (typeof chrome !== "undefined" && chrome.storage) {
+    try {
       await chrome.storage.local.set({ [AUTH_KEY]: authData });
-    } else {
-      localStorage.setItem(AUTH_KEY, authData);
+    } catch (e) {
     }
-  } catch (e) {
-    localStorage.setItem(AUTH_KEY, authData);
   }
 }
 function validatePasswordStrength(password) {

@@ -61,7 +61,14 @@ export async function encryptData(plaintext, password) {
   combined.set(iv, VERSION_BYTE_LENGTH + SALT_LENGTH);
   combined.set(encrypted, VERSION_BYTE_LENGTH + SALT_LENGTH + IV_LENGTH);
   
-  return btoa(String.fromCharCode(...combined));
+  // Convert to base64 without using spread operator (avoids stack overflow for large data)
+  let binary = '';
+  const chunkSize = 8192;
+  for (let i = 0; i < combined.length; i += chunkSize) {
+    const chunk = combined.subarray(i, Math.min(i + chunkSize, combined.length));
+    binary += String.fromCharCode.apply(null, chunk);
+  }
+  return btoa(binary);
 }
 
 export async function decryptData(encryptedBase64, password) {
@@ -127,9 +134,20 @@ export async function hashPassword(password, existingSalt = null) {
     256
   );
   
+  // Convert to base64 safely (small arrays, but avoid spread for consistency)
+  const hashArray = new Uint8Array(hashBuffer);
+  let hashBinary = '';
+  for (let i = 0; i < hashArray.length; i++) {
+    hashBinary += String.fromCharCode(hashArray[i]);
+  }
+  let saltBinary = '';
+  for (let i = 0; i < salt.length; i++) {
+    saltBinary += String.fromCharCode(salt[i]);
+  }
+  
   return {
-    hash: btoa(String.fromCharCode(...new Uint8Array(hashBuffer))),
-    salt: btoa(String.fromCharCode(...salt))
+    hash: btoa(hashBinary),
+    salt: btoa(saltBinary)
   };
 }
 
