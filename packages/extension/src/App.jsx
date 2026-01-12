@@ -461,7 +461,13 @@ function App() {
     }
 
     const checkLock = () => {
-      if (screen === 'settings') return;
+      // Don't lock during active operations - these screens mean user is actively doing something
+      const activeScreens = ['settings', 'send', 'swap', 'bridge', 'stake', 'tokenDetail', 'create', 'import', 'hardware'];
+      if (activeScreens.includes(screen)) return;
+      
+      // For "Immediately" (0), we only lock on initial load, not during active use
+      // The interval-based lock is for timeout-based locking (1+ minutes)
+      if (autoLockMinutes === 0) return;
       
       const elapsed = (Date.now() - lastActivityRef.current) / 1000 / 60;
       if (elapsed >= autoLockMinutes && !isLocked && screen !== 'welcome' && screen !== 'loading') {
