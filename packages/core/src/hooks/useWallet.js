@@ -122,32 +122,48 @@ export function useWallet() {
   }, []);
 
   // Save wallets to storage (encrypted if password is set)
+  // SEC-FIX: Encryption is now MANDATORY - no unencrypted save path
+  // SAFETY: Added guards against accidental data loss
   const saveWalletsToStorage = useCallback(async (walletsToSave) => {
+    // SAFETY GUARD 1: Never save empty array if we have existing data
+    const existingData = localStorage.getItem(STORAGE_KEY);
+    if ((!walletsToSave || walletsToSave.length === 0) && existingData && existingData.length > 10) {
+      logger.warn('[useWallet] BLOCKED: Attempted to save empty wallets over existing data');
+      throw new Error('Cannot overwrite existing wallet data with empty array');
+    }
+    
+    // SAFETY GUARD 2: Require encryption password
+    if (!encryptionPassword) {
+      // If we have existing encrypted data, don't allow save without password
+      if (existingData && isEncrypted(existingData)) {
+        logger.warn('[useWallet] Cannot save: wallet is locked, unlock first');
+        throw new Error('Wallet is locked. Please unlock before making changes.');
+      }
+      // If no existing data and no password, this is a new wallet without encryption
+      // This is now blocked - encryption is mandatory
+      throw new Error('Cannot save wallet: encryption password not set. Please set a password first.');
+    }
+    
     try {
       const jsonData = JSON.stringify(walletsToSave);
       
-      if (encryptionPassword) {
-        // Encrypt and save
-        const encrypted = await encryptData(jsonData, encryptionPassword);
-        localStorage.setItem(STORAGE_KEY, encrypted);
-        localStorage.setItem(ENCRYPTION_ENABLED_KEY, 'true');
-        
-        // ALWAYS update session storage when saving encrypted wallets
-        // This prevents stale data issues when extension reloads
-        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
-          try {
-            await chrome.storage.session.set({
-              x1wallet_session_wallets: jsonData,
-              x1wallet_session_password: encryptionPassword
-            });
-            console.log('[useWallet] Session storage synced with', walletsToSave.length, 'wallets');
-          } catch (e) {
-            console.warn('[useWallet] Failed to sync session storage:', e.message);
-          }
+      // Encrypt and save
+      const encrypted = await encryptData(jsonData, encryptionPassword);
+      localStorage.setItem(STORAGE_KEY, encrypted);
+      localStorage.setItem(ENCRYPTION_ENABLED_KEY, 'true');
+      
+      // ALWAYS update session storage when saving encrypted wallets
+      // This prevents stale data issues when extension reloads
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
+        try {
+          await chrome.storage.session.set({
+            x1wallet_session_wallets: jsonData,
+            x1wallet_session_password: encryptionPassword
+          });
+          console.log('[useWallet] Session storage synced with', walletsToSave.length, 'wallets');
+        } catch (e) {
+          console.warn('[useWallet] Failed to sync session storage:', e.message);
         }
-      } else {
-        // Save as plain JSON (legacy mode)
-        localStorage.setItem(STORAGE_KEY, jsonData);
       }
     } catch (e) {
       logger.error('Failed to save wallets:', e);
@@ -155,19 +171,9 @@ export function useWallet() {
     }
   }, [encryptionPassword]);
 
-  // Save wallets as plain JSON (no encryption) - bypasses React state
-  // Use this when disabling encryption to avoid async state timing issues
-  const saveWalletsUnencrypted = useCallback((walletsToSave) => {
-    try {
-      const jsonData = JSON.stringify(walletsToSave);
-      localStorage.setItem(STORAGE_KEY, jsonData);
-      localStorage.removeItem(ENCRYPTION_ENABLED_KEY);
-      logger.log('[useWallet] Saved wallets unencrypted');
-    } catch (e) {
-      logger.error('Failed to save wallets unencrypted:', e);
-      throw e;
-    }
-  }, []);
+  // SEC-FIX: saveWalletsUnencrypted has been REMOVED
+  // Encryption is mandatory - wallets must always be encrypted at rest
+  // This matches Phantom and Backpack security model
 
   // Initial load
   useEffect(() => {
@@ -325,10 +331,13 @@ export function useWallet() {
     localStorage.setItem(ENCRYPTION_ENABLED_KEY, 'true');
   }, []);
 
-  // Clear encryption password (for saving unencrypted when protection is OFF)
+  // SEC-FIX: clearEncryptionPassword - just log warning, don't throw
+  // Throwing here causes cascade failures in App component effects
+  // Encryption remains mandatory via saveWalletsToStorage guard
   const clearEncryptionPassword = useCallback(() => {
-    setEncryptionPassword(null);
-    localStorage.removeItem(ENCRYPTION_ENABLED_KEY);
+    logger.warn('[useWallet] clearEncryptionPassword called but encryption is mandatory - ignoring');
+    // Don't actually clear anything - encryption is mandatory
+    // The saveWalletsToStorage guard prevents unencrypted saves
   }, []);
 
   // Change encryption password
@@ -406,6 +415,12 @@ export function useWallet() {
 
   // Create new wallet from mnemonic
   const createWallet = useCallback(async (mnemonic, name = null) => {
+    // SEC-FIX: Require encryption password before creating wallet
+    // This ensures wallet data is never saved unencrypted
+    if (!encryptionPassword) {
+      throw new Error('Please set a password before creating a wallet. Your wallet data must be encrypted.');
+    }
+    
     try {
       const keypair = await mnemonicToKeypair(mnemonic, 0);
       const publicKey = encodeBase58(keypair.publicKey);
@@ -893,7 +908,7 @@ export function useWallet() {
     enableEncryption,
     setEncryptionPasswordOnly,
     clearEncryptionPassword,
-    saveWalletsUnencrypted,
+    // saveWalletsUnencrypted REMOVED - encryption is mandatory
     changePassword,
     disableEncryption,
     

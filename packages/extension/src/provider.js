@@ -100,62 +100,9 @@
         this._key = value._key;
         this._base58 = value._base58;
       } else if (value && value._key) {
-        // Handle our own PublicKey-like objects
         this._key = value._key;
         this._base58 = value._base58 || encodeBase58(value._key);
-      } else if (value && typeof value.toBase58 === 'function') {
-        // Handle PublicKey instances from @solana/web3.js or other libraries
-        this._base58 = value.toBase58();
-        this._key = decodeBase58(this._base58);
-      } else if (value && typeof value.toString === 'function' && value.constructor && value.constructor.name === 'PublicKey') {
-        // Another fallback for PublicKey-like objects
-        this._base58 = value.toString();
-        this._key = decodeBase58(this._base58);
-      } else if (value && value.toBytes && typeof value.toBytes === 'function') {
-        // Handle objects with toBytes method (like @solana/web3.js PublicKey)
-        const bytes = value.toBytes();
-        if (bytes instanceof Uint8Array && bytes.length === 32) {
-          this._key = bytes;
-          this._base58 = encodeBase58(bytes);
-        } else {
-          throw new Error("Invalid public key input");
-        }
-      } else if (Array.isArray(value) || (value && value.length === 32 && typeof value[0] === 'number')) {
-        // Handle array-like byte arrays
-        this._key = new Uint8Array(value);
-        this._base58 = encodeBase58(this._key);
-      } else if (value && value._keypair && value._keypair.publicKey) {
-        // Handle Keypair objects - extract the public key
-        const pubKeyBytes = value._keypair.publicKey;
-        this._key = pubKeyBytes instanceof Uint8Array ? pubKeyBytes : new Uint8Array(pubKeyBytes);
-        this._base58 = encodeBase58(this._key);
-      } else if (value && value.publicKey) {
-        // Handle objects with a publicKey property (like Keypair)
-        const pk = value.publicKey;
-        if (typeof pk === 'string') {
-          this._key = decodeBase58(pk);
-          this._base58 = pk;
-        } else if (pk instanceof Uint8Array) {
-          this._key = pk;
-          this._base58 = encodeBase58(pk);
-        } else if (pk && typeof pk.toBase58 === 'function') {
-          this._base58 = pk.toBase58();
-          this._key = decodeBase58(this._base58);
-        } else {
-          console.error("[X1 Wallet] PublicKey constructor failed. value.publicKey:", pk, "type:", typeof pk);
-          throw new Error("Invalid public key input");
-        }
       } else {
-        // Debug logging for failed cases
-        console.error("[X1 Wallet] PublicKey constructor failed. Input:", value);
-        console.error("[X1 Wallet] Input type:", typeof value);
-        console.error("[X1 Wallet] Input constructor:", value?.constructor?.name);
-        console.error("[X1 Wallet] Has toBase58:", typeof value?.toBase58);
-        console.error("[X1 Wallet] Has toString:", typeof value?.toString);
-        console.error("[X1 Wallet] Has _key:", !!value?._key);
-        console.error("[X1 Wallet] Has _keypair:", !!value?._keypair);
-        console.error("[X1 Wallet] Has publicKey:", !!value?.publicKey);
-        console.error("[X1 Wallet] Keys:", value ? Object.keys(value) : 'null');
         throw new Error("Invalid public key input");
       }
     }
@@ -178,66 +125,8 @@
 
     equals(other) {
       if (!other) return false;
-      
-      // Try to get the base58 representation for comparison
-      let otherBase58;
-      
-      if (other instanceof PublicKey) {
-        otherBase58 = other._base58;
-      } else if (typeof other === 'string') {
-        otherBase58 = other;
-      } else if (typeof other.toBase58 === 'function') {
-        // Handle @solana/web3.js PublicKey or similar
-        try {
-          otherBase58 = other.toBase58();
-        } catch (e) {
-          console.error("[X1 Wallet] equals() toBase58 failed:", e);
-          return false;
-        }
-      } else if (other._base58) {
-        otherBase58 = other._base58;
-      } else if (typeof other.toString === 'function' && other.constructor && other.constructor.name === 'PublicKey') {
-        // PublicKey-like object from another library
-        try {
-          otherBase58 = other.toString();
-        } catch (e) {
-          console.error("[X1 Wallet] equals() toString failed:", e);
-          return false;
-        }
-      } else if (other._keypair && other._keypair.publicKey) {
-        // This is a Keypair object, extract the public key
-        try {
-          const pkBytes = other._keypair.publicKey;
-          otherBase58 = encodeBase58(pkBytes instanceof Uint8Array ? pkBytes : new Uint8Array(pkBytes));
-        } catch (e) {
-          console.error("[X1 Wallet] equals() Keypair extraction failed:", e);
-          return false;
-        }
-      } else if (other.publicKey) {
-        // Object with publicKey property
-        try {
-          const pk = other.publicKey;
-          if (typeof pk === 'string') {
-            otherBase58 = pk;
-          } else if (typeof pk.toBase58 === 'function') {
-            otherBase58 = pk.toBase58();
-          } else if (pk._base58) {
-            otherBase58 = pk._base58;
-          }
-        } catch (e) {
-          console.error("[X1 Wallet] equals() publicKey extraction failed:", e);
-          return false;
-        }
-      } else {
-        // Debug: log what we received
-        console.error("[X1 Wallet] equals() cannot compare with:", other);
-        console.error("[X1 Wallet] other type:", typeof other);
-        console.error("[X1 Wallet] other constructor:", other?.constructor?.name);
-        console.error("[X1 Wallet] other keys:", other ? Object.keys(other) : 'null');
-        return false;
-      }
-      
-      return this._base58 === otherBase58;
+      const otherKey = other instanceof PublicKey ? other : new PublicKey(other);
+      return this._base58 === otherKey._base58;
     }
 
     toJSON() {
@@ -314,9 +203,6 @@
       this._chain = "x1:mainnet"; // Default chain - will be updated from storage
       this._network = "X1 Mainnet"; // Human readable - will be updated from storage
       
-      // Try to restore connection state from sessionStorage (persists across page navigations)
-      this._restoreConnectionState();
-      
       // Try to load saved network from storage immediately
       this._loadSavedNetwork();
 
@@ -324,48 +210,6 @@
       window.addEventListener("message", this._handleMessage.bind(this));
 
       console.log("[X1 Wallet] Provider initialized");
-    }
-    
-    // Restore connection state from sessionStorage
-    _restoreConnectionState() {
-      try {
-        const savedState = sessionStorage.getItem('x1wallet_connection');
-        if (savedState) {
-          const state = JSON.parse(savedState);
-          if (state.publicKey && state.connected) {
-            this._publicKey = new PublicKey(state.publicKey);
-            this._connected = true;
-            if (state.chain) this._chain = state.chain;
-            if (state.network) this._network = state.network;
-            console.log("[X1 Wallet] Restored connection state:", state.publicKey.slice(0, 8) + "...");
-            
-            // Emit connect event after a microtask to ensure listeners are attached
-            queueMicrotask(() => {
-              this.emit("connect", this._publicKey);
-            });
-          }
-        }
-      } catch (e) {
-        console.log("[X1 Wallet] Could not restore connection state");
-      }
-    }
-    
-    // Save connection state to sessionStorage
-    _saveConnectionState() {
-      try {
-        if (this._connected && this._publicKey) {
-          sessionStorage.setItem('x1wallet_connection', JSON.stringify({
-            publicKey: this._publicKey.toBase58(),
-            connected: true,
-            chain: this._chain,
-            network: this._network
-          }));
-        } else {
-          sessionStorage.removeItem('x1wallet_connection');
-        }
-      } catch (e) {
-        // Ignore storage errors
-      }
     }
     
     // Load saved network from storage
@@ -451,23 +295,18 @@
           if (payload && payload.publicKey) {
             this._publicKey = new PublicKey(payload.publicKey);
           }
-          if (payload && payload.chain) this._chain = payload.chain;
-          if (payload && payload.network) this._network = payload.network;
-          this._saveConnectionState();
           this.emit("connect", this._publicKey);
           break;
 
         case "disconnect":
           this._connected = false;
           this._publicKey = null;
-          this._saveConnectionState();
           this.emit("disconnect");
           break;
 
         case "accountChanged":
           if (payload && payload.publicKey) {
             this._publicKey = new PublicKey(payload.publicKey);
-            this._saveConnectionState();
             this.emit("accountChanged", this._publicKey);
           }
           break;
@@ -481,9 +320,6 @@
             if (payload.network) this._network = payload.network;
             
             console.log("[X1 Wallet] Network changed:", oldChain, "->", this._chain);
-            
-            // Save updated state
-            this._saveConnectionState();
             
             // Emit events for dApps to listen to
             this.emit("networkChanged", { chain: this._chain, network: this._network });
@@ -515,13 +351,14 @@
 
         pendingRequests.set(id, { resolve, reject, timeout });
 
+        // SEC-001 FIX: Use specific origin instead of wildcard
         window.postMessage({
           target: "x1-wallet-content",
           type: "request",
           method,
           params,
           id,
-        }, "*");
+        }, window.location.origin);
       });
     }
 
@@ -561,9 +398,6 @@
           if (result.network) {
             this._network = result.network;
           }
-          
-          // Save connection state for persistence across page navigations
-          this._saveConnectionState();
           
           // Emit connect event
           this.emit("connect", this._publicKey);
@@ -632,8 +466,6 @@
       } catch (e) {}
       this._connected = false;
       this._publicKey = null;
-      // Clear saved connection state
-      this._saveConnectionState();
       this.emit("disconnect");
     }
 

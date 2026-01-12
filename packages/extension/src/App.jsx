@@ -599,67 +599,20 @@ function App() {
     storage.set('lastActivity', now);
   };
   
-  // After unlock, if protection is OFF, save wallets unencrypted
-  // This useEffect watches for wallets loading after unlock
-  useEffect(() => {
-    const saveUnencryptedIfNeeded = async () => {
-      const currentProtection = storage.get('passwordProtection', false);
-      const isEncryptedFlag = localStorage.getItem('x1wallet_encrypted');
-      
-      // If protection is OFF but wallets are encrypted, save them unencrypted
-      if (!currentProtection && isEncryptedFlag === 'true' && wallet.wallets && wallet.wallets.length > 0) {
-        logger.log('[App] Protection OFF but data encrypted - saving unencrypted');
-        try {
-          if (wallet.saveWalletsUnencrypted) {
-            wallet.saveWalletsUnencrypted(wallet.wallets);
-            if (wallet.clearEncryptionPassword) {
-              wallet.clearEncryptionPassword();
-            }
-            localStorage.removeItem('x1wallet_encrypted');
-            const { clearPassword } = await import('@x1-wallet/core/services/wallet');
-            await clearPassword();
-            setHasPasswordAsync(false);
-          }
-        } catch (e) {
-          logger.error('[App] Failed to save unencrypted:', e);
-        }
-      }
-    };
-    
-    if (!isLocked && wallet.wallets && wallet.wallets.length > 0) {
-      saveUnencryptedIfNeeded();
-    }
-  }, [isLocked, wallet.wallets, wallet.saveWalletsUnencrypted, wallet.clearEncryptionPassword]);
+  // SEC-FIX: Removed unencrypted save effect
+  // Encryption is now MANDATORY - data must always remain encrypted
+  // The "password protection" setting only controls whether password is required on open
+  // (session storage allows temporary unlock, but storage is always encrypted)
 
-  // Handle wallet creation - password only if protection is ON
+  // Handle wallet creation - password ALWAYS required (SEC-FIX)
   const handleCreateComplete = async (mnemonic, name, password) => {
     try {
-      // Re-read protection setting directly from localStorage to ensure we have current value
-      let currentProtection = false;
-      try {
-        const stored = localStorage.getItem('x1wallet_passwordProtection');
-        if (stored) {
-          currentProtection = JSON.parse(stored) === true;
-        }
-      } catch (e) {
-        currentProtection = false;
-      }
-      
-      logger.log('[handleCreateComplete] Protection:', currentProtection, 'Password provided:', !!password);
-      
-      // If protection is OFF and no password provided, create unencrypted
-      if (!currentProtection && !password) {
-        logger.log('[handleCreateComplete] Creating unencrypted wallet');
-        await wallet.createWallet(mnemonic, name);
-        storage.set('lastActivity', Date.now());
-        setScreen('main');
-        return;
-      }
-      
-      // Protection is ON - password required
+      // SEC-FIX: Password is ALWAYS required - encryption is mandatory
       if (!password) {
-        throw new Error('Password is required');
+        throw new Error('Password is required to create a wallet');
       }
+      
+      logger.log('[handleCreateComplete] Creating encrypted wallet');
       
       const { setupPassword, hasPassword: checkHasPassword } = await import('@x1-wallet/core/services/wallet');
       const passwordExists = await checkHasPassword();
@@ -677,6 +630,7 @@ function App() {
       
       setHasPasswordAsync(true);
       localStorage.setItem('x1wallet_encrypted', 'true');
+      storage.set('passwordProtection', true);  // Ensure protection is ON
       storage.set('lastActivity', Date.now());
       setScreen('main');
     } catch (err) {
@@ -791,9 +745,10 @@ function App() {
   };
 
   // Handle lock/reset
+  // BUG FIX: Use lockWallet() to lock, NOT clearWallet() which wipes data!
   const handleLock = () => {
-    wallet.clearWallet();
-    setScreen('welcome');
+    wallet.lockWallet();
+    setScreen('lock');
   };
 
   // Navigate to create from manager

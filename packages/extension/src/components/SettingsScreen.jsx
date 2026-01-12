@@ -1219,6 +1219,14 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
               <div className="settings-item" onClick={async () => {
                 const newValue = !passwordProtection;
                 console.log('[Settings] Toggle protection to:', newValue, 'wallets:', wallet.wallets?.length);
+                
+                // SEC-FIX: Encryption cannot be disabled
+                // Only allow turning ON, not OFF
+                if (!newValue) {
+                  alert('Password protection cannot be disabled. Your wallet data must remain encrypted for security. This is the same security model used by Phantom and Backpack wallets.');
+                  return;
+                }
+                
                 setPasswordProtection(newValue);
                 storage.set('passwordProtection', newValue);
                 
@@ -1231,40 +1239,6 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
                 // If turning ON, reset the timer
                 if (newValue) {
                   storage.set('lastActivity', Date.now());
-                }
-                
-                // If turning OFF, clear auth and save unencrypted
-                if (!newValue) {
-                  try {
-                    localStorage.removeItem('x1wallet_auth');
-                    localStorage.removeItem('x1wallet_encrypted');
-                    
-                    if (typeof chrome !== 'undefined' && chrome.storage) {
-                      await chrome.storage.local.remove(['x1wallet_auth', 'x1wallet_encrypted']);
-                    }
-                    
-                    console.log('[Settings] Saving wallets unencrypted...', wallet.wallets?.length);
-                    if (wallet.saveWalletsUnencrypted && wallet.wallets && wallet.wallets.length > 0) {
-                      wallet.saveWalletsUnencrypted(wallet.wallets);
-                      if (wallet.clearEncryptionPassword) {
-                        wallet.clearEncryptionPassword();
-                      }
-                      // Verify save
-                      const verify = localStorage.getItem('x1wallet_wallets');
-                      try {
-                        JSON.parse(verify);
-                        console.log('[Settings] Verified: data is now plain JSON');
-                      } catch {
-                        console.error('[Settings] ERROR: data is still encrypted!');
-                      }
-                    } else {
-                      console.error('[Settings] Cannot save - wallets empty or no save function');
-                    }
-                    
-                    setHasPassword(false);
-                  } catch (e) {
-                    console.error('Failed to turn off protection:', e);
-                  }
                 }
                 
                 if (onPasswordProtectionChange) {
@@ -2272,7 +2246,7 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
                 <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                 <path d="M7 11V7a5 5 0 0 1 10 0v4" />
               </svg>
-              <span style={{ color: 'var(--error)' }}>Lock & Reset Wallet</span>
+              <span style={{ color: 'var(--error)' }}>Reset Wallet</span>
             </div>
           </div>
         </div>

@@ -3,7 +3,7 @@ import { logger, getUserFriendlyError, ErrorMessages } from '@x1-wallet/core';
 import React, { useState, useRef, useEffect } from 'react';
 import { generateMnemonic, validateMnemonic, WORDLIST } from '@x1-wallet/core/utils/bip39';
 
-export default function CreateWallet({ onComplete, onBack }) {
+export default function CreateWallet({ onComplete, onBack, passwordProtection: propPasswordProtection }) {
   const [step, setStep] = useState('choose'); // choose, generate, custom, verify, name, password, verify-password
   const [seedLength, setSeedLength] = useState(12);
   const [mnemonic, setMnemonic] = useState('');
@@ -18,32 +18,22 @@ export default function CreateWallet({ onComplete, onBack }) {
   const [generating, setGenerating] = useState(false);
   const inputRefs = useRef([]);
   
-  // Password state (mandatory encryption)
+  // Password state
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [existingPasswordDetected, setExistingPasswordDetected] = useState(false);
-  const [passwordRequired, setPasswordRequired] = useState(true); // Whether password step is needed
+  const [passwordRequired, setPasswordRequired] = useState(propPasswordProtection !== false);
   const [verifying, setVerifying] = useState(false);
   
-  // Check for existing password on mount using wallet service
+  // Check password requirements - use prop from App.jsx as source of truth
   useEffect(() => {
     const checkPassword = async () => {
       try {
-        // Check if password protection is enabled
-        const storedValue = localStorage.getItem('x1wallet_passwordProtection');
-        const passwordProtection = storedValue ? JSON.parse(storedValue) : false;
+        // SEC-FIX: Password is ALWAYS required for wallet creation
+        // Encryption is mandatory - this matches Phantom/Backpack security model
         
-        // CREATE wallet: respect the setting
-        // If protection is OFF, no password needed for new wallets
-        if (!passwordProtection) {
-          setPasswordRequired(false);
-          setExistingPasswordDetected(false);
-          logger.log('[CreateWallet] Protection OFF - no password required for new wallet');
-          return;
-        }
-        
-        // Protection is ON - check if password already exists
+        // Check if password already exists
         const { hasPassword } = await import('@x1-wallet/core/services/wallet');
         const has = await hasPassword();
         
@@ -51,17 +41,17 @@ export default function CreateWallet({ onComplete, onBack }) {
         const walletsData = localStorage.getItem('x1wallet_wallets');
         const isEmpty = !walletsData || walletsData === '[]' || walletsData === 'null' || walletsData === '';
         
-        setPasswordRequired(true);
+        setPasswordRequired(true);  // Always required
         setExistingPasswordDetected(has && !isEmpty);
-        logger.log('[CreateWallet] Protection ON, existing password:', has && !isEmpty);
+        logger.log('[CreateWallet] Password required, existing password:', has && !isEmpty);
       } catch (e) {
         logger.error('[CreateWallet] Error checking password:', e);
         setExistingPasswordDetected(false);
-        setPasswordRequired(true);
+        setPasswordRequired(true);  // Always required
       }
     };
     checkPassword();
-  }, []);
+  }, [propPasswordProtection]);
   
   // X1W-NEW-002 FIX: Mnemonic masking for shoulder-surfing protection
   const [wordsRevealed, setWordsRevealed] = useState(new Set());
