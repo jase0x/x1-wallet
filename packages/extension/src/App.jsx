@@ -223,7 +223,9 @@ function LockScreen({ onUnlock, walletUnlock }) {
 }
 
 function App() {
+  console.log('[App] Rendering...');
   const wallet = useWallet();
+  console.log('[App] wallet.wallets:', wallet.wallets?.length, 'wallet.loading:', wallet.loading, 'wallet.isEncrypted:', wallet.isEncrypted);
   const [screen, setScreen] = useState('loading');
   const [returnScreen, setReturnScreen] = useState('main');
   const [isLocked, setIsLocked] = useState(false);
@@ -358,32 +360,67 @@ function App() {
   // X1W-SEC-006: Check both legacy passwordHash and new PBKDF2 auth
   const [passwordProtection, setPasswordProtection] = useState(() => storage.get('passwordProtection', false));
   const [hasPasswordAsync, setHasPasswordAsync] = useState(false);
-  const [autoLockMinutes, setAutoLockMinutes] = useState(() => storage.get('autoLock', 5));
+  // Migrate legacy "Never" (-1) setting to 1 day (1440 minutes)
+  const [autoLockMinutes, setAutoLockMinutes] = useState(() => {
+    const saved = storage.get('autoLock', 5);
+    if (saved === -1) {
+      storage.set('autoLock', 1440);
+      return 1440;
+    }
+    return saved;
+  });
   const [passwordCheckComplete, setPasswordCheckComplete] = useState(false);
   
   useEffect(() => {
     const checkHasPassword = async () => {
       try {
-        // Sync from chrome storage first
+        // Only sync from chrome.storage if localStorage is empty
+        // This prevents chrome.storage from overwriting user's recent changes
+        const localProtection = localStorage.getItem('x1wallet_passwordProtection');
+        const localAutoLock = localStorage.getItem('x1wallet_autoLock');
+        
+        console.log('[App] Password check - localStorage protection:', localProtection, 'autoLock:', localAutoLock);
+        
         if (typeof chrome !== 'undefined' && chrome.storage) {
           try {
             const result = await chrome.storage.local.get(['x1wallet_passwordProtection', 'x1wallet_autoLock']);
-            if (result.x1wallet_passwordProtection !== undefined) {
-              localStorage.setItem('x1wallet_passwordProtection', JSON.stringify(result.x1wallet_passwordProtection));
-              setPasswordProtection(result.x1wallet_passwordProtection);
+            console.log('[App] chrome.storage values:', result);
+            
+            // Only use chrome.storage value if localStorage is empty
+            if (localProtection === null && result.x1wallet_passwordProtection !== undefined) {
+              let protectionValue = result.x1wallet_passwordProtection;
+              if (typeof protectionValue === 'string') {
+                try { protectionValue = JSON.parse(protectionValue); } catch {}
+              }
+              console.log('[App] Syncing protection from chrome.storage:', protectionValue);
+              localStorage.setItem('x1wallet_passwordProtection', JSON.stringify(protectionValue));
             }
-            if (result.x1wallet_autoLock !== undefined) {
-              localStorage.setItem('x1wallet_autoLock', JSON.stringify(result.x1wallet_autoLock));
-              setAutoLockMinutes(result.x1wallet_autoLock);
+            
+            if (localAutoLock === null && result.x1wallet_autoLock !== undefined) {
+              let autoLockValue = result.x1wallet_autoLock;
+              if (typeof autoLockValue === 'string') {
+                try { autoLockValue = JSON.parse(autoLockValue); } catch {}
+              }
+              // Migrate legacy "Never" (-1) to 1 day (1440 minutes)
+              if (autoLockValue === -1) {
+                autoLockValue = 1440;
+              }
+              localStorage.setItem('x1wallet_autoLock', JSON.stringify(autoLockValue));
             }
           } catch (e) {
             // Continue with localStorage values
           }
         }
         
-        // Re-read from storage after sync
+        // Read final values from localStorage with migration
         setPasswordProtection(storage.get('passwordProtection', false));
-        setAutoLockMinutes(storage.get('autoLock', 5));
+        let finalAutoLock = storage.get('autoLock', 5);
+        // Ensure no legacy -1 values remain
+        if (finalAutoLock === -1) {
+          finalAutoLock = 1440;
+          storage.set('autoLock', 1440);
+        }
+        setAutoLockMinutes(finalAutoLock);
         
         const { hasPassword: checkHasPass } = await import('@x1-wallet/core/services/wallet');
         const result = await checkHasPass();
@@ -413,20 +450,27 @@ function App() {
 
   // Check for auto-lock
   useEffect(() => {
-    if (!passwordProtection || !hasPassword || autoLockMinutes === -1) {
+    // Skip if password protection is off or no password set
+    if (!passwordProtection || !hasPassword) {
+      return;
+    }
+    
+    // Also handle edge case of invalid autoLockMinutes (shouldn't happen after migration)
+    if (autoLockMinutes < 0) {
       return;
     }
 
     const checkLock = () => {
+      if (screen === 'settings') return;
+      
       const elapsed = (Date.now() - lastActivityRef.current) / 1000 / 60;
       if (elapsed >= autoLockMinutes && !isLocked && screen !== 'welcome' && screen !== 'loading') {
         setIsLocked(true);
       }
     };
 
-    lockTimerRef.current = setInterval(checkLock, 10000); // Check every 10 seconds
+    lockTimerRef.current = setInterval(checkLock, 10000);
 
-    // Activity listeners
     const events = ['mousedown', 'keydown', 'touchstart', 'scroll'];
     events.forEach(e => window.addEventListener(e, updateActivity));
 
@@ -447,26 +491,44 @@ function App() {
       const urlParams = new URLSearchParams(window.location.search);
       const hwParam = urlParams.get('hw');
       
+      // Check if there's encrypted data that needs unlocking
+      const encryptedData = localStorage.getItem('x1wallet_wallets');
+      const encryptedFlag = localStorage.getItem('x1wallet_encrypted');
+      let isDataEncrypted = false;
+      if (encryptedData && encryptedData.length > 0) {
+        try {
+          JSON.parse(encryptedData);
+          console.log('[App] Wallet data is valid JSON (not encrypted)');
+        } catch {
+          isDataEncrypted = true;
+          console.log('[App] Wallet data is NOT valid JSON (encrypted)');
+        }
+      }
+      console.log('[App] State: wallets:', wallet.wallets?.length, 'isDataEncrypted:', isDataEncrypted, 'encryptedFlag:', encryptedFlag, 'protection:', passwordProtection, 'hasPassword:', hasPassword);
+      
       if (wallet.wallets.length > 0) {
-        // Check if should be locked on open based on ACTUAL elapsed time
+        // Wallets loaded - check if should lock based on settings
         logger.log('[App] Password check - protection:', passwordProtection, 'hasPassword:', hasPassword, 'autoLock:', autoLockMinutes);
         
-        if (passwordProtection && hasPassword) {
-          // Get last activity from persistent storage
+        // Only lock if protection is ON, password exists, AND timeout exceeded
+        // Note: autoLockMinutes should always be >= 0 after migration (no more "Never" option)
+        if (passwordProtection && hasPassword && autoLockMinutes >= 0) {
           const lastActivity = storage.get('lastActivity', 0);
           const elapsedMinutes = (Date.now() - lastActivity) / 1000 / 60;
           
-          logger.log('[App] Last activity:', lastActivity, 'elapsed:', elapsedMinutes, 'autoLock:', autoLockMinutes);
-          
-          // Only lock if auto-lock timeout has actually elapsed
-          // Or if no activity recorded yet (first time setup)
-          if (lastActivity === 0 || (autoLockMinutes !== -1 && elapsedMinutes >= autoLockMinutes)) {
-            logger.log('[App] Locking wallet - timeout exceeded');
+          if (lastActivity > 0 && elapsedMinutes >= autoLockMinutes) {
             setIsLocked(true);
           } else {
-            // Restore the last activity time to the ref
-            lastActivityRef.current = lastActivity;
+            // Opening extension is activity - reset timer
+            const now = Date.now();
+            lastActivityRef.current = now;
+            storage.set('lastActivity', now);
           }
+        } else if (!passwordProtection) {
+          // No password protection - just set activity
+          const now = Date.now();
+          lastActivityRef.current = now;
+          storage.set('lastActivity', now);
         }
         
         // If hw=1 param, go to hardware wallet screen
@@ -475,6 +537,20 @@ function App() {
           setScreen('hardware');
         } else {
           setScreen('main');
+        }
+      } else if (isDataEncrypted) {
+        // Encrypted data exists but couldn't load - need password to unlock
+        // Only show lock screen if protection is actually ON
+        if (passwordProtection) {
+          logger.log('[App] Encrypted data found, protection ON - need unlock');
+          setIsLocked(true);
+          setScreen('main');
+        } else {
+          // Protection is OFF but data is encrypted - this shouldn't happen
+          // Try to clear the encrypted flag and go to welcome
+          logger.log('[App] Encrypted data but protection OFF - clearing and going to welcome');
+          localStorage.removeItem('x1wallet_encrypted');
+          setScreen('welcome');
         }
       } else {
         // No wallet exists
@@ -491,9 +567,20 @@ function App() {
     checkWallet();
   }, [wallet.loading, initialCheckDone, passwordCheckComplete, passwordProtection, hasPassword, autoLockMinutes]);
 
-  // Redirect to welcome when all wallets are removed
+  // Redirect to welcome when all wallets are removed (but not if data is encrypted)
   useEffect(() => {
-    if (initialCheckDone && !wallet.loading && wallet.wallets.length === 0 && screen === 'main') {
+    // Don't redirect if there's encrypted data that needs unlocking
+    const encryptedData = localStorage.getItem('x1wallet_wallets');
+    let isDataEncrypted = false;
+    if (encryptedData && encryptedData.length > 0) {
+      try {
+        JSON.parse(encryptedData);
+      } catch {
+        isDataEncrypted = true;
+      }
+    }
+    
+    if (initialCheckDone && !wallet.loading && wallet.wallets.length === 0 && screen === 'main' && !isDataEncrypted) {
       setScreen('welcome');
     }
   }, [wallet.wallets.length, wallet.loading, initialCheckDone, screen]);
@@ -503,14 +590,60 @@ function App() {
     setIsLocked(false);
     const now = Date.now();
     lastActivityRef.current = now;
-    storage.set('lastActivity', now); // Persist unlock time
+    storage.set('lastActivity', now);
   };
+  
+  // After unlock, if protection is OFF, save wallets unencrypted
+  // This useEffect watches for wallets loading after unlock
+  useEffect(() => {
+    const saveUnencryptedIfNeeded = async () => {
+      const currentProtection = storage.get('passwordProtection', false);
+      const isEncryptedFlag = localStorage.getItem('x1wallet_encrypted');
+      
+      // If protection is OFF but wallets are encrypted, save them unencrypted
+      if (!currentProtection && isEncryptedFlag === 'true' && wallet.wallets && wallet.wallets.length > 0) {
+        logger.log('[App] Protection OFF but data encrypted - saving unencrypted');
+        try {
+          if (wallet.saveWalletsUnencrypted) {
+            wallet.saveWalletsUnencrypted(wallet.wallets);
+            if (wallet.clearEncryptionPassword) {
+              wallet.clearEncryptionPassword();
+            }
+            localStorage.removeItem('x1wallet_encrypted');
+            const { clearPassword } = await import('@x1-wallet/core/services/wallet');
+            await clearPassword();
+            setHasPasswordAsync(false);
+          }
+        } catch (e) {
+          logger.error('[App] Failed to save unencrypted:', e);
+        }
+      }
+    };
+    
+    if (!isLocked && wallet.wallets && wallet.wallets.length > 0) {
+      saveUnencryptedIfNeeded();
+    }
+  }, [isLocked, wallet.wallets, wallet.saveWalletsUnencrypted, wallet.clearEncryptionPassword]);
 
   // Handle wallet creation - password only if protection is ON
   const handleCreateComplete = async (mnemonic, name, password) => {
     try {
+      // Re-read protection setting directly from localStorage to ensure we have current value
+      let currentProtection = false;
+      try {
+        const stored = localStorage.getItem('x1wallet_passwordProtection');
+        if (stored) {
+          currentProtection = JSON.parse(stored) === true;
+        }
+      } catch (e) {
+        currentProtection = false;
+      }
+      
+      logger.log('[handleCreateComplete] Protection:', currentProtection, 'Password provided:', !!password);
+      
       // If protection is OFF and no password provided, create unencrypted
-      if (!passwordProtection && !password) {
+      if (!currentProtection && !password) {
+        logger.log('[handleCreateComplete] Creating unencrypted wallet');
         await wallet.createWallet(mnemonic, name);
         storage.set('lastActivity', Date.now());
         setScreen('main');
@@ -776,6 +909,7 @@ function App() {
         <CreateWallet
           onComplete={handleCreateComplete}
           onBack={() => setScreen(returnScreen === 'manage' ? 'manage' : 'welcome')}
+          passwordProtection={passwordProtection}
         />
       </div>
     );
@@ -847,6 +981,16 @@ function App() {
           onBack={() => setScreen('main')}
           onLock={handleLock}
           initialPasswordProtection={passwordProtection}
+          onPasswordProtectionChange={(newValue) => {
+            setPasswordProtection(newValue);
+            if (!newValue) {
+              setIsLocked(false);
+              setHasPasswordAsync(false);
+            }
+          }}
+          onAutoLockChange={(newValue) => {
+            setAutoLockMinutes(newValue);
+          }}
         />
         <BottomNav />
       </div>

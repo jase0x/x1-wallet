@@ -141,6 +141,20 @@ export function useWallet() {
     }
   }, [encryptionPassword]);
 
+  // Save wallets as plain JSON (no encryption) - bypasses React state
+  // Use this when disabling encryption to avoid async state timing issues
+  const saveWalletsUnencrypted = useCallback((walletsToSave) => {
+    try {
+      const jsonData = JSON.stringify(walletsToSave);
+      localStorage.setItem(STORAGE_KEY, jsonData);
+      localStorage.removeItem(ENCRYPTION_ENABLED_KEY);
+      logger.log('[useWallet] Saved wallets unencrypted');
+    } catch (e) {
+      logger.error('Failed to save wallets unencrypted:', e);
+      throw e;
+    }
+  }, []);
+
   // Initial load
   useEffect(() => {
     const loadWallets = async () => {
@@ -149,18 +163,25 @@ export function useWallet() {
         const activeId = localStorage.getItem(ACTIVE_KEY);
         const savedNetwork = localStorage.getItem(NETWORK_KEY);
         
+        console.log('[useWallet] Loading - saved data length:', saved?.length, 'first 50 chars:', saved?.substring(0, 50));
+        
         if (saved) {
           // Check if encrypted
           if (isEncrypted(saved)) {
+            console.log('[useWallet] Data is encrypted - setting locked');
             setIsLocked(true);
             // Don't try to load - user needs to unlock first
           } else {
             // Plain JSON - load directly
+            console.log('[useWallet] Data is plain JSON - parsing...');
             const parsed = JSON.parse(saved);
             const migrated = parsed.map(migrateWallet);
+            console.log('[useWallet] Loaded', migrated.length, 'wallets');
             setWallets(migrated);
             setActiveWalletId(activeId || (migrated.length > 0 ? migrated[0].id : null));
           }
+        } else {
+          console.log('[useWallet] No saved data found');
         }
         
         if (savedNetwork) {
@@ -174,6 +195,7 @@ export function useWallet() {
           }
         }
       } catch (e) {
+        console.error('[useWallet] Failed to load wallets:', e);
         logger.error('Failed to load wallets:', e);
       }
       setLoading(false);
@@ -233,6 +255,12 @@ export function useWallet() {
     }
     setEncryptionPassword(password);
     localStorage.setItem(ENCRYPTION_ENABLED_KEY, 'true');
+  }, []);
+
+  // Clear encryption password (for saving unencrypted when protection is OFF)
+  const clearEncryptionPassword = useCallback(() => {
+    setEncryptionPassword(null);
+    localStorage.removeItem(ENCRYPTION_ENABLED_KEY);
   }, []);
 
   // Change encryption password
@@ -775,6 +803,8 @@ export function useWallet() {
     lockWallet,
     enableEncryption,
     setEncryptionPasswordOnly,
+    clearEncryptionPassword,
+    saveWalletsUnencrypted,
     changePassword,
     disableEncryption,
     

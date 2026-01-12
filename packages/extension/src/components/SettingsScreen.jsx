@@ -59,10 +59,18 @@ async function hasPasswordSet() {
   return false;
 }
 
-export default function SettingsScreen({ wallet, onBack, onLock, initialPasswordProtection }) {
+export default function SettingsScreen({ wallet, onBack, onLock, initialPasswordProtection, onPasswordProtectionChange, onAutoLockChange }) {
   const [subScreen, setSubScreen] = useState(null);
   const [darkMode, setDarkMode] = useState(() => storage.get('darkMode', true));
-  const [autoLock, setAutoLock] = useState(() => storage.get('autoLock', 5));
+  // Migrate legacy "Never" (-1) setting to 1 day (1440 minutes) - matches Phantom's max
+  const [autoLock, setAutoLock] = useState(() => {
+    const saved = storage.get('autoLock', 5);
+    if (saved === -1) {
+      storage.set('autoLock', 1440);
+      return 1440;
+    }
+    return saved;
+  });
   const [currency, setCurrency] = useState(() => storage.get('currency', 'USD'));
   const [notifications, setNotifications] = useState(() => storage.get('notifications', true));
   const [skipSimulation, setSkipSimulation] = useState(() => storage.get('skipSimulation', false));
@@ -118,9 +126,13 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
       if (has && storage.get('passwordProtection', null) === null) {
         setPasswordProtection(true);
         storage.set('passwordProtection', true);
+        // Notify parent App.jsx
+        if (onPasswordProtectionChange) {
+          onPasswordProtectionChange(true);
+        }
       }
     });
-  }, []);
+  }, [onPasswordProtectionChange]);
   
   // Check if biometric is available (not available in browser extensions)
   const [biometricAvailable, setBiometricAvailable] = useState(false);
@@ -210,7 +222,14 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
     storage.set('darkMode', darkMode);
   }, [darkMode]);
 
-  useEffect(() => { storage.set('autoLock', autoLock); }, [autoLock]);
+  // Save autolock changes
+  useEffect(() => { 
+    storage.set('autoLock', autoLock);
+    if (onAutoLockChange) {
+      onAutoLockChange(autoLock);
+    }
+  }, [autoLock, onAutoLockChange]);
+
   useEffect(() => { storage.set('currency', currency); }, [currency]);
   useEffect(() => { storage.set('notifications', notifications); }, [notifications]);
   useEffect(() => { storage.set('skipSimulation', skipSimulation); }, [skipSimulation]);
@@ -370,13 +389,15 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
 
   // Sub-screens
   if (subScreen === 'autolock') {
+    // Phantom-style options - no "Never" option for security
     const options = [
       { value: 0, label: 'Immediately' },
       { value: 1, label: '1 minute' },
       { value: 5, label: '5 minutes' },
       { value: 15, label: '15 minutes' },
       { value: 30, label: '30 minutes' },
-      { value: -1, label: 'Never' },
+      { value: 60, label: '1 hour' },
+      { value: 1440, label: '1 day' },
     ];
     return (
       <div className="screen settings-screen">
@@ -1006,15 +1027,18 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
       setPasswordError('');
       setPasswordSuccess(false);
       
-      // X1W-SEC-001 FIX: Use PBKDF2 verification from wallet service instead of base64
       try {
         // Import secure password functions from wallet service
-        const { checkPassword, setupPassword, validatePasswordStrength } = await import('@x1-wallet/core/services/wallet');
+        const { checkPassword, setupPassword, validatePasswordStrength, hasPassword: checkHasPass } = await import('@x1-wallet/core/services/wallet');
         
-        // Check if there's an existing password to verify
-        const hasExisting = storage.get('passwordHash', null) !== null;
+        // Check if there's an existing password to verify (new PBKDF2 auth)
+        const hasExisting = await checkHasPass();
         
         if (hasExisting) {
+          if (!currentPassword) {
+            setPasswordError('Please enter your current password');
+            return;
+          }
           // Verify current password using PBKDF2
           const isValid = await checkPassword(currentPassword);
           if (!isValid) {
@@ -1023,7 +1047,7 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
           }
         }
         
-        // X1W-SEC-008 FIX: Use consistent password validation (12 chars minimum)
+        // Validate new password
         const validation = validatePasswordStrength(newPassword);
         if (!validation.valid) {
           setPasswordError(validation.error);
@@ -1035,22 +1059,22 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
           return;
         }
         
-        // X1W-SEC-002 FIX: Re-encrypt wallet data with new password
-        // First, set up the new password hash (PBKDF2)
-        await setupPassword(newPassword);
-        
-        // Then re-encrypt wallet data using wallet hook
-        if (wallet.changePassword) {
+        // Re-encrypt wallet data with new password
+        if (hasExisting && wallet.changePassword) {
           await wallet.changePassword(currentPassword, newPassword);
         } else if (wallet.enableEncryption) {
-          // Fallback: re-enable encryption with new password
           await wallet.enableEncryption(newPassword);
         }
         
-        // Also update the legacy storage key for backward compatibility
-        // (but now properly hashed via setupPassword above)
+        // Set up the new password hash (PBKDF2)
+        await setupPassword(newPassword);
+        
         storage.set('passwordProtection', true);
         setPasswordProtection(true);
+        // Notify parent App.jsx
+        if (onPasswordProtectionChange) {
+          onPasswordProtectionChange(true);
+        }
         setPasswordSuccess(true);
         setCurrentPassword('');
         setNewPassword('');
@@ -1065,7 +1089,8 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
       }
     };
     
-    const hasExistingPassword = storage.get('passwordHash', null) !== null;
+    // Check for existing password - use async state from parent
+    const hasExistingPassword = hasPassword;
     
     return (
       <div className="screen settings-screen">
@@ -1178,94 +1203,10 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
 
   // Manage Password sub-screen
   if (subScreen === 'password') {
-    const handleRemovePassword = () => {
-      storage.set('passwordHash', null);
-      storage.set('passwordProtection', false);
-      // Also clear from chrome.storage
-      if (typeof chrome !== 'undefined' && chrome.storage) {
-        chrome.storage.local.remove(['x1wallet_auth', 'x1wallet_passwordHash']).catch(() => {});
-      }
-      localStorage.removeItem('x1wallet_auth');
-      setPasswordProtection(false);
-      setHasPassword(false);
-      setShowRemoveConfirm(false);
-    };
-    
     return (
       <div className="screen settings-screen">
-        {/* Remove Password Confirmation Modal */}
-        {showRemoveConfirm && (
-          <div style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'rgba(0, 0, 0, 0.8)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000,
-            padding: 20
-          }}>
-            <div style={{
-              background: 'var(--bg-secondary)',
-              borderRadius: 16,
-              padding: 24,
-              maxWidth: 320,
-              width: '100%',
-              textAlign: 'center'
-            }}>
-              <div style={{
-                width: 56,
-                height: 56,
-                borderRadius: '50%',
-                background: 'rgba(255, 59, 48, 0.15)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                margin: '0 auto 16px'
-              }}>
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--error)" strokeWidth="2">
-                  <path d="M12 9v4M12 17h.01" />
-                  <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-                </svg>
-              </div>
-              <h3 style={{ marginBottom: 8, fontSize: 18 }}>Remove Password?</h3>
-              <p style={{ color: 'var(--text-muted)', fontSize: 14, marginBottom: 24, lineHeight: 1.5 }}>
-                Your wallet will no longer be protected. Anyone with access to this device can access your funds.
-              </p>
-              <div style={{ display: 'flex', gap: 12 }}>
-                <button
-                  className="btn-secondary"
-                  onClick={() => setShowRemoveConfirm(false)}
-                  style={{ flex: 1 }}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleRemovePassword}
-                  style={{
-                    flex: 1,
-                    padding: '12px 20px',
-                    borderRadius: 12,
-                    border: 'none',
-                    background: 'var(--error)',
-                    color: 'white',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    fontSize: 14
-                  }}
-                >
-                  Remove
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-        
         <div className="settings-header">
-          <button className="back-btn" onClick={() => { setShowRemoveConfirm(false); setSubScreen(null); }}>
+          <button className="back-btn" onClick={() => { setSubScreen(null); }}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M19 12H5M12 19l-7-7 7-7" />
             </svg>
@@ -1275,10 +1216,60 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
         <div className="settings-content">
           <div className="settings-section">
             {hasPassword && (
-              <div className="settings-item" onClick={() => {
+              <div className="settings-item" onClick={async () => {
                 const newValue = !passwordProtection;
+                console.log('[Settings] Toggle protection to:', newValue, 'wallets:', wallet.wallets?.length);
                 setPasswordProtection(newValue);
                 storage.set('passwordProtection', newValue);
+                
+                // Also explicitly update chrome.storage to prevent sync issues
+                if (typeof chrome !== 'undefined' && chrome.storage) {
+                  await chrome.storage.local.set({ 'x1wallet_passwordProtection': newValue });
+                  console.log('[Settings] Updated chrome.storage passwordProtection to:', newValue);
+                }
+                
+                // If turning ON, reset the timer
+                if (newValue) {
+                  storage.set('lastActivity', Date.now());
+                }
+                
+                // If turning OFF, clear auth and save unencrypted
+                if (!newValue) {
+                  try {
+                    localStorage.removeItem('x1wallet_auth');
+                    localStorage.removeItem('x1wallet_encrypted');
+                    
+                    if (typeof chrome !== 'undefined' && chrome.storage) {
+                      await chrome.storage.local.remove(['x1wallet_auth', 'x1wallet_encrypted']);
+                    }
+                    
+                    console.log('[Settings] Saving wallets unencrypted...', wallet.wallets?.length);
+                    if (wallet.saveWalletsUnencrypted && wallet.wallets && wallet.wallets.length > 0) {
+                      wallet.saveWalletsUnencrypted(wallet.wallets);
+                      if (wallet.clearEncryptionPassword) {
+                        wallet.clearEncryptionPassword();
+                      }
+                      // Verify save
+                      const verify = localStorage.getItem('x1wallet_wallets');
+                      try {
+                        JSON.parse(verify);
+                        console.log('[Settings] Verified: data is now plain JSON');
+                      } catch {
+                        console.error('[Settings] ERROR: data is still encrypted!');
+                      }
+                    } else {
+                      console.error('[Settings] Cannot save - wallets empty or no save function');
+                    }
+                    
+                    setHasPassword(false);
+                  } catch (e) {
+                    console.error('Failed to turn off protection:', e);
+                  }
+                }
+                
+                if (onPasswordProtectionChange) {
+                  onPasswordProtectionChange(newValue);
+                }
               }}>
                 <div className="settings-item-left">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1311,26 +1302,6 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
                 </svg>
               </div>
             </div>
-            
-            {hasPassword && (
-              <div className="settings-item" onClick={() => setShowRemoveConfirm(true)}>
-                <div className="settings-item-left">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--error)" strokeWidth="2">
-                    <polyline points="3 6 5 6 21 6" />
-                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                  </svg>
-                  <div className="settings-item-text">
-                    <span style={{ color: 'var(--error)' }}>Remove Password</span>
-                    <span className="settings-item-desc">Disable password protection</span>
-                  </div>
-                </div>
-                <div className="settings-item-right">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M9 18l6-6-6-6" />
-                  </svg>
-                </div>
-              </div>
-            )}
           </div>
           
           <div className="info-box">
@@ -2170,7 +2141,7 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
               <span>Auto-Lock Timer</span>
             </div>
             <div className="settings-item-right">
-              <span className="settings-value">{autoLock === -1 ? 'Never' : autoLock === 0 ? 'Immediately' : `${autoLock} min`}</span>
+              <span className="settings-value">{autoLock === 0 ? 'Immediately' : autoLock === 60 ? '1 hour' : autoLock === 1440 ? '1 day' : `${autoLock} min`}</span>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M9 18l6-6-6-6" />
               </svg>
