@@ -165,21 +165,43 @@ export function useWallet() {
         
         console.log('[useWallet] Loading - saved data length:', saved?.length, 'first 50 chars:', saved?.substring(0, 50));
         
-        if (saved) {
-          // Check if encrypted
-          if (isEncrypted(saved)) {
-            console.log('[useWallet] Data is encrypted - setting locked');
-            setIsLocked(true);
-            // Don't try to load - user needs to unlock first
+        // For encrypted wallets, check session storage first (allows auto-lock timer to work)
+        if (saved && isEncrypted(saved)) {
+          console.log('[useWallet] Data is encrypted - checking session storage...');
+          
+          // Try to load from session storage (previous unlock in same browser session)
+          if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
+            try {
+              const sessionData = await chrome.storage.session.get(['x1wallet_session_wallets', 'x1wallet_session_password']);
+              if (sessionData.x1wallet_session_wallets && sessionData.x1wallet_session_password) {
+                console.log('[useWallet] Found session data - loading from session');
+                const sessionWallets = JSON.parse(sessionData.x1wallet_session_wallets);
+                const migrated = sessionWallets.map(migrateWallet);
+                setWallets(migrated);
+                setActiveWalletId(activeId || (migrated.length > 0 ? migrated[0].id : null));
+                setEncryptionPassword(sessionData.x1wallet_session_password);
+                setIsLocked(false);
+                console.log('[useWallet] Loaded', migrated.length, 'wallets from session');
+              } else {
+                console.log('[useWallet] No session data - need password');
+                setIsLocked(true);
+              }
+            } catch (sessionErr) {
+              console.log('[useWallet] Session storage error:', sessionErr.message);
+              setIsLocked(true);
+            }
           } else {
-            // Plain JSON - load directly
-            console.log('[useWallet] Data is plain JSON - parsing...');
-            const parsed = JSON.parse(saved);
-            const migrated = parsed.map(migrateWallet);
-            console.log('[useWallet] Loaded', migrated.length, 'wallets');
-            setWallets(migrated);
-            setActiveWalletId(activeId || (migrated.length > 0 ? migrated[0].id : null));
+            console.log('[useWallet] No session storage available - need password');
+            setIsLocked(true);
           }
+        } else if (saved) {
+          // Plain JSON - load directly
+          console.log('[useWallet] Data is plain JSON - parsing...');
+          const parsed = JSON.parse(saved);
+          const migrated = parsed.map(migrateWallet);
+          console.log('[useWallet] Loaded', migrated.length, 'wallets');
+          setWallets(migrated);
+          setActiveWalletId(activeId || (migrated.length > 0 ? migrated[0].id : null));
         } else {
           console.log('[useWallet] No saved data found');
         }
@@ -214,6 +236,20 @@ export function useWallet() {
     const activeId = localStorage.getItem(ACTIVE_KEY);
     setActiveWalletId(activeId || (loadedWallets.length > 0 ? loadedWallets[0].id : null));
     
+    // Save to session storage for auto-lock timer to work
+    // Session storage clears when browser closes - secure enough for this use case
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
+      try {
+        await chrome.storage.session.set({
+          x1wallet_session_wallets: JSON.stringify(loadedWallets),
+          x1wallet_session_password: password
+        });
+        console.log('[useWallet] Saved to session storage for auto-lock');
+      } catch (e) {
+        console.warn('[useWallet] Failed to save to session storage:', e.message);
+      }
+    }
+    
     return true;
   }, [loadWalletsFromStorage]);
 
@@ -223,6 +259,12 @@ export function useWallet() {
     setEncryptionPassword(null);
     setIsLocked(true);
     setBalance(0);
+    
+    // Clear session storage
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
+      chrome.storage.session.remove(['x1wallet_session_wallets', 'x1wallet_session_password'])
+        .catch(e => console.warn('[useWallet] Failed to clear session:', e.message));
+    }
   }, []);
 
   // Enable encryption on existing wallet
@@ -300,7 +342,18 @@ export function useWallet() {
   const saveWallets = useCallback(async (newWallets) => {
     await saveWalletsToStorage(newWallets);
     setWallets(newWallets);
-  }, [saveWalletsToStorage]);
+    
+    // Also update session storage if it exists (keeps session in sync)
+    if (encryptionPassword && typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
+      try {
+        await chrome.storage.session.set({
+          x1wallet_session_wallets: JSON.stringify(newWallets)
+        });
+      } catch (e) {
+        console.warn('[useWallet] Failed to update session storage:', e.message);
+      }
+    }
+  }, [saveWalletsToStorage, encryptionPassword]);
 
   // Load wallets (for external refresh)
   const loadWallets = useCallback(async () => {
@@ -640,6 +693,10 @@ export function useWallet() {
           'x1wallet',
           'x1wallet_encrypted'
         ]);
+        // Also clear session storage
+        if (chrome.storage.session) {
+          await chrome.storage.session.remove(['x1wallet_session_wallets', 'x1wallet_session_password']);
+        }
       } catch (e) {}
     }
     setWallets([]);
