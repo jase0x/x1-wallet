@@ -145,7 +145,8 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
             w.addresses.forEach((addr, addrIndex) => {
               const pk = addr.publicKey || addr.address;
               
-              if (pk && pk !== currentPublicKey && !seenPublicKeys.has(pk)) {
+              // Allow sending to yourself - don't exclude current wallet
+              if (pk && !seenPublicKeys.has(pk)) {
                 seenPublicKeys.add(pk);
                 
                 // Use wallet name, or address name if it's custom, or fallback
@@ -156,7 +157,8 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
                   name: displayName,
                   avatar: w.avatar,
                   isHardware: w.isHardware,
-                  type: w.type
+                  type: w.type,
+                  isCurrent: pk === currentPublicKey // Mark if this is current wallet
                 });
               }
             });
@@ -164,19 +166,20 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
           
           // Also check wallet-level publicKey as fallback
           const walletPk = w.publicKey;
-          if (walletPk && walletPk !== currentPublicKey && !seenPublicKeys.has(walletPk)) {
+          if (walletPk && !seenPublicKeys.has(walletPk)) {
             seenPublicKeys.add(walletPk);
             allAddresses.push({
               publicKey: walletPk,
               name: w.name || `Wallet ${walletIndex + 1}`,
               avatar: w.avatar,
               isHardware: w.isHardware,
-              type: w.type
+              type: w.type,
+              isCurrent: walletPk === currentPublicKey
             });
           }
         });
         
-        console.log('[SendFlow] Final addresses list:', allAddresses.map(a => ({ name: a.name, pk: a.publicKey?.slice(0, 8) })));
+        console.log('[SendFlow] Final addresses list:', allAddresses.map(a => ({ name: a.name, pk: a.publicKey?.slice(0, 8), isCurrent: a.isCurrent })));
         setMyWallets(allAddresses);
         
         // Load recent addresses and enrich with wallet names
@@ -230,11 +233,11 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
       } else {
         setAddressWarning('');
         if (recipient.trim() === wallet?.wallet?.publicKey) {
-          // Check if sending tokens (not native) - tokens can't be sent to self
+          // Allow sending to yourself - just show a warning
           if (currentToken && currentToken.mint) {
-            setAddressWarning('Cannot send tokens to yourself - source and destination accounts would be the same');
+            setAddressWarning('Warning: Sending tokens to yourself');
           } else {
-            setAddressWarning('Warning: You are sending to your own address');
+            setAddressWarning('Warning: Sending to your own address');
           }
         }
       }
@@ -548,6 +551,13 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
     
     const tokenAmount = Math.floor(sendAmount * Math.pow(10, currentToken.decimals));
     
+    // Handle self-transfer - can't transfer SPL tokens to same wallet (same ATA)
+    // Return a no-op success since balance wouldn't change anyway
+    if (wallet.wallet.publicKey === recipient.trim()) {
+      console.log('[SendFlow] Self-transfer detected - returning no-op success');
+      return 'self-transfer-no-op';
+    }
+    
     const response = await fetch(networkConfig.rpcUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -668,33 +678,36 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
       
       setTxHash(signature);
       
-      // Save transaction history
-      const { addTransaction } = await import('@x1-wallet/core/utils/transaction');
-      addTransaction({
-        signature,
-        type: 'send',
-        amount: sendAmount,
-        symbol: displaySymbol,
-        from: wallet.wallet.publicKey,
-        to: recipient.trim(),
-        timestamp: Date.now(),
-        status: 'confirmed',
-        network: network,
-        isToken: isTokenSend,
-        mint: currentToken?.mint,
-        tokenName: currentToken?.name || currentToken?.symbol
-      });
-      
-      // Track XP
-      const { trackSendXP } = await import('@x1-wallet/core/services/xp');
-      trackSendXP({
-        user: wallet.wallet.publicKey,
-        network: network,
-        transactionSignature: signature,
-        mint: currentToken?.mint || 'So11111111111111111111111111111111111111112',
-        amount: sendAmount,
-        recipient: recipient.trim()
-      }).catch(() => {});
+      // Skip saving transaction history and XP for self-transfers (no real transaction)
+      if (signature !== 'self-transfer-no-op') {
+        // Save transaction history
+        const { addTransaction } = await import('@x1-wallet/core/utils/transaction');
+        addTransaction({
+          signature,
+          type: 'send',
+          amount: sendAmount,
+          symbol: displaySymbol,
+          from: wallet.wallet.publicKey,
+          to: recipient.trim(),
+          timestamp: Date.now(),
+          status: 'confirmed',
+          network: network,
+          isToken: isTokenSend,
+          mint: currentToken?.mint,
+          tokenName: currentToken?.name || currentToken?.symbol
+        });
+        
+        // Track XP
+        const { trackSendXP } = await import('@x1-wallet/core/services/xp');
+        trackSendXP({
+          user: wallet.wallet.publicKey,
+          network: network,
+          transactionSignature: signature,
+          mint: currentToken?.mint || 'So11111111111111111111111111111111111111112',
+          amount: sendAmount,
+          recipient: recipient.trim()
+        }).catch(() => {});
+      }
       
       // Save recent address
       saveRecentAddress(recipient.trim(), recipientName || null);
@@ -864,7 +877,10 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
                         )}
                       </div>
                       <div className="send-wallet-info">
-                        <span className="send-wallet-name">{w.name || `Wallet ${i + 1}`}</span>
+                        <span className="send-wallet-name">
+                          {w.name || `Wallet ${i + 1}`}
+                          {w.isCurrent && <span style={{ color: 'var(--text-muted)', fontSize: 11, marginLeft: 6 }}>(Current)</span>}
+                        </span>
                         <span className="send-wallet-address">{w.publicKey?.slice(0, 6)}...{w.publicKey?.slice(-4)}</span>
                       </div>
                     </div>
@@ -1104,6 +1120,7 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
 
       // STEP 5: Success
       case STEPS.SUCCESS:
+        const isSelfTransferNoOp = txHash === 'self-transfer-no-op';
         return (
           <div className="send-step-content send-success">
             <div className="success-icon">
@@ -1112,11 +1129,17 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
                 <polyline points="22 4 12 14.01 9 11.01" />
               </svg>
             </div>
-            <h2 className="send-success-title">Sent!</h2>
+            <h2 className="send-success-title">{isSelfTransferNoOp ? 'Complete!' : 'Sent!'}</h2>
             <p className="send-success-amount">{amount} {displaySymbol}</p>
             <p className="send-success-to">to {recipient.slice(0, 6)}...{recipient.slice(-4)}</p>
             
-            {txHash && (
+            {isSelfTransferNoOp && (
+              <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 8 }}>
+                Self-transfer - no blockchain transaction needed
+              </p>
+            )}
+            
+            {txHash && !isSelfTransferNoOp && (
               <button 
                 className="btn-secondary" 
                 onClick={() => window.open(getTxExplorerUrl(network, txHash), '_blank')}

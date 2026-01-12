@@ -99,10 +99,15 @@ export async function createTokenTransferTransaction({
     if (!fromTokenAccount) throw new Error('Source token account address is required');
     if (!privateKey) throw new Error('Wallet is locked. Please unlock your wallet to sign transactions.');
     
-    // Check for self-transfer - token transfers to same wallet use the same ATA
-    // which is not allowed by the SPL Token program
+    // Handle self-transfer - for SPL tokens, source and destination ATA would be the same
+    // Instead of erroring, we return a "no-op" success since balance wouldn't change anyway
     if (fromPubkey === toPubkey) {
-      throw new Error('Cannot transfer tokens to your own wallet. Source and destination would be the same account.');
+      logger.log('[Transaction] Self-transfer detected - returning no-op success (balance unchanged)');
+      return {
+        signature: 'self-transfer-no-op',
+        success: true,
+        message: 'Self-transfer completed (no blockchain transaction needed - balance unchanged)'
+      };
     }
     
     // Decode the private key
@@ -180,11 +185,6 @@ export async function createTokenTransferTransaction({
     }
     if (toTokenAccount === mint) {
       throw new Error('Derived ATA matches mint address - invalid derivation');
-    }
-    
-    // Also check if fromPubkey accidentally matches toPubkey (self-transfer)
-    if (fromPubkey === toPubkey) {
-      throw new Error('Cannot transfer to your own wallet address');
     }
     
     // Build the appropriate message
@@ -1110,8 +1110,11 @@ function buildTokenTransferMessage({
   if (fromPubkey === toTokenAccount) {
     throw new Error('Owner cannot be the same as destination token account');
   }
+  // Self-transfer check - if source and dest ATA are same, this is a self-transfer
+  // which was already handled at higher level, but just in case return null to signal no-op
   if (fromTokenAccount === toTokenAccount) {
-    throw new Error('Source and destination token accounts cannot be the same');
+    logger.log('[BUILD TX Simple] Self-transfer detected (same ATA), returning null for no-op');
+    return null;
   }
   
   const ownerBytes = decodeToFixedSize(fromPubkey, 32);
