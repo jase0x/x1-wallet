@@ -284,6 +284,18 @@ export function useWallet() {
       const jsonData = JSON.stringify(wallets);
       const encrypted = await encryptData(jsonData, password);
       localStorage.setItem(STORAGE_KEY, encrypted);
+      
+      // Also update session storage so wallet doesn't disappear
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
+        try {
+          await chrome.storage.session.set({
+            x1wallet_session_wallets: jsonData,
+            x1wallet_session_password: password
+          });
+        } catch (e) {
+          console.warn('[useWallet] Failed to update session storage:', e.message);
+        }
+      }
     }
     
     return true;
@@ -327,6 +339,18 @@ export function useWallet() {
     const jsonData = JSON.stringify(wallets);
     const encrypted = await encryptData(jsonData, newPassword);
     localStorage.setItem(STORAGE_KEY, encrypted);
+    
+    // Also update session storage with new password
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
+      try {
+        await chrome.storage.session.set({
+          x1wallet_session_wallets: jsonData,
+          x1wallet_session_password: newPassword
+        });
+      } catch (e) {
+        console.warn('[useWallet] Failed to update session storage:', e.message);
+      }
+    }
     
     return true;
   }, [wallets]);
@@ -573,15 +597,15 @@ export function useWallet() {
     logger.log('Adding hardware wallet:', newWallet);
 
     const newWallets = [...wallets, newWallet];
-    await saveWalletsToStorage(newWallets);
+    // Use saveWallets instead of saveWalletsToStorage to also update session storage
+    await saveWallets(newWallets);
     localStorage.setItem(ACTIVE_KEY, newWallet.id);
-    setWallets(newWallets);
     setActiveWalletId(newWallet.id);
     
     return new Promise((resolve) => {
       setTimeout(() => resolve(newWallet), 100);
     });
-  }, [wallets, saveWalletsToStorage]);
+  }, [wallets, saveWallets]);
 
   // Switch active wallet
   const switchWallet = useCallback((walletId) => {
