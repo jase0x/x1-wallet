@@ -131,6 +131,20 @@ export function useWallet() {
         const encrypted = await encryptData(jsonData, encryptionPassword);
         localStorage.setItem(STORAGE_KEY, encrypted);
         localStorage.setItem(ENCRYPTION_ENABLED_KEY, 'true');
+        
+        // ALWAYS update session storage when saving encrypted wallets
+        // This prevents stale data issues when extension reloads
+        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
+          try {
+            await chrome.storage.session.set({
+              x1wallet_session_wallets: jsonData,
+              x1wallet_session_password: encryptionPassword
+            });
+            console.log('[useWallet] Session storage synced with', walletsToSave.length, 'wallets');
+          } catch (e) {
+            console.warn('[useWallet] Failed to sync session storage:', e.message);
+          }
+        }
       } else {
         // Save as plain JSON (legacy mode)
         localStorage.setItem(STORAGE_KEY, jsonData);
@@ -362,22 +376,11 @@ export function useWallet() {
     throw new Error('Encryption cannot be disabled. Your wallet data must remain encrypted for security.');
   }, []);
 
-  // Save wallets to storage
+  // Save wallets to storage (session storage is updated automatically by saveWalletsToStorage)
   const saveWallets = useCallback(async (newWallets) => {
     await saveWalletsToStorage(newWallets);
     setWallets(newWallets);
-    
-    // Also update session storage if it exists (keeps session in sync)
-    if (encryptionPassword && typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
-      try {
-        await chrome.storage.session.set({
-          x1wallet_session_wallets: JSON.stringify(newWallets)
-        });
-      } catch (e) {
-        console.warn('[useWallet] Failed to update session storage:', e.message);
-      }
-    }
-  }, [saveWalletsToStorage, encryptionPassword]);
+  }, [saveWalletsToStorage]);
 
   // Load wallets (for external refresh)
   const loadWallets = useCallback(async () => {

@@ -59,6 +59,39 @@ function setCachedTokens(walletAddress, network, tokens) {
   }
 }
 
+// Compare two token lists to see if they're meaningfully different
+// Returns true if update is needed
+function tokensNeedUpdate(oldTokens, newTokens) {
+  if (!oldTokens || !newTokens) return true;
+  if (oldTokens.length !== newTokens.length) return true;
+  
+  // Create a map of old tokens by mint for quick lookup
+  const oldMap = new Map();
+  oldTokens.forEach(t => {
+    const key = t.mint || 'native';
+    oldMap.set(key, t);
+  });
+  
+  // Check if any token has changed significantly
+  for (const newToken of newTokens) {
+    const key = newToken.mint || 'native';
+    const oldToken = oldMap.get(key);
+    
+    if (!oldToken) return true; // New token appeared
+    
+    // Check for meaningful balance change (more than 0.01% difference to avoid float issues)
+    const oldBal = parseFloat(oldToken.uiAmount || oldToken.balance || 0);
+    const newBal = parseFloat(newToken.uiAmount || newToken.balance || 0);
+    if (oldBal === 0 && newBal === 0) continue;
+    if (oldBal === 0 || newBal === 0) return true;
+    
+    const diff = Math.abs(newBal - oldBal) / Math.max(oldBal, newBal);
+    if (diff > 0.0001) return true; // 0.01% threshold
+  }
+  
+  return false;
+}
+
 // Preload and cache an image
 function preloadImage(url) {
   if (!url || imageCache.has(url)) return;
@@ -3138,11 +3171,15 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
           const isNFT = token.decimals === 0 && token.uiAmount === 1;
           return !isNFT;
         });
-        logger.log('[WalletMain] Background token update:', tokenList.length, 'tokens');
-        setTokens(tokenList);
-        // Update cache with fresh data
-        setCachedTokens(wallet.wallet.publicKey, wallet.network, tokenList);
-        if (onTokensUpdate) onTokensUpdate(tokenList);
+        // Only update if data actually changed - prevents flicker
+        if (tokensNeedUpdate(tokens, tokenList)) {
+          logger.log('[WalletMain] Background token update:', tokenList.length, 'tokens');
+          setTokens(tokenList);
+          setCachedTokens(wallet.wallet.publicKey, wallet.network, tokenList);
+          if (onTokensUpdate) onTokensUpdate(tokenList);
+        } else {
+          logger.log('[WalletMain] Background update skipped - no meaningful changes');
+        }
       };
       
       const allTokens = await fetchTokenAccounts(networkConfig.rpcUrl, wallet.wallet.publicKey, wallet.network, handleTokenUpdate);
@@ -3156,14 +3193,16 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
         return !isNFT;
       });
       
-      logger.log('[WalletMain] Fetched tokens:', tokenList.length, '(filtered', allTokens.length - tokenList.length, 'NFTs)');
-      setTokens(tokenList);
-      // Save to cache for instant loading on wallet switch
-      setCachedTokens(wallet.wallet.publicKey, wallet.network, tokenList);
-      // Preload token images for faster rendering
-      preloadTokenImages(tokenList);
-      // Sync with parent App state
-      if (onTokensUpdate) onTokensUpdate(tokenList);
+      // Only update if data actually changed - prevents flicker
+      if (tokensNeedUpdate(tokens, tokenList)) {
+        logger.log('[WalletMain] Fetched tokens:', tokenList.length, '(filtered', allTokens.length - tokenList.length, 'NFTs)');
+        setTokens(tokenList);
+        setCachedTokens(wallet.wallet.publicKey, wallet.network, tokenList);
+        preloadTokenImages(tokenList);
+        if (onTokensUpdate) onTokensUpdate(tokenList);
+      } else {
+        logger.log('[WalletMain] Token fetch complete - no meaningful changes, skipping update');
+      }
     } catch (err) {
       logger.error('[WalletMain] Failed to fetch tokens:', err);
       // Don't clear existing tokens on error - keep showing cached data
