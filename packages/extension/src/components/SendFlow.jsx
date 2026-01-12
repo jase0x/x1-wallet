@@ -130,32 +130,29 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
   useEffect(() => {
     const loadData = async () => {
       try {
-        // Helper to check if name is generic like "Address 1" or "Wallet 1"
-        const isGenericName = (name) => name && /^(Address|Wallet)\s*\d*$/i.test(name);
-        
         // Use wallets from the wallet hook (already decrypted) instead of localStorage
-        // This fixes the issue where encrypted wallets couldn't be loaded
         const wallets = wallet?.wallets || [];
-        logger.log('[SendFlow] Loading wallets from hook:', wallets.length);
+        const currentPublicKey = wallet?.wallet?.publicKey;
+        console.log('[SendFlow] Loading wallets from hook:', wallets.length, 'current:', currentPublicKey);
         
         // Flatten wallets - each wallet may have multiple addresses
         const allAddresses = [];
+        const seenPublicKeys = new Set(); // Prevent duplicates
+        
         wallets.forEach((w, walletIndex) => {
-          if (w.addresses && Array.isArray(w.addresses)) {
-            // Wallet has addresses array
+          // Try addresses array first (new format)
+          if (w.addresses && Array.isArray(w.addresses) && w.addresses.length > 0) {
             w.addresses.forEach((addr, addrIndex) => {
-              if (addr.publicKey && addr.publicKey !== wallet?.wallet?.publicKey) {
-                // Prefer wallet name over generic address names
-                let displayName = w.name;
-                if (!isGenericName(addr.name) && addr.name) {
-                  displayName = addr.name;
-                } else if (isGenericName(w.name) || !w.name) {
-                  // If wallet name is also generic, use "Wallet X" based on index
-                  displayName = `Wallet ${walletIndex + 1}`;
-                }
+              const pk = addr.publicKey || addr.address;
+              
+              if (pk && pk !== currentPublicKey && !seenPublicKeys.has(pk)) {
+                seenPublicKeys.add(pk);
+                
+                // Use wallet name, or address name if it's custom, or fallback
+                const displayName = w.name || addr.name || `Wallet ${walletIndex + 1}`;
                 
                 allAddresses.push({
-                  publicKey: addr.publicKey,
+                  publicKey: pk,
                   name: displayName,
                   avatar: w.avatar,
                   isHardware: w.isHardware,
@@ -163,11 +160,15 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
                 });
               }
             });
-          } else if (w.publicKey && w.publicKey !== wallet?.wallet?.publicKey) {
-            // Legacy format - wallet has publicKey directly
+          }
+          
+          // Also check wallet-level publicKey as fallback
+          const walletPk = w.publicKey;
+          if (walletPk && walletPk !== currentPublicKey && !seenPublicKeys.has(walletPk)) {
+            seenPublicKeys.add(walletPk);
             allAddresses.push({
-              publicKey: w.publicKey,
-              name: isGenericName(w.name) ? `Wallet ${walletIndex + 1}` : (w.name || `Wallet ${walletIndex + 1}`),
+              publicKey: walletPk,
+              name: w.name || `Wallet ${walletIndex + 1}`,
               avatar: w.avatar,
               isHardware: w.isHardware,
               type: w.type
@@ -175,18 +176,16 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
           }
         });
         
-        logger.log('[SendFlow] All addresses (excluding current):', allAddresses.length);
+        console.log('[SendFlow] Final addresses list:', allAddresses.map(a => ({ name: a.name, pk: a.publicKey?.slice(0, 8) })));
         setMyWallets(allAddresses);
         
         // Load recent addresses and enrich with wallet names
         const recentStored = localStorage.getItem('x1_recent_addresses');
         if (recentStored) {
           const recent = JSON.parse(recentStored);
-          logger.log('[SendFlow] Loaded recent addresses:', recent.length);
           
           // Enrich recent addresses with wallet names if they're our wallets
           const enrichedRecent = recent.map(r => {
-            // Check if this address belongs to one of our wallets
             const matchedWallet = allAddresses.find(w => w.publicKey === r.address);
             if (matchedWallet && matchedWallet.name) {
               return { ...r, name: matchedWallet.name };
@@ -197,7 +196,7 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
           setRecentAddresses(enrichedRecent);
         }
       } catch (e) {
-        logger.warn('[SendFlow] Failed to load data:', e);
+        console.error('[SendFlow] Failed to load data:', e);
       }
     };
     loadData();

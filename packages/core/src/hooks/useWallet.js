@@ -809,19 +809,24 @@ export function useWallet() {
     return wallets.find(w => w.id === walletId) || null;
   }, [wallets]);
 
-  // Sanitized wallets array
-  const sanitizedWallets = wallets.map(w => ({
-    id: w.id,
-    name: w.name,
-    type: w.type,
-    createdAt: w.createdAt,
-    isHardware: w.isHardware,
-    derivationPath: w.derivationPath,
-    addresses: w.addresses,
-    activeAddressIndex: w.activeAddressIndex,
-    avatar: w.avatar,
-    hasMnemonic: !!w.mnemonic
-  }));
+  // Sanitized wallets array - include publicKey at wallet level for backwards compatibility
+  const sanitizedWallets = wallets.map(w => {
+    const activeAddr = w.addresses?.[w.activeAddressIndex || 0] || w.addresses?.[0];
+    return {
+      id: w.id,
+      name: w.name,
+      type: w.type,
+      createdAt: w.createdAt,
+      isHardware: w.isHardware,
+      derivationPath: w.derivationPath,
+      addresses: w.addresses,
+      activeAddressIndex: w.activeAddressIndex,
+      avatar: w.avatar,
+      hasMnemonic: !!w.mnemonic,
+      // Include publicKey at wallet level for backwards compatibility
+      publicKey: activeAddr?.publicKey || w.publicKey
+    };
+  });
 
   return {
     // State
