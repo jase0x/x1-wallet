@@ -508,7 +508,7 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
             </div>
             <div className="hardware-option-text">
               <span className="hardware-option-title">Ledger</span>
-              <span className="hardware-option-desc">Nano S, Nano S Plus, Nano X</span>
+              <span className="hardware-option-desc">Nano S, Nano S Plus, Nano X, Flex</span>
             </div>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M9 18l6-6-6-6" />
@@ -1060,12 +1060,12 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
 
         {error && <div className="error-message" style={{ marginTop: 12 }}>{error}</div>}
 
-        <div style={{ display: 'flex', gap: 12, marginTop: 'auto', paddingTop: 16 }}>
+        <div className="hardware-buttons-row" style={{ display: 'flex', gap: 12, marginTop: 'auto', paddingTop: 16 }}>
           <button 
             className="btn-secondary" 
             onClick={verifyOnDevice}
             disabled={loading || selectedAccounts.length === 0}
-            style={{ flex: 1, height: 48, fontSize: 14 }}
+            style={{ flex: '1 1 0', minWidth: 0, height: 48, fontSize: 14 }}
           >
             {loading ? 'Verifying...' : 'Verify on Device'}
           </button>
@@ -1074,7 +1074,7 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
             className="btn-primary" 
             onClick={() => selectedAccounts.length === 1 ? setStep('name') : handleComplete()}
             disabled={selectedAccounts.length === 0}
-            style={{ flex: 1, height: 48, fontSize: 14 }}
+            style={{ flex: '1 1 0', minWidth: 0, height: 48, fontSize: 14 }}
           >
             {selectedAccounts.length > 1 ? `Import ${selectedAccounts.length} Wallets` : 'Continue'}
           </button>

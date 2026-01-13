@@ -503,6 +503,7 @@ class HardwareWalletService {
     await this.preflightCheck();
 
     const derivePath = path || this.derivationPath;
+    logger.log('[Hardware] signTransaction using derivation path:', derivePath, '(passed:', path, ', default:', this.derivationPath, ')');
     
     try {
       // Transaction should be a Buffer or Uint8Array
@@ -522,11 +523,11 @@ class HardwareWalletService {
         throw new Error('Invalid transaction data');
       }
       
-      // 0x6a81 = Function not supported - usually means blind signing is disabled
+      // 0x6a81 = Function not supported - multiple possible causes
       if (error.statusCode === 27265 || error.statusCode === 0x6a81 || 
           error.message?.includes('0x6a81') || error.message?.includes('UNKNOWN_ERROR')) {
         await this.invalidateSession('signTransaction transport error: ' + error.message);
-        throw new Error('Blind signing required. Please enable "Blind Sign" in your Ledger Solana app settings, then try again.');
+        throw new Error('Ledger signing failed. Please try: 1) Enable "Blind Sign" in Ledger Solana app settings, 2) Update Solana app via Ledger Live, 3) Close Ledger Live if running, 4) Reconnect your Ledger');
       }
       
       // On other transport errors, invalidate session to force clean reconnection
@@ -563,11 +564,11 @@ class HardwareWalletService {
       const result = await this.solanaApp.signOffchainMessage(derivePath, msgBuffer);
       return result.signature;
     } catch (err) {
-      // 0x6a81 = Function not supported - usually means blind signing is disabled
+      // 0x6a81 = Function not supported - multiple possible causes
       if (err.statusCode === 27265 || err.statusCode === 0x6a81 || 
           err.message?.includes('0x6a81') || err.message?.includes('UNKNOWN_ERROR')) {
         await this.invalidateSession('signMessage transport error: ' + err.message);
-        throw new Error('Blind signing required. Please enable "Blind Sign" in your Ledger Solana app settings, then try again.');
+        throw new Error('Ledger signing failed. Please try: 1) Enable "Blind Sign" in Ledger Solana app settings, 2) Update Solana app via Ledger Live, 3) Close Ledger Live if running, 4) Reconnect your Ledger');
       }
       
       // On other transport errors, invalidate session to force clean reconnection

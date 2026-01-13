@@ -367,6 +367,17 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
     try {
       setHwStatus('Connecting to Ledger...');
       
+      // Get the derivation path from the current wallet
+      const derivationPath = wallet?.wallet?.derivationPath;
+      logger.log('[SendFlow] Signing with derivation path:', derivationPath);
+      logger.log('[SendFlow] wallet.wallet object:', JSON.stringify({
+        name: wallet?.wallet?.name,
+        type: wallet?.wallet?.type,
+        isHardware: wallet?.wallet?.isHardware,
+        derivationPath: wallet?.wallet?.derivationPath,
+        publicKey: wallet?.wallet?.publicKey
+      }));
+      
       // Always try to ensure fresh connection
       if (!hardwareWallet.isReady()) {
         try {
@@ -385,7 +396,7 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
       }
       
       setHwStatus('Please confirm transaction on Ledger...');
-      const signature = await hardwareWallet.signTransaction(txMessage);
+      const signature = await hardwareWallet.signTransaction(txMessage, derivationPath);
       return signature;
     } catch (err) {
       logger.error('[SendFlow] Hardware signing error:', err);

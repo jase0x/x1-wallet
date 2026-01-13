@@ -19032,6 +19032,7 @@ class HardwareWalletService {
     }
     await this.preflightCheck();
     const derivePath2 = path || this.derivationPath;
+    logger.log("[Hardware] signTransaction using derivation path:", derivePath2, "(passed:", path, ", default:", this.derivationPath, ")");
     try {
       const txBuffer = buffer.Buffer.isBuffer(transaction2) ? transaction2 : buffer.Buffer.from(transaction2);
       const result = await this.solanaApp.signTransaction(derivePath2, txBuffer);
@@ -19046,7 +19047,7 @@ class HardwareWalletService {
       }
       if (error.statusCode === 27265 || error.statusCode === 27265 || ((_a2 = error.message) == null ? void 0 : _a2.includes("0x6a81")) || ((_b2 = error.message) == null ? void 0 : _b2.includes("UNKNOWN_ERROR"))) {
         await this.invalidateSession("signTransaction transport error: " + error.message);
-        throw new Error('Blind signing required. Please enable "Blind Sign" in your Ledger Solana app settings, then try again.');
+        throw new Error('Ledger signing failed. Please try: 1) Enable "Blind Sign" in Ledger Solana app settings, 2) Update Solana app via Ledger Live, 3) Close Ledger Live if running, 4) Reconnect your Ledger');
       }
       if (error.name === "TransportStatusError") {
         await this.invalidateSession("signTransaction transport error: " + error.message);
@@ -19070,7 +19071,7 @@ class HardwareWalletService {
     } catch (err) {
       if (err.statusCode === 27265 || err.statusCode === 27265 || ((_a2 = err.message) == null ? void 0 : _a2.includes("0x6a81")) || ((_b2 = err.message) == null ? void 0 : _b2.includes("UNKNOWN_ERROR"))) {
         await this.invalidateSession("signMessage transport error: " + err.message);
-        throw new Error('Blind signing required. Please enable "Blind Sign" in your Ledger Solana app settings, then try again.');
+        throw new Error('Ledger signing failed. Please try: 1) Enable "Blind Sign" in Ledger Solana app settings, 2) Update Solana app via Ledger Live, 3) Close Ledger Live if running, 4) Reconnect your Ledger');
       }
       if (err.name === "TransportStatusError") {
         await this.invalidateSession("signMessage transport error: " + err.message);
@@ -19733,7 +19734,7 @@ function HardwareWallet({ onComplete, onBack, isFirstWallet = false, existingWal
           ] }) }),
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "hardware-option-text", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hardware-option-title", children: "Ledger" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hardware-option-desc", children: "Nano S, Nano S Plus, Nano X" })
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hardware-option-desc", children: "Nano S, Nano S Plus, Nano X, Flex" })
           ] }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M9 18l6-6-6-6" }) })
         ] }),
@@ -20161,14 +20162,14 @@ function HardwareWallet({ onComplete, onBack, isFirstWallet = false, existingWal
         ] })
       ] }),
       error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", style: { marginTop: 12 }, children: error }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", gap: 12, marginTop: "auto", paddingTop: 16 }, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "hardware-buttons-row", style: { display: "flex", gap: 12, marginTop: "auto", paddingTop: 16 }, children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(
           "button",
           {
             className: "btn-secondary",
             onClick: verifyOnDevice,
             disabled: loading || selectedAccounts.length === 0,
-            style: { flex: 1, height: 48, fontSize: 14 },
+            style: { flex: "1 1 0", minWidth: 0, height: 48, fontSize: 14 },
             children: loading ? "Verifying..." : "Verify on Device"
           }
         ),
@@ -20178,7 +20179,7 @@ function HardwareWallet({ onComplete, onBack, isFirstWallet = false, existingWal
             className: "btn-primary",
             onClick: () => selectedAccounts.length === 1 ? setStep("name") : handleComplete(),
             disabled: selectedAccounts.length === 0,
-            style: { flex: 1, height: 48, fontSize: 14 },
+            style: { flex: "1 1 0", minWidth: 0, height: 48, fontSize: 14 },
             children: selectedAccounts.length > 1 ? `Import ${selectedAccounts.length} Wallets` : "Continue"
           }
         )
@@ -25856,14 +25857,23 @@ function SendFlow({ wallet, selectedToken: initialToken, userTokens = [], onBack
     return `${days} days ago`;
   };
   const signWithHardware = async (txMessage) => {
-    var _a3, _b3, _c2, _d2, _e;
+    var _a3, _b3, _c2, _d2, _e, _f, _g, _h, _i, _j, _k;
     try {
       setHwStatus("Connecting to Ledger...");
+      const derivationPath = (_a3 = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _a3.derivationPath;
+      logger$1.log("[SendFlow] Signing with derivation path:", derivationPath);
+      logger$1.log("[SendFlow] wallet.wallet object:", JSON.stringify({
+        name: (_b3 = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _b3.name,
+        type: (_c2 = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _c2.type,
+        isHardware: (_d2 = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _d2.isHardware,
+        derivationPath: (_e = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _e.derivationPath,
+        publicKey: (_f = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _f.publicKey
+      }));
       if (!hardwareWallet.isReady()) {
         try {
           await hardwareWallet.connect();
         } catch (connectErr) {
-          if ((_a3 = connectErr.message) == null ? void 0 : _a3.includes("already open")) {
+          if ((_g = connectErr.message) == null ? void 0 : _g.includes("already open")) {
             logger$1.log("[SendFlow] Device already open, disconnecting and retrying...");
             await hardwareWallet.disconnect();
             await hardwareWallet.connect();
@@ -25874,17 +25884,17 @@ function SendFlow({ wallet, selectedToken: initialToken, userTokens = [], onBack
         await hardwareWallet.openApp();
       }
       setHwStatus("Please confirm transaction on Ledger...");
-      const signature = await hardwareWallet.signTransaction(txMessage);
+      const signature = await hardwareWallet.signTransaction(txMessage, derivationPath);
       return signature;
     } catch (err) {
       logger$1.error("[SendFlow] Hardware signing error:", err);
-      if ((_b3 = err.message) == null ? void 0 : _b3.includes("rejected")) {
+      if ((_h = err.message) == null ? void 0 : _h.includes("rejected")) {
         throw new Error("Transaction rejected on Ledger");
       }
-      if (((_c2 = err.message) == null ? void 0 : _c2.includes("cancelled")) || ((_d2 = err.message) == null ? void 0 : _d2.includes("No device"))) {
+      if (((_i = err.message) == null ? void 0 : _i.includes("cancelled")) || ((_j = err.message) == null ? void 0 : _j.includes("No device"))) {
         throw new Error("Ledger connection failed. Please make sure your Ledger is connected and the Solana app is open.");
       }
-      if ((_e = err.message) == null ? void 0 : _e.includes("already open")) {
+      if ((_k = err.message) == null ? void 0 : _k.includes("already open")) {
         try {
           await hardwareWallet.disconnect();
         } catch (e) {

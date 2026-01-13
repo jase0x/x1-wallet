@@ -6826,6 +6826,20 @@ body {
   margin-top: 12px;
 }
 
+/* Side-by-side buttons in hardware screen */
+.hardware-buttons-row {
+  display: flex;
+  gap: 12px;
+}
+
+.hardware-buttons-row .btn-primary,
+.hardware-buttons-row .btn-secondary {
+  margin-top: 0;
+  flex: 1 1 0;
+  min-width: 0;
+  width: auto;
+}
+
 .hardware-subtitle {
   color: var(--text-secondary);
   text-align: center;
