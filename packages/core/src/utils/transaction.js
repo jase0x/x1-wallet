@@ -2066,9 +2066,10 @@ export async function signAndSendExternalTransaction(transactionBase64, privateK
  * Sign and send an external transaction using hardware wallet (Ledger)
  * Similar to signAndSendExternalTransaction but uses hardware wallet for signing
  */
-export async function signAndSendExternalTransactionHardware(transactionBase64, hardwareWallet, rpcUrl) {
+export async function signAndSendExternalTransactionHardware(transactionBase64, hardwareWallet, rpcUrl, derivationPath = null) {
   try {
     logger.log('[Swap TX HW] Starting to sign external transaction with hardware wallet');
+    logger.log('[Swap TX HW] Using derivation path:', derivationPath);
     
     // Validate and clean the base64 transaction
     if (!transactionBase64 || typeof transactionBase64 !== 'string') {
@@ -2114,8 +2115,8 @@ export async function signAndSendExternalTransactionHardware(transactionBase64, 
     const message = txBytes.slice(messageOffset);
     logger.log('[Swap TX HW] Message length:', message.length, 'bytes');
     
-    // Sign with hardware wallet
-    const signature = await hardwareWallet.signTransaction(message);
+    // Sign with hardware wallet - pass the derivation path
+    const signature = await hardwareWallet.signTransaction(message, derivationPath);
     logger.log('[Swap TX HW] Signature generated via hardware wallet');
     
     // Build the signed transaction
@@ -2770,8 +2771,9 @@ export async function createUnwrapTransaction({ owner, amount, rpcUrl, privateKe
 /**
  * Create a wrap transaction using hardware wallet (Ledger)
  */
-export async function createWrapTransactionHardware({ owner, amount, rpcUrl, hardwareWallet }) {
+export async function createWrapTransactionHardware({ owner, amount, rpcUrl, hardwareWallet, derivationPath = null }) {
   logger.log('[Wrap HW] Creating wrap transaction for', amount, 'native tokens');
+  logger.log('[Wrap HW] Using derivation path:', derivationPath);
   
   try {
     // Convert amount to lamports
@@ -2919,8 +2921,8 @@ export async function createWrapTransactionHardware({ owner, amount, rpcUrl, har
     
     logger.log('[Wrap HW] Message built, length:', message.length);
     
-    // Sign with hardware wallet
-    const signature = await hardwareWallet.signTransaction(message);
+    // Sign with hardware wallet - pass derivation path
+    const signature = await hardwareWallet.signTransaction(message, derivationPath);
     logger.log('[Wrap HW] Signature created via hardware wallet');
     
     // Build signed transaction
@@ -2943,8 +2945,9 @@ export async function createWrapTransactionHardware({ owner, amount, rpcUrl, har
 /**
  * Create an unwrap transaction using hardware wallet (Ledger)
  */
-export async function createUnwrapTransactionHardware({ owner, amount, rpcUrl, hardwareWallet }) {
+export async function createUnwrapTransactionHardware({ owner, amount, rpcUrl, hardwareWallet, derivationPath = null }) {
   console.log('[Unwrap HW] Creating unwrap transaction');
+  console.log('[Unwrap HW] Using derivation path:', derivationPath);
   
   try {
     // Get recent blockhash
@@ -3045,8 +3048,8 @@ export async function createUnwrapTransactionHardware({ owner, amount, rpcUrl, h
     
     console.log('[Unwrap HW] Message built, length:', message.length);
     
-    // Sign with hardware wallet
-    const signature = await hardwareWallet.signTransaction(message);
+    // Sign with hardware wallet - pass derivation path
+    const signature = await hardwareWallet.signTransaction(message, derivationPath);
     console.log('[Unwrap HW] Signature created via hardware wallet');
     
     // Build signed transaction

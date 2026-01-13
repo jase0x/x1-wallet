@@ -515,9 +515,10 @@ export default function DAppApproval({ wallet, onComplete }) {
   };
 
   // Sign with hardware wallet
-  const signWithHardware = async (message) => {
+  const signWithHardware = async (message, derivationPath = null) => {
     try {
       setHwStatus('Connecting to Ledger...');
+      logger.log('[DAppApproval] signWithHardware using derivation path:', derivationPath);
       
       // In popup context, try to use openConnected first (reuse authorized device)
       // This avoids the device picker which can be problematic in popups
@@ -565,7 +566,7 @@ export default function DAppApproval({ wallet, onComplete }) {
       }
       
       setHwStatus('Please confirm transaction on Ledger...');
-      const signature = await hardwareWallet.signTransaction(message);
+      const signature = await hardwareWallet.signTransaction(message, derivationPath);
       return signature;
     } catch (err) {
       logger.error('[DAppApproval] Hardware signing error:', err);
@@ -758,7 +759,9 @@ export default function DAppApproval({ wallet, onComplete }) {
       // Sign the message - hardware or software wallet
       let signature;
       if (isHardwareWallet) {
-        signature = await signWithHardware(message);
+        const derivationPath = wallet?.wallet?.derivationPath;
+        logger.log('[DAppApproval] Using derivation path:', derivationPath);
+        signature = await signWithHardware(message, derivationPath);
       } else {
         const secretKey = getSecretKey();
         signature = await crypto.sign(message, secretKey);
@@ -872,7 +875,8 @@ export default function DAppApproval({ wallet, onComplete }) {
           } else {
             setHwStatus(`Signing transaction ${i + 1} of ${pendingRequest.transactions.length}...`);
           }
-          signature = await signWithHardware(message);
+          const derivationPath = wallet?.wallet?.derivationPath;
+          signature = await signWithHardware(message, derivationPath);
         } else {
           signature = await crypto.sign(message, secretKey);
         }
@@ -1069,7 +1073,9 @@ export default function DAppApproval({ wallet, onComplete }) {
       logger.log('[DAppApproval] Signing message... isHardware:', isHardwareWallet);
       let signature;
       if (isHardwareWallet) {
-        signature = await signWithHardware(message);
+        const derivationPath = wallet?.wallet?.derivationPath;
+        logger.log('[DAppApproval] Using derivation path:', derivationPath);
+        signature = await signWithHardware(message, derivationPath);
       } else {
         const secretKey = getSecretKey();
         signature = await crypto.sign(message, secretKey);

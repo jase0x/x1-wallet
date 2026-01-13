@@ -1262,19 +1262,25 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
             
             setHwStatus('Please confirm on your Ledger...');
             
+            // Get derivation path from wallet
+            const derivationPath = wallet?.wallet?.derivationPath;
+            logger.log('[Swap Wrap/Unwrap] Using derivation path:', derivationPath);
+            
             if (wrapDirection === 'wrap') {
               signature = await createWrapTransactionHardware({
                 owner: walletPublicKey,
                 amount: parseFloat(fromAmount),
                 rpcUrl: networkConfig.rpcUrl,
-                hardwareWallet
+                hardwareWallet,
+                derivationPath
               });
             } else {
               signature = await createUnwrapTransactionHardware({
                 owner: walletPublicKey,
                 amount: parseFloat(fromAmount),
                 rpcUrl: networkConfig.rpcUrl,
-                hardwareWallet
+                hardwareWallet,
+                derivationPath
               });
             }
             setHwStatus('');
@@ -1486,6 +1492,10 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
         // Hardware wallet signing
         setHwStatus('Connecting to Ledger...');
         
+        // Get derivation path from wallet
+        const derivationPath = wallet?.wallet?.derivationPath;
+        logger.log('[Swap] Using derivation path:', derivationPath);
+        
         if (!hardwareWallet.isReady()) {
           await hardwareWallet.connect('hid');
           await hardwareWallet.openApp();
@@ -1501,7 +1511,8 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
             const signature = await signAndSendExternalTransactionHardware(
               tx,
               hardwareWallet,
-              networkConfig.rpcUrl
+              networkConfig.rpcUrl,
+              derivationPath
             );
             
             logger.log(`[Swap] Transaction ${i + 1} sent! Signature:`, signature);

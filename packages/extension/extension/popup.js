@@ -12297,9 +12297,10 @@ async function signAndSendExternalTransaction(transactionBase64, privateKey, rpc
     throw error;
   }
 }
-async function signAndSendExternalTransactionHardware(transactionBase64, hardwareWallet2, rpcUrl) {
+async function signAndSendExternalTransactionHardware(transactionBase64, hardwareWallet2, rpcUrl, derivationPath = null) {
   try {
     logger$1.log("[Swap TX HW] Starting to sign external transaction with hardware wallet");
+    logger$1.log("[Swap TX HW] Using derivation path:", derivationPath);
     if (!transactionBase64 || typeof transactionBase64 !== "string") {
       throw new Error("Transaction data is missing or invalid");
     }
@@ -12324,7 +12325,7 @@ async function signAndSendExternalTransactionHardware(transactionBase64, hardwar
     const messageOffset = 1 + numSignatures * 64;
     const message = txBytes.slice(messageOffset);
     logger$1.log("[Swap TX HW] Message length:", message.length, "bytes");
-    const signature = await hardwareWallet2.signTransaction(message);
+    const signature = await hardwareWallet2.signTransaction(message, derivationPath);
     logger$1.log("[Swap TX HW] Signature generated via hardware wallet");
     const signedTx = new Uint8Array(1 + 64 + message.length);
     signedTx[0] = 1;
@@ -12785,9 +12786,10 @@ async function createUnwrapTransaction({ owner, amount, rpcUrl, privateKey }) {
     throw err;
   }
 }
-async function createWrapTransactionHardware({ owner, amount, rpcUrl, hardwareWallet: hardwareWallet2 }) {
+async function createWrapTransactionHardware({ owner, amount, rpcUrl, hardwareWallet: hardwareWallet2, derivationPath = null }) {
   var _a2, _b2;
   logger$1.log("[Wrap HW] Creating wrap transaction for", amount, "native tokens");
+  logger$1.log("[Wrap HW] Using derivation path:", derivationPath);
   try {
     const lamports = Math.floor(amount * 1e9);
     const blockhashResponse = await fetch(rpcUrl, {
@@ -12907,7 +12909,7 @@ async function createWrapTransactionHardware({ owner, amount, rpcUrl, hardwareWa
       offset += part.length;
     }
     logger$1.log("[Wrap HW] Message built, length:", message.length);
-    const signature = await hardwareWallet2.signTransaction(message);
+    const signature = await hardwareWallet2.signTransaction(message, derivationPath);
     logger$1.log("[Wrap HW] Signature created via hardware wallet");
     const signedTx = new Uint8Array(1 + 64 + message.length);
     signedTx[0] = 1;
@@ -12921,9 +12923,10 @@ async function createWrapTransactionHardware({ owner, amount, rpcUrl, hardwareWa
     throw err;
   }
 }
-async function createUnwrapTransactionHardware({ owner, amount, rpcUrl, hardwareWallet: hardwareWallet2 }) {
+async function createUnwrapTransactionHardware({ owner, amount, rpcUrl, hardwareWallet: hardwareWallet2, derivationPath = null }) {
   var _a2, _b2;
   console.log("[Unwrap HW] Creating unwrap transaction");
+  console.log("[Unwrap HW] Using derivation path:", derivationPath);
   try {
     const blockhashResponse = await fetch(rpcUrl, {
       method: "POST",
@@ -13006,7 +13009,7 @@ async function createUnwrapTransactionHardware({ owner, amount, rpcUrl, hardware
       offset += part.length;
     }
     console.log("[Unwrap HW] Message built, length:", message.length);
-    const signature = await hardwareWallet2.signTransaction(message);
+    const signature = await hardwareWallet2.signTransaction(message, derivationPath);
     console.log("[Unwrap HW] Signature created via hardware wallet");
     const signedTx = new Uint8Array(1 + 64 + message.length);
     signedTx[0] = 1;
@@ -27555,7 +27558,7 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
     setShowConfirm(true);
   };
   const handleSwap = async () => {
-    var _a3, _b3, _c2, _d2, _e, _f, _g, _h, _i, _j, _k, _l;
+    var _a3, _b3, _c2, _d2, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
     logger$1.log("[Swap] Executing swap...");
     logger$1.log("[Swap] isHardwareWallet:", isHardwareWallet);
     logger$1.log("[Swap] wallet?.wallet?.isHardware:", (_a3 = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _a3.isHardware);
@@ -27604,19 +27607,23 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
               await hardwareWallet.openApp();
             }
             setHwStatus("Please confirm on your Ledger...");
+            const derivationPath = (_g = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _g.derivationPath;
+            logger$1.log("[Swap Wrap/Unwrap] Using derivation path:", derivationPath);
             if (wrapDirection === "wrap") {
               signature2 = await createWrapTransactionHardware({
                 owner: walletPublicKey,
                 amount: parseFloat(fromAmount),
                 rpcUrl: networkConfig.rpcUrl,
-                hardwareWallet
+                hardwareWallet,
+                derivationPath
               });
             } else {
               signature2 = await createUnwrapTransactionHardware({
                 owner: walletPublicKey,
                 amount: parseFloat(fromAmount),
                 rpcUrl: networkConfig.rpcUrl,
-                hardwareWallet
+                hardwareWallet,
+                derivationPath
               });
             }
             setHwStatus("");
@@ -27732,7 +27739,7 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
       );
       logger$1.log("[Swap] Transaction prepared:", txData);
       let transactions = [];
-      if (Array.isArray((_g = txData == null ? void 0 : txData.data) == null ? void 0 : _g.transaction)) {
+      if (Array.isArray((_h = txData == null ? void 0 : txData.data) == null ? void 0 : _h.transaction)) {
         transactions = txData.data.transaction;
         logger$1.log("[Swap] Received array of", transactions.length, "transactions");
       } else if (Array.isArray(txData == null ? void 0 : txData.transaction)) {
@@ -27740,15 +27747,15 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
         logger$1.log("[Swap] Received array of", transactions.length, "transactions");
       } else if (typeof (txData == null ? void 0 : txData.transaction) === "string") {
         transactions = [txData.transaction];
-      } else if (typeof ((_h = txData == null ? void 0 : txData.data) == null ? void 0 : _h.transaction) === "string") {
+      } else if (typeof ((_i = txData == null ? void 0 : txData.data) == null ? void 0 : _i.transaction) === "string") {
         transactions = [txData.data.transaction];
-      } else if (typeof ((_i = txData == null ? void 0 : txData.transaction) == null ? void 0 : _i.serializedTransaction) === "string") {
+      } else if (typeof ((_j = txData == null ? void 0 : txData.transaction) == null ? void 0 : _j.serializedTransaction) === "string") {
         transactions = [txData.transaction.serializedTransaction];
-      } else if (typeof ((_k = (_j = txData == null ? void 0 : txData.data) == null ? void 0 : _j.transaction) == null ? void 0 : _k.serializedTransaction) === "string") {
+      } else if (typeof ((_l = (_k = txData == null ? void 0 : txData.data) == null ? void 0 : _k.transaction) == null ? void 0 : _l.serializedTransaction) === "string") {
         transactions = [txData.data.transaction.serializedTransaction];
       } else if (typeof (txData == null ? void 0 : txData.swapTransaction) === "string") {
         transactions = [txData.swapTransaction];
-      } else if (typeof ((_l = txData == null ? void 0 : txData.data) == null ? void 0 : _l.swapTransaction) === "string") {
+      } else if (typeof ((_m = txData == null ? void 0 : txData.data) == null ? void 0 : _m.swapTransaction) === "string") {
         transactions = [txData.data.swapTransaction];
       }
       if (transactions.length === 0) {
@@ -27768,6 +27775,8 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
       let lastSignature = null;
       if (isHardwareWallet) {
         setHwStatus("Connecting to Ledger...");
+        const derivationPath = (_n = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _n.derivationPath;
+        logger$1.log("[Swap] Using derivation path:", derivationPath);
         if (!hardwareWallet.isReady()) {
           await hardwareWallet.connect("hid");
           await hardwareWallet.openApp();
@@ -27780,7 +27789,8 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
             const signature2 = await signAndSendExternalTransactionHardware(
               tx,
               hardwareWallet,
-              networkConfig.rpcUrl
+              networkConfig.rpcUrl,
+              derivationPath
             );
             logger$1.log(`[Swap] Transaction ${i + 1} sent! Signature:`, signature2);
             lastSignature = signature2;
@@ -30093,7 +30103,7 @@ function StakeScreen({ wallet, onBack, onRefreshBalance }) {
     };
   }, [isX1Mainnet, walletAddress]);
   const handleStake = async () => {
-    var _a3, _b3, _c2, _d2, _e, _f, _g, _h;
+    var _a3, _b3, _c2, _d2, _e, _f, _g, _h, _i;
     logger$1.log("[Stake] ===== handleStake START =====");
     logger$1.log("[Stake] amount:", amount);
     logger$1.log("[Stake] balance:", balance);
@@ -30265,6 +30275,8 @@ function StakeScreen({ wallet, onBack, onRefreshBalance }) {
       if (isHardwareWallet) {
         logger$1.log("[Stake] Using hardware wallet for signing");
         setHwStatus("Connecting to Ledger...");
+        const derivationPath = (_c2 = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _c2.derivationPath;
+        logger$1.log("[Stake] Using derivation path:", derivationPath);
         try {
           if (!hardwareWallet.isReady()) {
             await hardwareWallet.connect("hid");
@@ -30283,17 +30295,18 @@ function StakeScreen({ wallet, onBack, onRefreshBalance }) {
           signature = await signAndSendExternalTransactionHardware2(
             txBase64,
             hardwareWallet,
-            networkConfig.rpcUrl
+            networkConfig.rpcUrl,
+            derivationPath
           );
           setHwStatus("");
         } catch (hwErr) {
           setHwStatus("");
           logger$1.error("[Stake] Hardware wallet error:", hwErr);
-          if (((_c2 = hwErr.message) == null ? void 0 : _c2.includes("0x6a81")) || ((_d2 = hwErr.message) == null ? void 0 : _d2.includes("Solana app"))) {
+          if (((_d2 = hwErr.message) == null ? void 0 : _d2.includes("0x6a81")) || ((_e = hwErr.message) == null ? void 0 : _e.includes("Solana app"))) {
             throw new Error("Please open the Solana app on your Ledger");
-          } else if (((_e = hwErr.message) == null ? void 0 : _e.includes("denied")) || ((_f = hwErr.message) == null ? void 0 : _f.includes("rejected"))) {
+          } else if (((_f = hwErr.message) == null ? void 0 : _f.includes("denied")) || ((_g = hwErr.message) == null ? void 0 : _g.includes("rejected"))) {
             throw new Error("Transaction rejected on Ledger");
-          } else if (((_g = hwErr.message) == null ? void 0 : _g.includes("not connected")) || ((_h = hwErr.message) == null ? void 0 : _h.includes("Could not connect"))) {
+          } else if (((_h = hwErr.message) == null ? void 0 : _h.includes("not connected")) || ((_i = hwErr.message) == null ? void 0 : _i.includes("Could not connect"))) {
             throw new Error("Ledger not connected. Please connect and try again.");
           }
           throw hwErr;
@@ -30357,7 +30370,7 @@ function StakeScreen({ wallet, onBack, onRefreshBalance }) {
     }
   };
   const handleUnstake = async () => {
-    var _a3, _b3, _c2, _d2, _e, _f, _g;
+    var _a3, _b3, _c2, _d2, _e, _f, _g, _h;
     logger$1.log("[Unstake] ===== handleUnstake START =====");
     logger$1.log("[Unstake] isHardwareWallet:", isHardwareWallet);
     const unstakeAmount = parseFloat(amount);
@@ -30432,6 +30445,8 @@ function StakeScreen({ wallet, onBack, onRefreshBalance }) {
       if (isHardwareWallet) {
         logger$1.log("[Unstake] Using hardware wallet for signing");
         setHwStatus("Connecting to Ledger...");
+        const derivationPath = (_b3 = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _b3.derivationPath;
+        logger$1.log("[Unstake] Using derivation path:", derivationPath);
         try {
           if (!hardwareWallet.isReady()) {
             await hardwareWallet.connect("hid");
@@ -30450,17 +30465,18 @@ function StakeScreen({ wallet, onBack, onRefreshBalance }) {
           signature = await signAndSendExternalTransactionHardware2(
             txBase64,
             hardwareWallet,
-            networkConfig.rpcUrl
+            networkConfig.rpcUrl,
+            derivationPath
           );
           setHwStatus("");
         } catch (hwErr) {
           setHwStatus("");
           logger$1.error("[Unstake] Hardware wallet error:", hwErr);
-          if (((_b3 = hwErr.message) == null ? void 0 : _b3.includes("0x6a81")) || ((_c2 = hwErr.message) == null ? void 0 : _c2.includes("Solana app"))) {
+          if (((_c2 = hwErr.message) == null ? void 0 : _c2.includes("0x6a81")) || ((_d2 = hwErr.message) == null ? void 0 : _d2.includes("Solana app"))) {
             throw new Error("Please open the Solana app on your Ledger");
-          } else if (((_d2 = hwErr.message) == null ? void 0 : _d2.includes("denied")) || ((_e = hwErr.message) == null ? void 0 : _e.includes("rejected"))) {
+          } else if (((_e = hwErr.message) == null ? void 0 : _e.includes("denied")) || ((_f = hwErr.message) == null ? void 0 : _f.includes("rejected"))) {
             throw new Error("Transaction rejected on Ledger");
-          } else if (((_f = hwErr.message) == null ? void 0 : _f.includes("not connected")) || ((_g = hwErr.message) == null ? void 0 : _g.includes("Could not connect"))) {
+          } else if (((_g = hwErr.message) == null ? void 0 : _g.includes("not connected")) || ((_h = hwErr.message) == null ? void 0 : _h.includes("Could not connect"))) {
             throw new Error("Ledger not connected. Please connect and try again.");
           }
           throw hwErr;
@@ -31403,10 +31419,11 @@ function DAppApproval({ wallet, onComplete }) {
       }
     }
   };
-  const signWithHardware = async (message) => {
+  const signWithHardware = async (message, derivationPath = null) => {
     var _a3, _b3, _c2, _d2, _e2, _f2, _g2, _h2, _i, _j, _k, _l, _m, _n, _o;
     try {
       setHwStatus("Connecting to Ledger...");
+      logger$1.log("[DAppApproval] signWithHardware using derivation path:", derivationPath);
       if (!hardwareWallet.isReady()) {
         logger$1.log("[DAppApproval] Hardware wallet not ready, attempting connection...");
         try {
@@ -31434,7 +31451,7 @@ function DAppApproval({ wallet, onComplete }) {
         await hardwareWallet.openApp();
       }
       setHwStatus("Please confirm transaction on Ledger...");
-      const signature = await hardwareWallet.signTransaction(message);
+      const signature = await hardwareWallet.signTransaction(message, derivationPath);
       return signature;
     } catch (err) {
       logger$1.error("[DAppApproval] Hardware signing error:", err);
@@ -31542,6 +31559,7 @@ function DAppApproval({ wallet, onComplete }) {
     return map[chain] || null;
   };
   const handleSignTransaction = async () => {
+    var _a3;
     if (signingInProgress.current) {
       logger$1.warn("[DAppApproval] Sign already in progress, ignoring");
       return;
@@ -31577,7 +31595,9 @@ function DAppApproval({ wallet, onComplete }) {
       logger$1.log("[DAppApproval] Num sig slots:", numSigSlots, "Message start:", messageStart);
       let signature;
       if (isHardwareWallet) {
-        signature = await signWithHardware(message);
+        const derivationPath = (_a3 = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _a3.derivationPath;
+        logger$1.log("[DAppApproval] Using derivation path:", derivationPath);
+        signature = await signWithHardware(message, derivationPath);
       } else {
         const secretKey = getSecretKey();
         signature = await sign(message, secretKey);
@@ -31622,6 +31642,7 @@ function DAppApproval({ wallet, onComplete }) {
     }
   };
   const handleSignAllTransactions = async () => {
+    var _a3;
     if (signingInProgress.current) {
       logger$1.warn("[DAppApproval] Sign already in progress, ignoring");
       return;
@@ -31664,7 +31685,8 @@ function DAppApproval({ wallet, onComplete }) {
           } else {
             setHwStatus(`Signing transaction ${i + 1} of ${pendingRequest.transactions.length}...`);
           }
-          signature = await signWithHardware(message);
+          const derivationPath = (_a3 = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _a3.derivationPath;
+          signature = await signWithHardware(message, derivationPath);
         } else {
           signature = await sign(message, secretKey);
         }
@@ -31709,7 +31731,7 @@ function DAppApproval({ wallet, onComplete }) {
     }
   };
   const handleSignAndSendTransaction = async () => {
-    var _a3, _b3, _c2, _d2, _e2;
+    var _a3, _b3, _c2, _d2, _e2, _f2;
     if (signingInProgress.current) {
       logger$1.warn("[DAppApproval] Sign already in progress, ignoring");
       return;
@@ -31822,7 +31844,9 @@ function DAppApproval({ wallet, onComplete }) {
       logger$1.log("[DAppApproval] Signing message... isHardware:", isHardwareWallet);
       let signature;
       if (isHardwareWallet) {
-        signature = await signWithHardware(message);
+        const derivationPath = (_d2 = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _d2.derivationPath;
+        logger$1.log("[DAppApproval] Using derivation path:", derivationPath);
+        signature = await signWithHardware(message, derivationPath);
       } else {
         const secretKey = getSecretKey();
         signature = await sign(message, secretKey);
@@ -31877,9 +31901,9 @@ function DAppApproval({ wallet, onComplete }) {
       const txSignature = data.result;
       logger$1.log("[DAppApproval] Transaction signature:", txSignature);
       try {
-        const walletAddress = (_d2 = wallet.wallet) == null ? void 0 : _d2.publicKey;
+        const walletAddress = (_e2 = wallet.wallet) == null ? void 0 : _e2.publicKey;
         const nativeSymbol = (currentNetwork2 == null ? void 0 : currentNetwork2.includes("Solana")) ? "SOL" : "XNT";
-        const dappName = ((_e2 = pendingRequest.origin) == null ? void 0 : _e2.replace(/^https?:\/\//, "").split("/")[0]) || "DApp";
+        const dappName = ((_f2 = pendingRequest.origin) == null ? void 0 : _f2.replace(/^https?:\/\//, "").split("/")[0]) || "DApp";
         let txType = "dapp";
         if (decodedTx == null ? void 0 : decodedTx.instructions) {
           const hasWrap = decodedTx.instructions.some(

@@ -636,6 +636,10 @@ export default function StakeScreen({ wallet, onBack, onRefreshBalance }) {
         logger.log('[Stake] Using hardware wallet for signing');
         setHwStatus('Connecting to Ledger...');
         
+        // Get derivation path from wallet
+        const derivationPath = wallet?.wallet?.derivationPath;
+        logger.log('[Stake] Using derivation path:', derivationPath);
+        
         try {
           // Connect to Ledger if not ready
           if (!hardwareWallet.isReady()) {
@@ -661,11 +665,12 @@ export default function StakeScreen({ wallet, onBack, onRefreshBalance }) {
           // Import hardware signing function
           const { signAndSendExternalTransactionHardware } = await import('@x1-wallet/core/utils/transaction');
           
-          // Sign and send with hardware wallet
+          // Sign and send with hardware wallet - pass derivation path
           signature = await signAndSendExternalTransactionHardware(
             txBase64,
             hardwareWallet,
-            networkConfig.rpcUrl
+            networkConfig.rpcUrl,
+            derivationPath
           );
           
           setHwStatus('');
@@ -864,6 +869,10 @@ export default function StakeScreen({ wallet, onBack, onRefreshBalance }) {
         logger.log('[Unstake] Using hardware wallet for signing');
         setHwStatus('Connecting to Ledger...');
         
+        // Get derivation path from wallet
+        const derivationPath = wallet?.wallet?.derivationPath;
+        logger.log('[Unstake] Using derivation path:', derivationPath);
+        
         try {
           // Connect to Ledger if not ready
           if (!hardwareWallet.isReady()) {
@@ -889,11 +898,12 @@ export default function StakeScreen({ wallet, onBack, onRefreshBalance }) {
           // Import hardware signing function
           const { signAndSendExternalTransactionHardware } = await import('@x1-wallet/core/utils/transaction');
           
-          // Sign and send with hardware wallet
+          // Sign and send with hardware wallet - pass derivation path
           signature = await signAndSendExternalTransactionHardware(
             txBase64,
             hardwareWallet,
-            networkConfig.rpcUrl
+            networkConfig.rpcUrl,
+            derivationPath
           );
           
           setHwStatus('');
