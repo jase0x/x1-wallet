@@ -1,6 +1,6 @@
 {
   "name": "@x1-wallet/extension",
-  "version": "0.10.65",
+  "version": "0.10.66",
   "description": "X1 Wallet Browser Extension",
   "type": "module",
   "scripts": {

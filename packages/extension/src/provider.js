@@ -184,7 +184,7 @@
   const pendingRequests = new Map();
 
   // X1 Wallet icon as data URI
-  const X1_WALLET_ICON = "https://x1logos.s3.us-east-1.amazonaws.com/128+-+wallet.png";
+  const X1_WALLET_ICON = "/icons/128-wallet.png";
 
   // X1 Wallet Provider Class
   class X1WalletProvider extends EventEmitter {

@@ -5042,6 +5042,45 @@ body {
   padding: 8px 10px;
 }
 
+/* Swap error message - ensure it doesn't overlap slippage buttons */
+.swap-screen .error-message {
+  position: relative;
+  z-index: 1;
+  margin-top: 16px;
+  margin-bottom: 8px;
+  clear: both;
+  display: block;
+}
+
+/* Slippage section - ensure proper stacking and spacing */
+.swap-screen .send-priority-section {
+  position: relative;
+  z-index: 2;
+  margin-bottom: 8px;
+}
+
+/* Slippage buttons container - ensure proper layout */
+.swap-screen .send-priority-selector {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Ensure slippage buttons are always clickable */
+.swap-screen .send-priority-btn {
+  position: relative;
+  z-index: 2;
+}
+
+/* Confirmation screen content - ensure proper flow */
+.swap-screen .send-step-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
 /* Stake Screen Styles */
 .stake-screen .screen-header {
   display: flex;
@@ -9786,4 +9825,152 @@ details[open] .dapp-tx-details-summary svg {
 .bridge-screen .send-bottom-action {
   margin-top: auto;
   padding: 20px 40px;
+}
+/* ========================================
+   Full Page Hardware Wallet Layout
+   (Like Phantom - centered card on gradient background)
+   ======================================== */
+
+.hardware-fullpage {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+.hardware-fullpage-bg {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(180deg, #0a1628 0%, #000000 100%);
+  z-index: -1;
+}
+
+/* Add subtle blue gradient overlay */
+.hardware-fullpage-bg::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: radial-gradient(ellipse at 50% 0%, rgba(2, 116, 251, 0.2) 0%, transparent 60%);
+  pointer-events: none;
+}
+
+/* X1 Logo in upper left corner */
+.hardware-fullpage-logo {
+  position: fixed;
+  top: 32px;
+  left: 32px;
+  width: 48px;
+  height: 48px;
+  z-index: 10;
+}
+
+.hardware-fullpage-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.hardware-fullpage-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--bg-primary, #12131a);
+  border-radius: 24px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5),
+              0 0 0 1px rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+  position: relative;
+}
+
+/* Override hardware screen styles inside the card */
+.hardware-fullpage-card .screen.hardware-screen {
+  background: transparent;
+  min-height: auto;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.hardware-fullpage-card .screen.hardware-screen.no-nav {
+  padding: 32px 24px;
+}
+
+/* Make the hardware wallet steps look better in full page */
+.hardware-fullpage-card h2 {
+  font-size: 24px;
+  margin-bottom: 8px;
+}
+
+.hardware-fullpage-card .hardware-subtitle {
+  font-size: 15px;
+  color: var(--text-muted);
+  margin-bottom: 24px;
+}
+
+/* Device selection cards in full page */
+.hardware-fullpage-card .hardware-device-option {
+  padding: 20px;
+  border-radius: 16px;
+  transition: all 0.2s ease;
+}
+
+.hardware-fullpage-card .hardware-device-option:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+}
+
+/* Button styles for full page */
+.hardware-fullpage-card .btn-primary {
+  height: 52px;
+  font-size: 16px;
+  border-radius: 14px;
+}
+
+.hardware-fullpage-card .btn-secondary {
+  height: 48px;
+  font-size: 15px;
+  border-radius: 12px;
+}
+
+/* Scrollbar styling for the card */
+.hardware-fullpage-card::-webkit-scrollbar {
+  width: 6px;
+}
+
+.hardware-fullpage-card::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.hardware-fullpage-card::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+
+.hardware-fullpage-card::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Responsive adjustments */
+@media (max-width: 480px) {
+  .hardware-fullpage {
+    padding: 0;
+    align-items: stretch;
+  }
+  
+  .hardware-fullpage-card {
+    max-width: none;
+    border-radius: 0;
+    min-height: 100vh;
+  }
 }

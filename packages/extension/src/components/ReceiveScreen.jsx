@@ -3,7 +3,7 @@ import { logger } from '@x1-wallet/core';
 import React, { useState, useEffect, useRef } from 'react';
 import X1Logo from './X1Logo';
 
-const SOLANA_LOGO_URL = 'https://xdex.s3.us-east-2.amazonaws.com/vimages/solana.png';
+const SOLANA_LOGO_URL = 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png';
 
 function NetworkLogo({ network, size = 40 }) {
   const logoSize = Math.round(size * 0.8);

@@ -8,7 +8,7 @@ import { validateAddress } from '@x1-wallet/core/utils/base58';
 import { hardwareWallet } from '../services/hardware';
 
 // Solana Logo URL
-const SOLANA_LOGO_URL = 'https://xdex.s3.us-east-2.amazonaws.com/vimages/solana.png';
+const SOLANA_LOGO_URL = 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png';
 
 // Transaction priority options
 const PRIORITY_OPTIONS = [
@@ -420,6 +420,8 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
       } catch { return false; }
     })();
     
+    console.log('[SendFlow] sendNative - Fast Mode (skipSimulation):', skipSimulation);
+    
     const response = await fetch(networkConfig.rpcUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -472,6 +474,7 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
     const isSelfSend = wallet.wallet.publicKey === recipient.trim();
     
     if (!skipSimulation && !isSelfSend) {
+      console.log('[SendFlow] Running transaction simulation...');
       const simResponse = await fetch(networkConfig.rpcUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -504,6 +507,8 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
         }
         throw new Error(errorMsg);
       }
+    } else {
+      console.log('[SendFlow] Skipping simulation - Fast Mode:', skipSimulation, 'Self-send:', isSelfSend);
     }
 
     const sendResponse = await fetch(networkConfig.rpcUrl, {
@@ -516,7 +521,7 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
         params: [tx, { 
           encoding: 'base64', 
           preflightCommitment: 'confirmed',
-          skipPreflight: isSelfSend // Skip preflight for self-sends to avoid AccountLoadedTwice error
+          skipPreflight: skipSimulation || isSelfSend // Skip preflight for Fast Mode or self-sends
         }]
       })
     });
@@ -550,6 +555,22 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
     }
     
     const tokenAmount = Math.floor(sendAmount * Math.pow(10, currentToken.decimals));
+    
+    console.log('[SendFlow] Token send details:', {
+      from: wallet.wallet.publicKey,
+      to: recipient.trim(),
+      mint: currentToken.mint,
+      programId: currentToken.programId,
+      isToken2022: currentToken.isToken2022,
+      sourceATA: currentToken.address,
+      isSelfSend: wallet.wallet.publicKey === recipient.trim(),
+      isToMint: recipient.trim() === currentToken.mint
+    });
+    
+    // Prevent sending to the mint address (invalid)
+    if (recipient.trim() === currentToken.mint) {
+      throw new Error('Cannot send tokens to the token mint address. Please enter a wallet address.');
+    }
     
     // Handle self-transfer - can't transfer SPL tokens to same wallet (same ATA)
     // Return a no-op success since balance wouldn't change anyway

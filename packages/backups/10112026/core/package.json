@@ -1,0 +1,19 @@
+{
+  "name": "@x1-wallet/core",
+  "version": "1.0.0",
+  "description": "X1 Wallet Core - Shared wallet logic, crypto, and API services",
+  "main": "src/index.js",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js",
+    "./utils/*": "./src/utils/*",
+    "./services/*": "./src/services/*",
+    "./hooks/*": "./src/hooks/*"
+  },
+  "dependencies": {
+    "buffer": "^6.0.3"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0"
+  }
+}

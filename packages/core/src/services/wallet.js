@@ -112,39 +112,28 @@ export async function setupPassword(password) {
  * Requirements: minimum 12 characters, mixed case, numbers, special characters
  */
 export function validatePasswordStrength(password) {
-  if (!password) {
+  if (typeof password !== 'string' || !password) {
     return { valid: false, error: 'Password is required' };
   }
-  
-  if (password.length < 12) {
-    return { valid: false, error: 'Password must be at least 12 characters' };
+
+  if (password.length < 8) {
+    return { valid: false, error: 'Password must be at least 8 characters' };
   }
-  
-  if (!/[a-z]/.test(password)) {
-    return { valid: false, error: 'Password must contain at least one lowercase letter' };
+
+  if (!/[a-zA-Z]/.test(password)) {
+    return { valid: false, error: 'Password must contain at least one letter' };
   }
-  
-  if (!/[A-Z]/.test(password)) {
-    return { valid: false, error: 'Password must contain at least one uppercase letter' };
-  }
-  
+
   if (!/[0-9]/.test(password)) {
     return { valid: false, error: 'Password must contain at least one number' };
   }
-  
-  if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?~`]/.test(password)) {
-    return { valid: false, error: 'Password must contain at least one special character' };
+
+  // Block very common weak passwords
+  const banned = ['password', '123456', 'qwerty', 'letmein'];
+  if (banned.includes(password.toLowerCase())) {
+    return { valid: false, error: 'Password too weak' };
   }
-  
-  // Check for common weak patterns
-  const commonPatterns = ['password', '12345678', 'qwerty', 'abcdef'];
-  const lowerPassword = password.toLowerCase();
-  for (const pattern of commonPatterns) {
-    if (lowerPassword.includes(pattern)) {
-      return { valid: false, error: 'Password contains a common weak pattern' };
-    }
-  }
-  
+
   return { valid: true };
 }
 
@@ -214,14 +203,14 @@ export async function checkPassword(password) {
 export async function clearPassword() {
   try {
     localStorage.removeItem(AUTH_KEY);
-    localStorage.removeItem('x1wallet_passwordProtection');
     localStorage.removeItem('x1wallet_encrypted');
+    // Note: Don't clear passwordProtection - that's a user setting
     
     if (typeof chrome !== 'undefined' && chrome.storage) {
-      await chrome.storage.local.remove([AUTH_KEY, 'x1wallet_passwordProtection', 'x1wallet_encrypted']).catch(() => {});
+      await chrome.storage.local.remove([AUTH_KEY, 'x1wallet_encrypted']);
     }
     
-    logger.log('[wallet] Cleared stale auth data');
+    logger.log('[wallet] Cleared password/auth data');
     return true;
   } catch (e) {
     logger.error('[wallet] Error clearing auth:', e);
@@ -276,19 +265,22 @@ async function checkRateLimit() {
 }
 
 /**
- * X1W-SEC-012: Simple integrity check for rate limit data
- * Uses a hash of the data to detect tampering (not cryptographically secure,
- * but detects casual modification)
+ * X1W-SEC-012: Improved integrity check for rate limit data (SEC-004)
+ * Uses cyrb53 hash with browser-specific salt for better tamper detection
  */
 function computeRateLimitChecksum(data) {
-  const str = `${data.attempts}:${data.lastAttempt}:${data.lockoutUntil || 0}:${data.delayUntil || 0}:x1w`;
-  let hash = 0;
+  const str = `${data.attempts}:${data.lastAttempt}:${data.lockoutUntil || 0}:${data.delayUntil || 0}:x1w_rl_v2_${typeof navigator !== 'undefined' ? navigator.userAgent.length : 0}`;
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
   for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32bit integer
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
   }
-  return Math.abs(hash).toString(36);
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507);
+  h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507);
+  h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
 }
 
 function validateRateLimitIntegrity(data) {

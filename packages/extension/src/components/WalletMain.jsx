@@ -1705,7 +1705,7 @@ function DefiTab({ wallet, tokens, isSolana, onStake }) {
 }
 
 // Logo URL for Solana from XDEX S3
-const SOLANA_LOGO_URL = 'https://xdex.s3.us-east-2.amazonaws.com/vimages/solana.png';
+const SOLANA_LOGO_URL = 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png';
 
 // Network Logo based on network type
 function NetworkLogo({ network, size = 40 }) {
@@ -2835,21 +2835,21 @@ function BrowserScreen({ wallet, onBack }) {
     { 
       name: 'X1 Blockchain', 
       url: 'https://x1.xyz', 
-      logo: 'https://logo44.s3.us-east-2.amazonaws.com/logos/X1.png',
+      logo: '/icons/48-x1.png',
       desc: 'Layer-1 Blockchain',
       color: '#0274fb' 
     },
     { 
       name: 'XDEX', 
       url: 'https://xdex.xyz', 
-      logo: 'https://xdex.s3.us-east-2.amazonaws.com/vimages/XDEX.png',
+      logo: '/icons/48-xdex.png',
       desc: 'X1 Native DEX',
       color: '#0274fb' 
     },
     { 
       name: 'Degen', 
       url: 'https://degen.fyi', 
-      logo: 'https://xdex.s3.us-east-2.amazonaws.com/vimages/DEGEN.png',
+      logo: '/icons/48-degen.png',
       desc: 'Launchpad',
       color: '#ff6b35' 
     },
@@ -2870,7 +2870,7 @@ function BrowserScreen({ wallet, onBack }) {
     { 
       name: 'Explorer', 
       url: 'https://explorer.mainnet.x1.xyz/', 
-      logo: 'https://x1logos.s3.us-east-1.amazonaws.com/48.png',
+      logo: '/icons/48-x1.png',
       desc: 'X1 Mainnet Explorer',
       color: '#00d26a' 
     },
@@ -3058,12 +3058,35 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
   const [showRecoveryFor, setShowRecoveryFor] = useState(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(Date.now());
-  const [tokens, setTokens] = useState(initialTokens);
-  const [tokensLoading, setTokensLoading] = useState(initialTokens.length === 0);
+  
+  // Initialize tokens from cache IMMEDIATELY on first render - no waiting for useEffect
+  const [tokens, setTokens] = useState(() => {
+    if (wallet.wallet?.publicKey) {
+      const cached = getCachedTokens(wallet.wallet.publicKey, wallet.network);
+      if (cached && cached.length > 0) {
+        logger.log('[WalletMain] Initialized from cache:', cached.length, 'tokens');
+        return cached;
+      }
+    }
+    return initialTokens;
+  });
+  const [tokensLoading, setTokensLoading] = useState(() => {
+    // Only show loading if no cached tokens
+    if (wallet.wallet?.publicKey) {
+      const cached = getCachedTokens(wallet.wallet.publicKey, wallet.network);
+      if (cached && cached.length > 0) return false;
+    }
+    return initialTokens.length === 0;
+  });
+  
   const [copiedTokenMint, setCopiedTokenMint] = useState(null);
   const [internalRefreshKey, setInternalRefreshKey] = useState(0);
   const [prevBalanceRefreshKey, setPrevBalanceRefreshKey] = useState(0);
   const lastManualRefresh = useRef(0);
+  
+  // Track current wallet to prevent stale fetch results from updating state
+  const currentWalletRef = useRef(wallet.wallet?.publicKey);
+  const currentNetworkRef = useRef(wallet.network);
   
   // Sync initialTokens when they change from parent
   useEffect(() => {
@@ -3154,7 +3177,11 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
       return;
     }
     
-    logger.log('[WalletMain] Fetching tokens for:', wallet.wallet.publicKey, 'on', wallet.network, 'RPC:', networkConfig.rpcUrl);
+    // Capture wallet/network at fetch start to detect stale results
+    const fetchWallet = wallet.wallet.publicKey;
+    const fetchNetwork = wallet.network;
+    
+    logger.log('[WalletMain] Fetching tokens for:', fetchWallet, 'on', fetchNetwork, 'RPC:', networkConfig.rpcUrl);
     
     // Only show loading state on initial load when we have no tokens
     // This prevents flicker during 5-second refresh intervals
@@ -3167,6 +3194,12 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
       
       // Callback for background metadata updates
       const handleTokenUpdate = (updatedTokens) => {
+        // IMPORTANT: Check if wallet/network changed since fetch started
+        if (currentWalletRef.current !== fetchWallet || currentNetworkRef.current !== fetchNetwork) {
+          logger.log('[WalletMain] Ignoring stale background update - wallet/network changed');
+          return;
+        }
+        
         const tokenList = updatedTokens.filter(token => {
           const isNFT = token.decimals === 0 && token.uiAmount === 1;
           return !isNFT;
@@ -3175,14 +3208,20 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
         if (tokensNeedUpdate(tokens, tokenList)) {
           logger.log('[WalletMain] Background token update:', tokenList.length, 'tokens');
           setTokens(tokenList);
-          setCachedTokens(wallet.wallet.publicKey, wallet.network, tokenList);
+          setCachedTokens(fetchWallet, fetchNetwork, tokenList);
           if (onTokensUpdate) onTokensUpdate(tokenList);
         } else {
           logger.log('[WalletMain] Background update skipped - no meaningful changes');
         }
       };
       
-      const allTokens = await fetchTokenAccounts(networkConfig.rpcUrl, wallet.wallet.publicKey, wallet.network, handleTokenUpdate);
+      const allTokens = await fetchTokenAccounts(networkConfig.rpcUrl, fetchWallet, fetchNetwork, handleTokenUpdate);
+      
+      // IMPORTANT: Check if wallet/network changed since fetch started
+      if (currentWalletRef.current !== fetchWallet || currentNetworkRef.current !== fetchNetwork) {
+        logger.log('[WalletMain] Ignoring stale fetch result - wallet/network changed');
+        return;
+      }
       
       // Filter out NFTs (decimals=0 and amount=1) - they belong in NFTs tab only
       const tokenList = allTokens.filter(token => {
@@ -3197,7 +3236,7 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
       if (tokensNeedUpdate(tokens, tokenList)) {
         logger.log('[WalletMain] Fetched tokens:', tokenList.length, '(filtered', allTokens.length - tokenList.length, 'NFTs)');
         setTokens(tokenList);
-        setCachedTokens(wallet.wallet.publicKey, wallet.network, tokenList);
+        setCachedTokens(fetchWallet, fetchNetwork, tokenList);
         preloadTokenImages(tokenList);
         if (onTokensUpdate) onTokensUpdate(tokenList);
       } else {
@@ -3208,7 +3247,10 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
       // Don't clear existing tokens on error - keep showing cached data
       // setTokens([]);  // REMOVED: This caused flicker
     } finally {
-      setTokensLoading(false);
+      // Only clear loading if we're still on same wallet
+      if (currentWalletRef.current === fetchWallet && currentNetworkRef.current === fetchNetwork) {
+        setTokensLoading(false);
+      }
     }
   };
 
@@ -3253,9 +3295,11 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
     const networkChanged = prevNetworkRef.current !== wallet.network;
     const walletChanged = prevWalletRef.current !== wallet.wallet?.publicKey;
     
-    // Update refs
+    // Update refs FIRST before any async operations
     prevNetworkRef.current = wallet.network;
     prevWalletRef.current = wallet.wallet?.publicKey;
+    currentWalletRef.current = wallet.wallet?.publicKey;
+    currentNetworkRef.current = wallet.network;
     
     // Handle wallet OR network change - load cached tokens immediately
     if (walletChanged || networkChanged) {
@@ -3313,24 +3357,8 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
       }
     }, 30000);
     
-    // Immediate fetch on mount - load from cache first
-    if (wallet.wallet?.publicKey) {
-      // Try cache first for instant display
-      const cachedTokens = getCachedTokens(wallet.wallet.publicKey, wallet.network);
-      if (cachedTokens && cachedTokens.length > 0 && tokens.length === 0) {
-        logger.log('[WalletMain] Loading cached tokens on mount:', cachedTokens.length);
-        setTokens(cachedTokens);
-        setTokensLoading(false);
-        preloadTokenImages(cachedTokens);
-      }
-      
-      // Then fetch fresh data
-      logger.log('[WalletMain] Fetching fresh data on mount');
-      Promise.all([
-        wallet.refreshBalance(),
-        fetchTokens(!cachedTokens?.length)  // Only show loading if no cache
-      ]).catch(logger.error);
-    }
+    // NOTE: On mount load is handled by the wallet/network change code above
+    // since walletChanged will be true on first render (prev ref starts undefined)
     
     return () => {
       clearInterval(tokenInterval);
@@ -3365,7 +3393,7 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
       {/* Header */}
       <div className="main-header">
         <div className="header-brand">
-          <img src="https://xdex.s3.us-east-2.amazonaws.com/vimages/X1.png" alt="X1 Wallet" style={{ width: 32, height: 32, objectFit: 'contain' }} />
+          <img src="/icons/48-x1.png" alt="X1 Wallet" style={{ width: 32, height: 32, objectFit: 'contain' }} />
         </div>
         
         <div className="header-center-area">

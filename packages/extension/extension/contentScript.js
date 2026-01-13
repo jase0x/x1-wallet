@@ -1,7 +1,6 @@
 /**
  * X1 Wallet Content Script
  * Bridges between the injected provider and the extension
- * Uses long-lived port connection for reliable event broadcasting
  */
 
 (function() {
@@ -9,101 +8,6 @@
 
   // X1W-008: Cache the current origin for secure postMessage
   const currentOrigin = window.location.origin;
-
-  // ====== PORT-BASED CONNECTION FOR RELIABLE EVENT BROADCASTING ======
-  let eventPort = null;
-  let portReconnectAttempts = 0;
-  let portConnectedSuccessfully = false; // Track if we've had a stable connection
-  const MAX_RECONNECT_ATTEMPTS = 5;
-  const RECONNECT_DELAY_MS = 1000;
-  const STABLE_CONNECTION_MS = 3000; // Consider connection stable after 3 seconds
-
-  // Establish port connection with background script
-  function connectEventPort() {
-    try {
-      // Check for any previous errors
-      if (chrome.runtime.lastError) {
-        console.error('[X1 Wallet] Runtime error before connect:', chrome.runtime.lastError.message);
-      }
-      
-      eventPort = chrome.runtime.connect({ name: 'x1-wallet-events' });
-      console.log('[X1 Wallet] Event port connected');
-      
-      // Don't reset counter immediately - wait for stable connection
-      const connectionTime = Date.now();
-      let stabilityTimer = setTimeout(() => {
-        // Connection was stable for 3 seconds, reset counter
-        portReconnectAttempts = 0;
-        portConnectedSuccessfully = true;
-        console.log('[X1 Wallet] Port connection stable');
-      }, STABLE_CONNECTION_MS);
-      
-      // Handle messages from background via port
-      eventPort.onMessage.addListener((message) => {
-        console.log('[X1 Wallet ContentScript] Raw port message received:', message);
-        
-        if (message.target === 'x1-wallet-content') {
-          console.log('[X1 Wallet ContentScript] ✅ Port received from background:', message.type, JSON.stringify(message.payload));
-          
-          // Forward to injected provider
-          window.postMessage({
-            target: 'x1-wallet-provider',
-            type: message.type,
-            payload: message.payload
-          }, currentOrigin);
-          
-          console.log('[X1 Wallet ContentScript] ✅ Forwarded to page:', message.type);
-        } else {
-          console.log('[X1 Wallet ContentScript] ⚠️ Message ignored (wrong target):', message.target);
-        }
-      });
-      
-      // Handle port disconnect - attempt reconnection
-      eventPort.onDisconnect.addListener(() => {
-        // Clear stability timer if disconnect happens before stable
-        clearTimeout(stabilityTimer);
-        
-        const disconnectTime = Date.now();
-        const connectionDuration = disconnectTime - connectionTime;
-        
-        // Check for runtime error that caused disconnect
-        const lastError = chrome.runtime.lastError;
-        console.log('[X1 Wallet] Event port disconnected after', connectionDuration, 'ms');
-        if (lastError) {
-          console.error('[X1 Wallet] Disconnect reason:', lastError.message);
-        }
-        
-        eventPort = null;
-        
-        // If connection was very short (<500ms), something is wrong
-        if (connectionDuration < 500) {
-          console.warn('[X1 Wallet] Port disconnected very quickly - possible extension reload or error');
-        }
-        
-        // Attempt reconnection with backoff
-        if (portReconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-          portReconnectAttempts++;
-          const delay = RECONNECT_DELAY_MS * portReconnectAttempts;
-          console.log('[X1 Wallet] Attempting reconnect in', delay, 'ms (attempt', portReconnectAttempts, ')');
-          setTimeout(connectEventPort, delay);
-        } else {
-          console.log('[X1 Wallet] Max reconnect attempts reached, giving up');
-        }
-      });
-    } catch (error) {
-      console.error('[X1 Wallet] Failed to connect event port:', error);
-      
-      // Retry after delay
-      if (portReconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-        portReconnectAttempts++;
-        setTimeout(connectEventPort, RECONNECT_DELAY_MS * portReconnectAttempts);
-      }
-    }
-  }
-
-  // Connect port immediately
-  connectEventPort();
-  // ====== END PORT-BASED CONNECTION ======
 
   // Inject the provider script into the page
   function injectProvider() {
@@ -161,21 +65,17 @@
   });
 
   // Listen for messages from extension (events like disconnect, account change)
-  // This is a fallback - primary method is via port
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.target === 'x1-wallet-content') {
-      console.log('[X1 Wallet] Content script received from background (fallback):', message.type, message.payload);
-      
       // X1W-008 FIX: Use specific origin instead of wildcard
       window.postMessage({
         target: 'x1-wallet-provider',
         type: message.type,
         payload: message.payload
       }, currentOrigin);
-      
-      console.log('[X1 Wallet] Content script forwarded to page:', message.type);
     }
-    return true;
+    // Return false - we don't send async responses
+    return false;
   });
 
   // Get favicon URL

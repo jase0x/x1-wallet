@@ -3,13 +3,36 @@
 // Add new tokens here to ensure they display correctly in the wallet
 
 // ============================================
+// LOCAL ICON PATHS (stored in /public/icons/)
+// ============================================
+export const ICONS = {
+  X1: '/icons/48-x1.png',
+  PXNT: '/icons/48-pxnt.png',
+  USDCX: '/icons/48-usdcx.png',
+  CORE: '/icons/48-core.png',
+  XLP: '/icons/48-xlp.png',
+  XDEX: '/icons/48-xdex.png',
+  WALLET: '/icons/48-wallet.png',
+  DEGEN: '/icons/48-degen.png',
+  // External icons (third-party tokens)
+  SOL: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png',
+  USDC: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png',
+  USDT: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.png',
+  MSOL: 'https://raw.githubusercontent.com/marinade-finance/msol-logo/main/msol-logo.png',
+  BONK: 'https://arweave.net/hQiPZOsRZXGXBJd_82PhVdlM_hACsT_q6wqwf5cSY7I',
+  JUP: 'https://static.jup.ag/jup/icon.png',
+  ETH: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs/logo.png',
+  MIND: 'https://xdex.s3.us-east-2.amazonaws.com/tokens/mind-48.png'
+};
+
+// ============================================
 // XDEX LP TOKEN DETECTION
 // ============================================
 
 // XDEX Program ID: sEsYH97wqmfnkzHedjNcw3zyJdPvUmsa9AixhS4b4fN
 // XDEX LP Mint Authority (PDA derived from program) - used for LP token detection
 export const XDEX_LP_MINT_AUTHORITY = '9Dpjw2pB5kXJr6ZTHiqzEMfJPic3om9jgNacnwpLCoaU';
-export const XLP_LOGO_URL = 'https://xdex.s3.us-east-2.amazonaws.com/tokens/48-xlp.png';
+export const XLP_LOGO_URL = ICONS.XLP;
 
 // ============================================
 // KNOWN TOKENS (All Networks)
@@ -21,7 +44,7 @@ export const KNOWN_TOKENS = {
     symbol: 'SOL',
     name: 'Wrapped SOL',
     decimals: 9,
-    logoURI: 'https://xdex.s3.us-east-2.amazonaws.com/vimages/solana.png'
+    logoURI: ICONS.SOL
   },
   
   // === Stablecoins ===
@@ -29,19 +52,19 @@ export const KNOWN_TOKENS = {
     symbol: 'USDC',
     name: 'USD Coin',
     decimals: 6,
-    logoURI: 'https://cryptologos.cc/logos/usd-coin-usdc-logo.png'
+    logoURI: ICONS.USDC
   },
   'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB': {
     symbol: 'USDT',
     name: 'Tether USD',
     decimals: 6,
-    logoURI: 'https://cryptologos.cc/logos/tether-usdt-logo.png'
+    logoURI: ICONS.USDT
   },
   'B69chRzqzDCmdB5WYB8NRu5Yv5ZA95ABiZcdzCgGm9Tq': {
     symbol: 'USDC.X',
     name: 'USDC X1',
     decimals: 6,
-    logoURI: 'https://x1logos.s3.us-east-1.amazonaws.com/48-usdcx.png',
+    logoURI: ICONS.USDCX,
     isToken2022: true,
     price: 1
   },
@@ -51,13 +74,13 @@ export const KNOWN_TOKENS = {
     symbol: 'mSOL',
     name: 'Marinade staked SOL',
     decimals: 9,
-    logoURI: 'https://raw.githubusercontent.com/marinade-finance/msol-logo/main/msol-logo.png'
+    logoURI: ICONS.MSOL
   },
   'pXNTyoqQsskHdZ7Q1rnP25FEyHHjissbs7n6RRN2nP5': {
     symbol: 'pXNT',
     name: 'Staked XNT',
     decimals: 9,
-    logoURI: 'https://x1logos.s3.us-east-1.amazonaws.com/48-pxnt.png',
+    logoURI: ICONS.PXNT,
     isToken2022: false,
     isStakePoolToken: true,
     price: 1
@@ -68,19 +91,19 @@ export const KNOWN_TOKENS = {
     symbol: 'BONK',
     name: 'Bonk',
     decimals: 5,
-    logoURI: 'https://arweave.net/hQiPZOsRZXGXBJd_82PhVdlM_hACsT_q6wqwf5cSY7I'
+    logoURI: ICONS.BONK
   },
   'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN': {
     symbol: 'JUP',
     name: 'Jupiter',
     decimals: 6,
-    logoURI: 'https://static.jup.ag/jup/icon.png'
+    logoURI: ICONS.JUP
   },
   '7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs': {
     symbol: 'ETH',
     name: 'Ether (Wormhole)',
     decimals: 8,
-    logoURI: 'https://cryptologos.cc/logos/ethereum-eth-logo.png'
+    logoURI: ICONS.ETH
   },
   
   // === X1 Ecosystem Tokens ===
@@ -88,7 +111,7 @@ export const KNOWN_TOKENS = {
     symbol: 'MIND',
     name: 'Mind',
     decimals: 9,
-    logoURI: 'https://xdex.s3.us-east-2.amazonaws.com/tokens/mind-48.png'
+    logoURI: ICONS.MIND
   }
 };
 
@@ -102,7 +125,7 @@ export const NETWORK_TOKEN_OVERRIDES = {
       symbol: 'WXNT',
       name: 'Wrapped XNT',
       decimals: 9,
-      logoURI: 'https://x1logos.s3.us-east-1.amazonaws.com/48.png'
+      logoURI: ICONS.X1
     }
   },
   'X1 Testnet': {
@@ -110,7 +133,7 @@ export const NETWORK_TOKEN_OVERRIDES = {
       symbol: 'WXNT',
       name: 'Wrapped XNT',
       decimals: 9,
-      logoURI: 'https://x1logos.s3.us-east-1.amazonaws.com/48.png'
+      logoURI: ICONS.X1
     }
   },
   'Solana Mainnet': {
@@ -118,19 +141,19 @@ export const NETWORK_TOKEN_OVERRIDES = {
       symbol: 'SOL',
       name: 'Solana',
       decimals: 9,
-      logoURI: 'https://xdex.s3.us-east-2.amazonaws.com/vimages/solana.png'
+      logoURI: ICONS.SOL
     },
     'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': {
       symbol: 'USDC',
       name: 'USD Coin',
       decimals: 6,
-      logoURI: 'https://cryptologos.cc/logos/usd-coin-usdc-logo.png'
+      logoURI: ICONS.USDC
     },
     'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB': {
       symbol: 'USDT',
       name: 'Tether USD',
       decimals: 6,
-      logoURI: 'https://cryptologos.cc/logos/tether-usdt-logo.png'
+      logoURI: ICONS.USDT
     }
   },
   'Solana Devnet': {
@@ -138,7 +161,7 @@ export const NETWORK_TOKEN_OVERRIDES = {
       symbol: 'SOL',
       name: 'Solana',
       decimals: 9,
-      logoURI: 'https://xdex.s3.us-east-2.amazonaws.com/vimages/solana.png'
+      logoURI: ICONS.SOL
     }
   }
 };
@@ -149,7 +172,7 @@ export const X1_TOKEN_OVERRIDES = {
     symbol: 'WXNT',
     name: 'Wrapped XNT',
     decimals: 9,
-    logoURI: 'https://x1logos.s3.us-east-1.amazonaws.com/48.png'
+    logoURI: ICONS.X1
   }
 };
 

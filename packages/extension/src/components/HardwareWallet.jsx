@@ -2,9 +2,10 @@
 import { logger, getUserFriendlyError, ErrorMessages } from '@x1-wallet/core';
 import React, { useState, useEffect } from 'react';
 import { hardwareWallet, trezorWallet, getHardwareWallet, LEDGER_STATES, HW_TYPES, CONNECTION_TYPES, DERIVATION_SCHEMES } from '../services/hardware';
+import { NETWORKS } from '@x1-wallet/core/services/networks';
 
-export default function HardwareWallet({ onComplete, onBack }) {
-  const [step, setStep] = useState('select'); // select, connection, connect, app, scheme, account, name
+export default function HardwareWallet({ onComplete, onBack, isFirstWallet = false, existingWallets = [], network = 'X1 Testnet', isFullTab = false }) {
+  const [step, setStep] = useState('select'); // select, connection, connect, app, scheme, account, name, password
   const [deviceType, setDeviceType] = useState(null);
   const [connectionType, setConnectionType] = useState(CONNECTION_TYPES.USB);
   const [status, setStatus] = useState('');
@@ -12,16 +13,96 @@ export default function HardwareWallet({ onComplete, onBack }) {
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [accounts, setAccounts] = useState([]);
-  const [selectedAccount, setSelectedAccount] = useState(null);
+  const [selectedAccounts, setSelectedAccounts] = useState([]); // Changed to array for multi-select
   const [walletName, setWalletName] = useState('');
   const [derivationPaths] = useState(hardwareWallet.getDerivationPaths());
   const [loadedCount, setLoadedCount] = useState(0);
   const [selectedScheme, setSelectedScheme] = useState(DERIVATION_SCHEMES.BIP44_STANDARD);
   const [customPath, setCustomPath] = useState('');
   const [showCustomPath, setShowCustomPath] = useState(false);
+  const [balances, setBalances] = useState({}); // Map of address -> balance
+  const [loadingBalances, setLoadingBalances] = useState(false);
+  
+  // Password state for first wallet
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
   
   // Get the appropriate wallet service based on device type
   const getWallet = () => getHardwareWallet(deviceType);
+  
+  // Get existing wallet addresses for comparison
+  const existingAddresses = existingWallets.flatMap(w => 
+    w.addresses?.map(a => a.publicKey) || []
+  );
+  
+  // Check if an address is already imported
+  const isAlreadyImported = (address) => existingAddresses.includes(address);
+  
+  // Fetch balances for accounts
+  const fetchBalances = async (accountList) => {
+    if (!accountList || accountList.length === 0) return;
+    
+    setLoadingBalances(true);
+    const networkConfig = NETWORKS[network] || NETWORKS['X1 Testnet'];
+    const rpcUrl = networkConfig.rpcUrl;
+    
+    try {
+      const newBalances = {};
+      
+      // Batch fetch balances
+      for (const account of accountList) {
+        try {
+          const response = await fetch(rpcUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              jsonrpc: '2.0',
+              id: 1,
+              method: 'getBalance',
+              params: [account.address]
+            })
+          });
+          
+          const data = await response.json();
+          if (data.result?.value !== undefined) {
+            // Convert lamports to SOL/XNT (9 decimals)
+            newBalances[account.address] = data.result.value / 1e9;
+          }
+        } catch (e) {
+          logger.warn('[HardwareWallet] Failed to fetch balance for', account.address);
+        }
+      }
+      
+      setBalances(prev => ({ ...prev, ...newBalances }));
+    } catch (e) {
+      logger.error('[HardwareWallet] Failed to fetch balances:', e);
+    } finally {
+      setLoadingBalances(false);
+    }
+  };
+  
+  // Toggle account selection
+  const toggleAccountSelection = (account) => {
+    if (isAlreadyImported(account.address)) return; // Can't select already imported
+    
+    setSelectedAccounts(prev => {
+      const isSelected = prev.some(a => a.path === account.path);
+      if (isSelected) {
+        return prev.filter(a => a.path !== account.path);
+      } else {
+        return [...prev, account];
+      }
+    });
+  };
+  
+  // Format balance for display
+  const formatBalance = (balance) => {
+    if (balance === undefined || balance === null) return '...';
+    if (balance === 0) return '0';
+    if (balance < 0.0001) return '<0.0001';
+    return balance.toFixed(4);
+  };
 
   // Log current step on render
   logger.log('[HardwareWallet] Rendering with step:', step, 'loading:', loading, 'deviceType:', deviceType);
@@ -49,19 +130,6 @@ export default function HardwareWallet({ onComplete, onBack }) {
   };
 
   // Check if running in extension popup (limited WebHID access)
-  const isExtensionPopup = typeof chrome !== 'undefined' && 
-                           chrome.runtime && 
-                           chrome.runtime.id &&
-                           window.innerWidth < 500;
-  
-  // Open wallet in a full tab for hardware wallet connection
-  const openInFullTab = () => {
-    if (chrome?.runtime?.id) {
-      const extensionUrl = chrome.runtime.getURL('index.html');
-      chrome.tabs.create({ url: extensionUrl + '?hw=1' });
-    }
-  };
-
   // Connect to device
   const connectDevice = async () => {
     // Prevent double calls
@@ -124,7 +192,7 @@ export default function HardwareWallet({ onComplete, onBack }) {
     try {
       const wallet = getWallet();
       // Get accounts for the selected derivation scheme (scan 10 accounts initially)
-      const accountList = await wallet.getAccountsForScheme(selectedScheme, 0, 10);
+      const accountList = await wallet.getAccountsForScheme(selectedScheme, 0, 5);
       
       if (accountList.length === 0) {
         throw new Error(`No accounts found. Make sure ${deviceType === HW_TYPES.TREZOR ? 'Trezor is unlocked' : 'the Solana app is open on your Ledger'}.`);
@@ -132,10 +200,13 @@ export default function HardwareWallet({ onComplete, onBack }) {
       
       setAccounts(accountList);
       setLoadedCount(accountList.length);
-      setSelectedAccount(accountList[0]);
+      setSelectedAccounts([]); // Reset selection
       setLoading(false);
       setShowCustomPath(false);
       setStep('account');
+      
+      // Fetch balances in background
+      fetchBalances(accountList);
     } catch (err) {
       setError(err.message || 'Failed to get accounts');
       setLoading(false);
@@ -172,9 +243,12 @@ export default function HardwareWallet({ onComplete, onBack }) {
       
       setAccounts([account]);
       setLoadedCount(1);
-      setSelectedAccount(account);
+      setSelectedAccounts([account]); // Auto-select custom path
       setLoading(false);
       setStep('account');
+      
+      // Fetch balance
+      fetchBalances([account]);
     } catch (err) {
       setError(err.message || 'Failed to get account for custom path');
       setLoading(false);
@@ -241,6 +315,8 @@ export default function HardwareWallet({ onComplete, onBack }) {
       if (newAccounts.length > 0) {
         setAccounts([...accounts, ...newAccounts]);
         setLoadedCount(loadedCount + newAccounts.length);
+        // Fetch balances for new accounts
+        fetchBalances(newAccounts);
       }
     } catch (err) {
       setError(err.message || 'Failed to load more accounts');
@@ -249,16 +325,17 @@ export default function HardwareWallet({ onComplete, onBack }) {
     setLoadingMore(false);
   };
 
-  // Verify address on device
+  // Verify address on device (verify first selected account)
   const verifyOnDevice = async () => {
-    if (!selectedAccount) return;
+    if (selectedAccounts.length === 0) return;
     
+    const accountToVerify = selectedAccounts[0];
     setLoading(true);
     setStatus(`Please verify address on your ${deviceType === HW_TYPES.TREZOR ? 'Trezor' : 'Ledger'}...`);
     
     try {
       const wallet = getWallet();
-      await wallet.getPublicKey(selectedAccount.path, true);
+      await wallet.getPublicKey(accountToVerify.path, true);
       setLoading(false);
       setStatus('Address verified!');
     } catch (err) {
@@ -267,19 +344,101 @@ export default function HardwareWallet({ onComplete, onBack }) {
     }
   };
 
-  // Complete setup
+  // Complete setup - handle single or multiple accounts
   const handleComplete = () => {
-    if (!selectedAccount) return;
+    if (selectedAccounts.length === 0) return;
     
-    onComplete({
-      type: 'ledger',
-      name: walletName || `Ledger ${selectedAccount.label}`,
-      publicKey: selectedAccount.address,
-      derivationPath: selectedAccount.path,
-      derivationScheme: selectedAccount.scheme,
-      isHardware: true,
-      connectionType
-    });
+    // If this is the first wallet, we need to set up a password first
+    if (isFirstWallet) {
+      setStep('password');
+      return;
+    }
+    
+    // If single account selected, complete directly
+    if (selectedAccounts.length === 1) {
+      const account = selectedAccounts[0];
+      onComplete({
+        type: 'ledger',
+        name: walletName || `Ledger ${account.label}`,
+        publicKey: account.address,
+        derivationPath: account.path,
+        derivationScheme: account.scheme || selectedScheme,
+        isHardware: true,
+        connectionType
+      });
+    } else {
+      // Multiple accounts - complete with array
+      const walletsToAdd = selectedAccounts.map((account, idx) => ({
+        type: 'ledger',
+        name: `Ledger ${account.label}`,
+        publicKey: account.address,
+        derivationPath: account.path,
+        derivationScheme: account.scheme || selectedScheme,
+        isHardware: true,
+        connectionType
+      }));
+      onComplete(walletsToAdd);
+    }
+  };
+  
+  // Validate and submit password
+  // Submitting state to prevent double-clicks
+  const [submitting, setSubmitting] = useState(false);
+  
+  const handlePasswordSubmit = async () => {
+    if (submitting) return; // Prevent double-click
+    
+    setPasswordError('');
+    
+    if (!password || password.length < 8) {
+      setPasswordError('Password must be at least 8 characters');
+      return;
+    }
+    
+    if (!/[a-zA-Z]/.test(password)) {
+      setPasswordError('Password must contain at least one letter');
+      return;
+    }
+    
+    if (!/[0-9]/.test(password)) {
+      setPasswordError('Password must contain at least one number');
+      return;
+    }
+    
+    if (password !== confirmPassword) {
+      setPasswordError('Passwords do not match');
+      return;
+    }
+    
+    setSubmitting(true);
+    
+    // Complete with password - handle single or multiple accounts
+    if (selectedAccounts.length === 1) {
+      const account = selectedAccounts[0];
+      onComplete({
+        type: 'ledger',
+        name: walletName || `Ledger ${account.label}`,
+        publicKey: account.address,
+        derivationPath: account.path,
+        derivationScheme: account.scheme || selectedScheme,
+        isHardware: true,
+        connectionType,
+        password // Include password for first wallet setup
+      });
+    } else {
+      // Multiple accounts - complete with array and password
+      const walletsToAdd = selectedAccounts.map((account, idx) => ({
+        type: 'ledger',
+        name: `Ledger ${account.label}`,
+        publicKey: account.address,
+        derivationPath: account.path,
+        derivationScheme: account.scheme || selectedScheme,
+        isHardware: true,
+        connectionType,
+        password: idx === 0 ? password : null // Only first needs password
+      }));
+      onComplete(walletsToAdd);
+    }
   };
 
   // Cleanup on unmount
@@ -295,11 +454,14 @@ export default function HardwareWallet({ onComplete, onBack }) {
   if (!isSupported) {
     return (
       <div className="screen hardware-screen no-nav">
-        <button className="back-btn" onClick={onBack} style={{ alignSelf: 'flex-start', marginBottom: 16 }}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M19 12H5M12 19l-7-7 7-7" />
-          </svg>
-        </button>
+        {/* Only show back button if not in full tab mode */}
+        {!isFullTab && (
+          <button className="back-btn" onClick={onBack} style={{ alignSelf: 'flex-start', marginBottom: 16 }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M19 12H5M12 19l-7-7 7-7" />
+            </svg>
+          </button>
+        )}
         
         <div className="hardware-error-state">
           <div className="hardware-error-icon">
@@ -321,11 +483,14 @@ export default function HardwareWallet({ onComplete, onBack }) {
   if (step === 'select') {
     return (
       <div className="screen hardware-screen no-nav">
-        <button className="back-btn" onClick={onBack} style={{ alignSelf: 'flex-start', marginBottom: 16 }}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M19 12H5M12 19l-7-7 7-7" />
-          </svg>
-        </button>
+        {/* Only show back button if not in full tab mode */}
+        {!isFullTab && (
+          <button className="back-btn" onClick={onBack} style={{ alignSelf: 'flex-start', marginBottom: 16 }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M19 12H5M12 19l-7-7 7-7" />
+            </svg>
+          </button>
+        )}
 
         <h2>Connect Hardware Wallet</h2>
         <p className="hardware-subtitle">Select your hardware wallet device</p>
@@ -515,24 +680,13 @@ export default function HardwareWallet({ onComplete, onBack }) {
           )}
         </button>
         
-        {/* Show option to open in full tab if in popup */}
-        {typeof chrome !== 'undefined' && chrome.runtime?.id && (
-          <button 
-            className="btn-secondary" 
-            onClick={openInFullTab}
-            style={{ marginTop: 12 }}
-          >
-            Open in Full Tab
-          </button>
-        )}
-        
         <div className="hardware-info" style={{ marginTop: 16 }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" strokeWidth="2">
             <circle cx="12" cy="12" r="10" />
             <line x1="12" y1="8" x2="12" y2="12" />
             <line x1="12" y1="16" x2="12.01" y2="16" />
           </svg>
-          <span>{isTrezor ? 'Make sure Trezor Bridge is running and Trezor Suite is closed.' : 'Having trouble? Try "Open in Full Tab" for better hardware wallet support.'}</span>
+          <span>{isTrezor ? 'Make sure Trezor Bridge is running and Trezor Suite is closed.' : 'Make sure your Ledger is unlocked with the Solana app open.'}</span>
         </div>
         
         {!isTrezor && (
@@ -694,65 +848,119 @@ export default function HardwareWallet({ onComplete, onBack }) {
 
   // Step 4: Select account
   if (step === 'account') {
+    const nativeSymbol = network?.includes('Solana') ? 'SOL' : 'XNT';
+    
     return (
-      <div className="screen hardware-screen no-nav" style={{ justifyContent: 'flex-start', paddingTop: 20, paddingBottom: 20 }}>
+      <div className="screen hardware-screen no-nav" style={{ display: 'flex', flexDirection: 'column', paddingTop: 20, paddingBottom: 20 }}>
         <button className="back-btn" onClick={() => setStep('scheme')} style={{ alignSelf: 'flex-start', marginBottom: 16 }}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M19 12H5M12 19l-7-7 7-7" />
           </svg>
         </button>
 
-        <h2 style={{ marginBottom: 6 }}>Select Account</h2>
-        <p style={{ margin: '0 0 16px 0', fontSize: 14, color: 'var(--text-muted)' }}>
+        <h2 style={{ marginBottom: 6 }}>Select Accounts</h2>
+        <p style={{ margin: '0 0 8px 0', fontSize: 14, color: 'var(--text-muted)' }}>
           Using: {selectedScheme.name}
         </p>
+        {selectedAccounts.length > 0 && (
+          <p style={{ margin: '0 0 16px 0', fontSize: 13, color: 'var(--x1-blue)' }}>
+            {selectedAccounts.length} account{selectedAccounts.length > 1 ? 's' : ''} selected
+          </p>
+        )}
 
         {/* Account list */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flex: 1 }}>
-          {accounts.map((account) => (
-            <div 
-              key={account.path}
-              onClick={() => setSelectedAccount(account)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 12,
-                padding: '10px 12px',
-                background: selectedAccount?.path === account.path ? 'rgba(2, 116, 251, 0.1)' : 'var(--bg-secondary)',
-                border: selectedAccount?.path === account.path ? '2px solid var(--x1-blue)' : '1px solid var(--border-color)',
-                borderRadius: 10,
-                cursor: 'pointer',
-                transition: 'all 0.15s ease'
-              }}
-            >
-              <div style={{
-                width: 32,
-                height: 32,
-                borderRadius: 8,
-                background: 'var(--bg-tertiary)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0
-              }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2">
-                  <rect x="2" y="6" width="20" height="14" rx="2" />
-                  <path d="M2 10h20" />
-                </svg>
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>{account.label}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'monospace' }}>
-                  {account.address.slice(0, 6)}...{account.address.slice(-6)}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+          {accounts.map((account) => {
+            const alreadyImported = isAlreadyImported(account.address);
+            const isSelected = selectedAccounts.some(a => a.path === account.path);
+            const balance = balances[account.address];
+            
+            return (
+              <div 
+                key={account.path}
+                onClick={() => !alreadyImported && toggleAccountSelection(account)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: '10px 12px',
+                  background: alreadyImported 
+                    ? 'var(--bg-tertiary)' 
+                    : isSelected 
+                      ? 'rgba(2, 116, 251, 0.1)' 
+                      : 'var(--bg-secondary)',
+                  border: isSelected 
+                    ? '1px solid var(--x1-blue)' 
+                    : '1px solid var(--border-color)',
+                  borderRadius: 10,
+                  cursor: alreadyImported ? 'not-allowed' : 'pointer',
+                  opacity: alreadyImported ? 0.5 : 1,
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                {/* Account icon */}
+                <div style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 8,
+                  background: 'var(--bg-tertiary)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0
+                }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2">
+                    <rect x="2" y="6" width="20" height="14" rx="2" />
+                    <path d="M2 10h20" />
+                  </svg>
                 </div>
+                
+                {/* Account info */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>
+                      {account.label}
+                    </span>
+                    {alreadyImported && (
+                      <span style={{ 
+                        fontSize: 10, 
+                        color: 'var(--text-muted)', 
+                        background: 'var(--bg-secondary)',
+                        padding: '2px 6px',
+                        borderRadius: 4
+                      }}>
+                        Already Added
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ 
+                    display: 'flex', 
+                    justifyContent: 'space-between', 
+                    alignItems: 'center',
+                    marginTop: 2
+                  }}>
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                      {account.address.slice(0, 6)}...{account.address.slice(-6)}
+                    </span>
+                    <span style={{ 
+                      fontSize: 12, 
+                      color: balance > 0 ? 'var(--success)' : 'var(--text-muted)',
+                      fontWeight: balance > 0 ? 600 : 400
+                    }}>
+                      {loadingBalances ? '...' : `${formatBalance(balance)} ${nativeSymbol}`}
+                    </span>
+                  </div>
+                </div>
+                
+                {/* Checkmark when selected */}
+                {isSelected && (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--x1-blue)" strokeWidth="3">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                )}
               </div>
-              {selectedAccount?.path === account.path && (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--x1-blue)" strokeWidth="3">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-              )}
-            </div>
-          ))}
+            );
+          })}
           
           {/* Load More */}
           <button
@@ -852,31 +1060,33 @@ export default function HardwareWallet({ onComplete, onBack }) {
 
         {error && <div className="error-message" style={{ marginTop: 12 }}>{error}</div>}
 
-        <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+        <div style={{ display: 'flex', gap: 12, marginTop: 'auto', paddingTop: 16 }}>
           <button 
             className="btn-secondary" 
             onClick={verifyOnDevice}
-            disabled={loading || !selectedAccount}
-            style={{ flex: 1, padding: '12px', fontSize: 14 }}
+            disabled={loading || selectedAccounts.length === 0}
+            style={{ flex: 1, height: 48, fontSize: 14 }}
           >
             {loading ? 'Verifying...' : 'Verify on Device'}
           </button>
 
           <button 
             className="btn-primary" 
-            onClick={() => setStep('name')}
-            disabled={!selectedAccount}
-            style={{ flex: 1, padding: '12px', fontSize: 14 }}
+            onClick={() => selectedAccounts.length === 1 ? setStep('name') : handleComplete()}
+            disabled={selectedAccounts.length === 0}
+            style={{ flex: 1, height: 48, fontSize: 14 }}
           >
-            Continue
+            {selectedAccounts.length > 1 ? `Import ${selectedAccounts.length} Wallets` : 'Continue'}
           </button>
         </div>
       </div>
     );
   }
 
-  // Step 5: Name wallet
+  // Step 5: Name wallet (only for single selection)
   if (step === 'name') {
+    const selectedAccount = selectedAccounts[0]; // Get first selected account
+    
     return (
       <div className="screen hardware-screen no-nav">
         <button className="back-btn" onClick={() => setStep('account')} style={{ alignSelf: 'flex-start', marginBottom: 16 }}>
@@ -950,7 +1160,94 @@ export default function HardwareWallet({ onComplete, onBack }) {
         </div>
 
         <button className="btn-primary" onClick={handleComplete} style={{ marginTop: 24, marginBottom: 24 }}>
-          Import Wallet
+          {isFirstWallet ? 'Continue' : 'Import Wallet'}
+        </button>
+      </div>
+    );
+  }
+
+  // Password step (only for first wallet)
+  if (step === 'password') {
+    return (
+      <div className="screen hardware-screen no-nav">
+        <button className="back-btn" onClick={() => setStep(selectedAccounts.length === 1 ? 'name' : 'account')} style={{ alignSelf: 'flex-start', marginBottom: 16 }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M19 12H5M12 19l-7-7 7-7" />
+          </svg>
+        </button>
+
+        <div className="hardware-success-icon">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--x1-blue)" strokeWidth="2">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+        </div>
+
+        <h2>Set App Password</h2>
+        <p className="hardware-subtitle">Create a password to secure your wallet app</p>
+
+        {passwordError && (
+          <div className="error-message" style={{ marginTop: 16 }}>
+            {passwordError}
+          </div>
+        )}
+
+        <div className="form-group" style={{ marginTop: 24 }}>
+          <label className="form-label">Password</label>
+          <input
+            type="password"
+            className="form-input"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Enter password (min 8 characters)"
+            autoFocus
+          />
+        </div>
+
+        <div className="form-group" style={{ marginTop: 16 }}>
+          <label className="form-label">Confirm Password</label>
+          <input
+            type="password"
+            className="form-input"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            placeholder="Confirm password"
+            onKeyDown={(e) => e.key === 'Enter' && handlePasswordSubmit()}
+          />
+        </div>
+
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 16 }}>
+          <p>Password requirements:</p>
+          <ul style={{ marginLeft: 16, marginTop: 8 }}>
+            <li style={{ color: password.length >= 8 ? 'var(--success)' : 'var(--text-muted)' }}>
+              At least 8 characters
+            </li>
+            <li style={{ color: /[a-zA-Z]/.test(password) ? 'var(--success)' : 'var(--text-muted)' }}>
+              At least one letter
+            </li>
+            <li style={{ color: /[0-9]/.test(password) ? 'var(--success)' : 'var(--text-muted)' }}>
+              At least one number
+            </li>
+          </ul>
+        </div>
+
+        <div className="warning-box" style={{ marginTop: 24 }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" strokeWidth="2">
+            <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+          </svg>
+          <span>
+            This password protects the wallet app. Your Ledger device remains your primary security - 
+            transactions still require physical confirmation on your device.
+          </span>
+        </div>
+
+        <button 
+          className="btn-primary" 
+          onClick={handlePasswordSubmit} 
+          style={{ marginTop: 24, marginBottom: 24 }}
+          disabled={!password || !confirmPassword || submitting}
+        >
+          {submitting ? 'Setting up...' : 'Complete Setup'}
         </button>
       </div>
     );

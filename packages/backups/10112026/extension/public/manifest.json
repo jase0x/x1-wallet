@@ -1,0 +1,73 @@
+{
+  "manifest_version": 3,
+  "name": "X1 Wallet",
+  "version": "0.10.66",
+  "description": "X1 Blockchain Native Wallet",
+  "action": {
+    "default_popup": "index.html",
+    "default_icon": {
+      "16": "icons/x1-wallet16.png",
+      "48": "icons/x1-wallet48.png",
+      "128": "icons/x1-wallet128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/x1-wallet16.png",
+    "48": "icons/x1-wallet48.png",
+    "128": "icons/x1-wallet128.png"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "index.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["contentScript.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["provider.js"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "permissions": [
+    "storage",
+    "clipboardWrite",
+    "clipboardRead",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "https://rpc.mainnet.x1.xyz/*",
+    "https://rpc.testnet.x1.xyz/*",
+    "https://api.xdex.xyz/*",
+    "https://api.xdex.xyz/*",
+    "https://devapi.xdex.xyz/*",
+    "https://devapi.xdex.xyz/*",
+    "https://mobile-api.x1.xyz/*",
+    "https://core.x1.xyz/*",
+    "https://core.xdex.xyz/*",
+    "https://mint.xdex.xyz/*",
+    "https://ipfs.io/*",
+    "https://gateway.pinata.cloud/*",
+    "https://api.mainnet-beta.solana.com/*",
+    "https://api.devnet.solana.com/*",
+    "https://jessamine-463apc-fast-mainnet.helius-rpc.com/*",
+    "https://rose-l3rk46-fast-devnet.helius-rpc.com/*",
+    "https://lite-api.jup.ag/*",
+    "https://api.jup.ag/*",
+    "https://tokens.jup.ag/*",
+    "https://arweave.net/*",
+    "https://static.jup.ag/*",
+    "https://*.helius-rpc.com/*",
+    "https://raw.githubusercontent.com/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}

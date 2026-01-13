@@ -9,11 +9,11 @@ const JUPITER_TOKEN_API = 'https://lite-api.jup.ag/tokens/v2';
 
 // Logo URLs
 const XDEX_LOGOS = {
-  X1: 'https://xdex.s3.us-east-2.amazonaws.com/vimages/x1.png',
-  WXNT: 'https://x1logos.s3.us-east-1.amazonaws.com/48.png',
-  SOL: 'https://xdex.s3.us-east-2.amazonaws.com/vimages/solana.png',
+  X1: '/icons/48-x1.png',
+  WXNT: '/icons/48-x1.png',
+  SOL: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png',
   USDC: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png',
-  USDC_X: 'https://x1logos.s3.us-east-1.amazonaws.com/48-usdcx.png',
+  USDC_X: '/icons/48-usdcx.png',
 };
 
 // Known tokens registry by network (for immediate recognition)
@@ -299,8 +299,14 @@ export async function getQuote(tokenIn, tokenOut, amountIn, network, tokenInData
 
 /**
  * Prepare swap transaction from XDEX API
+ * @param {string} walletAddress - User's wallet public key
+ * @param {string} tokenIn - Input token mint address
+ * @param {string} tokenOut - Output token mint address
+ * @param {number} amountIn - Amount to swap
+ * @param {string} network - Network name
+ * @param {number} slippageBps - Slippage tolerance in basis points (e.g., 50 = 0.5%)
  */
-export async function prepareSwap(walletAddress, tokenIn, tokenOut, amountIn, network) {
+export async function prepareSwap(walletAddress, tokenIn, tokenOut, amountIn, network, slippageBps = 50) {
   // Validate required parameters
   if (!walletAddress || typeof walletAddress !== 'string') {
     throw new Error('Invalid wallet address');
@@ -325,7 +331,11 @@ export async function prepareSwap(walletAddress, tokenIn, tokenOut, amountIn, ne
     token_in: tokenIn,
     token_out: tokenOut,
     token_in_amount: parsedAmount,
-    is_exact_amount_in: true
+    is_exact_amount_in: true,
+    slippage_bps: slippageBps,
+    slippage: slippageBps / 100, // Also send as percentage for compatibility
+    wrap_unwrap_sol: true, // Explicitly request SOL wrapping/unwrapping
+    use_shared_accounts: true // Use shared accounts for better success rate
   };
   
   logger.log('[XDEX] Preparing swap:', JSON.stringify(payload));
@@ -398,7 +408,7 @@ const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
 // Hardcoded Solana token list (always available)
 const SOLANA_TOKEN_LIST = [
-  { symbol: 'SOL', name: 'Solana', address: 'So11111111111111111111111111111111111111112', decimals: 9, logoURI: 'https://xdex.s3.us-east-2.amazonaws.com/vimages/solana.png' },
+  { symbol: 'SOL', name: 'Solana', address: 'So11111111111111111111111111111111111111112', decimals: 9, logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png' },
   { symbol: 'USDC', name: 'USD Coin', address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', decimals: 6, logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png' },
   { symbol: 'USDT', name: 'Tether USD', address: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', decimals: 6, logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.svg' },
   { symbol: 'JUP', name: 'Jupiter', address: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', decimals: 6, logoURI: 'https://static.jup.ag/jup/icon.png' },
@@ -505,8 +515,8 @@ export async function getSwapTokens(network) {
   // Solana Devnet - limited tokens
   if (network === 'Solana Devnet') {
     return [
-      { symbol: 'SOL', name: 'Solana', mint: SOLANA_TOKENS.SOL, logoURI: XDEX_LOGOS.SOL },
-      { symbol: 'USDC', name: 'USD Coin', mint: '', logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png' },
+      { symbol: 'SOL', name: 'Solana', mint: SOLANA_TOKENS.SOL, logoURI: XDEX_LOGOS.SOL, decimals: 9, isNative: true },
+      { symbol: 'USDC', name: 'USD Coin', mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', decimals: 6, logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png' },
     ];
   }
 

@@ -33,7 +33,26 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
         // This will also turn ON password protection if it was OFF
         setPasswordRequired(true);
         
-        // Check if password already exists (to determine verify vs create)
+        // Check if encryption is already enabled (data is encrypted)
+        const encryptionEnabled = localStorage.getItem('x1wallet_encrypted') === 'true';
+        
+        // Check if password protection is currently OFF
+        // If OFF, auth was cleared so always create new password
+        const storedProtection = localStorage.getItem('x1wallet_passwordProtection');
+        const protectionIsOff = !storedProtection || storedProtection === 'false';
+        
+        // If encryption is enabled but protection is "off", encryption takes precedence
+        if (protectionIsOff && !encryptionEnabled) {
+          // Protection is OFF and no encryption = no valid password exists, create new
+          setExistingPasswordDetected(false);
+          logger.log('[ImportWallet] Protection is OFF and no encryption - will create new password');
+          return;
+        }
+        
+        // Protection is ON or encryption is enabled - check if password already exists
+        const localAuth = localStorage.getItem('x1wallet_auth');
+        const hasLocalAuth = localAuth && localAuth !== 'null' && localAuth.length > 10;
+        
         const { hasPassword } = await import('@x1-wallet/core/services/wallet');
         const has = await hasPassword();
         
@@ -41,9 +60,10 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
         const walletsData = localStorage.getItem('x1wallet_wallets');
         const isEmpty = !walletsData || walletsData === '[]' || walletsData === 'null' || walletsData === '';
         
-        // If no wallets, create new password. If wallets exist and password exists, verify.
-        setExistingPasswordDetected(has && !isEmpty);
-        logger.log('[ImportWallet] Password required, existing:', has && !isEmpty);
+        // Show verify if: (password exists OR encryption enabled) AND wallets exist
+        const passwordExists = has || hasLocalAuth || encryptionEnabled;
+        setExistingPasswordDetected(passwordExists && !isEmpty);
+        logger.log('[ImportWallet] Password check - service:', has, 'localStorage:', hasLocalAuth, 'encrypted:', encryptionEnabled, 'wallets:', !isEmpty);
       } catch (e) {
         logger.error('[ImportWallet] Error checking password:', e);
         setExistingPasswordDetected(false);
@@ -138,26 +158,20 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
     setStep('name');
   };
 
-  // X1W-SEC-008 FIX: Consistent password validation (12 chars, special char required)
+  // Password validation (Option 1: min 8 chars, at least one letter + one number)
   const validatePassword = (pwd) => {
-    if (!pwd || pwd.length < 12) {
-      return 'Password must be at least 12 characters';
+    if (!pwd || pwd.length < 8) {
+      return 'Password must be at least 8 characters';
     }
-    if (!/[a-z]/.test(pwd)) {
-      return 'Password must contain a lowercase letter';
-    }
-    if (!/[A-Z]/.test(pwd)) {
-      return 'Password must contain an uppercase letter';
+    if (!/[a-zA-Z]/.test(pwd)) {
+      return 'Password must contain at least one letter';
     }
     if (!/[0-9]/.test(pwd)) {
-      return 'Password must contain a number';
-    }
-    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?~`]/.test(pwd)) {
-      return 'Password must contain a special character (!@#$%^&*...)';
+      return 'Password must contain at least one number';
     }
     // Check for common weak patterns
-    const commonPatterns = ['password', '12345678', 'qwerty', 'abcdef'];
-    const lowerPwd = pwd.toLowerCase();
+    const commonPatterns = ['password', '12345678', 'qwerty', 'abcdef', 'letmein'];
+    const lowerPwd = String(pwd).toLowerCase();
     for (const pattern of commonPatterns) {
       if (lowerPwd.includes(pattern)) {
         return 'Password contains a common weak pattern';
@@ -564,7 +578,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
 
           <div className="info-box" style={{ marginBottom: 16 }}>
             <span>🔒</span>
-            <span>Min 12 characters with uppercase, lowercase, number, and special character.</span>
+            <span>Min 8 characters with at least one letter and one number.</span>
           </div>
 
           {error && <div className="error-message" style={{ marginBottom: 16 }}>{error}</div>}
@@ -772,7 +786,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
 
           <div className="info-box" style={{ marginBottom: 16 }}>
             <span>🔒</span>
-            <span>Min 12 characters with uppercase, lowercase, number, and special character.</span>
+            <span>Min 8 characters with at least one letter and one number.</span>
           </div>
 
           {error && <div className="error-message" style={{ marginBottom: 16 }}>{error}</div>}

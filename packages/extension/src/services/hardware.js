@@ -522,15 +522,15 @@ class HardwareWalletService {
         throw new Error('Invalid transaction data');
       }
       
-      // On transport errors, invalidate session to force clean reconnection
-      const isTransportError = 
-        error.statusCode === 27265 || // 0x6a81
-        error.statusCode === 0x6a81 ||
-        error.name === 'TransportStatusError' ||
-        error.message?.includes('0x6a81') ||
-        error.message?.includes('UNKNOWN_ERROR');
+      // 0x6a81 = Function not supported - usually means blind signing is disabled
+      if (error.statusCode === 27265 || error.statusCode === 0x6a81 || 
+          error.message?.includes('0x6a81') || error.message?.includes('UNKNOWN_ERROR')) {
+        await this.invalidateSession('signTransaction transport error: ' + error.message);
+        throw new Error('Blind signing required. Please enable "Blind Sign" in your Ledger Solana app settings, then try again.');
+      }
       
-      if (isTransportError) {
+      // On other transport errors, invalidate session to force clean reconnection
+      if (error.name === 'TransportStatusError') {
         await this.invalidateSession('signTransaction transport error: ' + error.message);
       }
       
@@ -563,15 +563,15 @@ class HardwareWalletService {
       const result = await this.solanaApp.signOffchainMessage(derivePath, msgBuffer);
       return result.signature;
     } catch (err) {
-      // On transport errors, invalidate session to force clean reconnection
-      const isTransportError = 
-        err.statusCode === 27265 || // 0x6a81
-        err.statusCode === 0x6a81 ||
-        err.name === 'TransportStatusError' ||
-        err.message?.includes('0x6a81') ||
-        err.message?.includes('UNKNOWN_ERROR');
+      // 0x6a81 = Function not supported - usually means blind signing is disabled
+      if (err.statusCode === 27265 || err.statusCode === 0x6a81 || 
+          err.message?.includes('0x6a81') || err.message?.includes('UNKNOWN_ERROR')) {
+        await this.invalidateSession('signMessage transport error: ' + err.message);
+        throw new Error('Blind signing required. Please enable "Blind Sign" in your Ledger Solana app settings, then try again.');
+      }
       
-      if (isTransportError) {
+      // On other transport errors, invalidate session to force clean reconnection
+      if (err.name === 'TransportStatusError') {
         await this.invalidateSession('signMessage transport error: ' + err.message);
       }
       

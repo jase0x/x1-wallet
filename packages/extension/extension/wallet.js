@@ -47,30 +47,21 @@ async function setupPassword(password) {
   }
 }
 function validatePasswordStrength(password) {
-  if (!password) {
+  if (typeof password !== "string" || !password) {
     return { valid: false, error: "Password is required" };
   }
-  if (password.length < 12) {
-    return { valid: false, error: "Password must be at least 12 characters" };
+  if (password.length < 8) {
+    return { valid: false, error: "Password must be at least 8 characters" };
   }
-  if (!/[a-z]/.test(password)) {
-    return { valid: false, error: "Password must contain at least one lowercase letter" };
-  }
-  if (!/[A-Z]/.test(password)) {
-    return { valid: false, error: "Password must contain at least one uppercase letter" };
+  if (!/[a-zA-Z]/.test(password)) {
+    return { valid: false, error: "Password must contain at least one letter" };
   }
   if (!/[0-9]/.test(password)) {
     return { valid: false, error: "Password must contain at least one number" };
   }
-  if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?~`]/.test(password)) {
-    return { valid: false, error: "Password must contain at least one special character" };
-  }
-  const commonPatterns = ["password", "12345678", "qwerty", "abcdef"];
-  const lowerPassword = password.toLowerCase();
-  for (const pattern of commonPatterns) {
-    if (lowerPassword.includes(pattern)) {
-      return { valid: false, error: "Password contains a common weak pattern" };
-    }
+  const banned = ["password", "123456", "qwerty", "letmein"];
+  if (banned.includes(password.toLowerCase())) {
+    return { valid: false, error: "Password too weak" };
   }
   return { valid: true };
 }
@@ -134,14 +125,18 @@ async function checkRateLimit() {
   }
 }
 function computeRateLimitChecksum(data) {
-  const str = `${data.attempts}:${data.lastAttempt}:${data.lockoutUntil || 0}:${data.delayUntil || 0}:x1w`;
-  let hash = 0;
+  const str = `${data.attempts}:${data.lastAttempt}:${data.lockoutUntil || 0}:${data.delayUntil || 0}:x1w_rl_v2_${typeof navigator !== "undefined" ? navigator.userAgent.length : 0}`;
+  let h1 = 3735928559, h2 = 1103547991;
   for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = (hash << 5) - hash + char;
-    hash = hash & hash;
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
   }
-  return Math.abs(hash).toString(36);
+  h1 = Math.imul(h1 ^ h1 >>> 16, 2246822507);
+  h1 ^= Math.imul(h2 ^ h2 >>> 13, 3266489909);
+  h2 = Math.imul(h2 ^ h2 >>> 16, 2246822507);
+  h2 ^= Math.imul(h1 ^ h1 >>> 13, 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
 }
 function validateRateLimitIntegrity(data) {
   if (!data || !data.checksum) return true;

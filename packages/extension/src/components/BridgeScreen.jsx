@@ -21,10 +21,10 @@ const USDC_LOGO = 'https://raw.githubusercontent.com/solana-labs/token-list/main
 const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 
 // X1 Logo URL
-const X1_LOGO_URL = 'https://xdex.s3.us-east-2.amazonaws.com/vimages/X1.png';
+const X1_LOGO_URL = '/icons/48-x1.png';
 
 // Solana Logo URL
-const SOLANA_LOGO_URL = 'https://xdex.s3.us-east-2.amazonaws.com/vimages/solana.png';
+const SOLANA_LOGO_URL = 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png';
 
 // Base58 alphabet and helper functions
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';

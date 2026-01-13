@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 
 // X1 Logo URL - use the main X1 logo
-const X1_LOGO_URL = 'https://xdex.s3.us-east-2.amazonaws.com/vimages/X1.png';
+const X1_LOGO_URL = '/icons/48-x1.png';
 
 export default function X1Logo({ size = 40, className = '' }) {
   const [error, setError] = useState(false);

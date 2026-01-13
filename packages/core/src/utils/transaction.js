@@ -130,28 +130,26 @@ export async function createTokenTransferTransaction({
     let needsCreateATA = false;
     
     if (!toTokenAccount && rpcUrl) {
-      // Always derive the canonical ATA address
-      // We'll use CreateAssociatedTokenAccountIdempotent which handles both cases:
-      // - If ATA exists: instruction does nothing
-      // - If ATA doesn't exist: creates it
-      const result = await findATAAddress(toPubkey, mint, tokenProgramId);
-      toTokenAccount = result.address;
-      logger.log('Derived canonical ATA address (bump', result.bump + '):', toTokenAccount);
-      
-      // Check if this ATA already exists
+      // First check if recipient already has an ATA for this token
       const existingATA = await findExistingATA(rpcUrl, toPubkey, mint);
-      if (existingATA && existingATA === toTokenAccount) {
-        logger.log('ATA already exists at derived address, will transfer directly');
-        needsCreateATA = false;
-      } else if (existingATA) {
-        // Recipient has a token account but at different address (non-canonical)
-        // Use their existing account instead
-        logger.log('Found non-canonical token account:', existingATA);
+      if (existingATA) {
+        logger.log('Found existing ATA for recipient:', existingATA);
         toTokenAccount = existingATA;
         needsCreateATA = false;
       } else {
-        logger.log('ATA does not exist, will create with idempotent instruction');
-        needsCreateATA = true;
+        // Recipient doesn't have an ATA - use RPC validation to derive correct address
+        logger.log('No existing ATA - deriving with RPC validation');
+        try {
+          toTokenAccount = await deriveATAAddressStandard(toPubkey, mint, tokenProgramId, rpcUrl, fromPubkey);
+          logger.log('Derived ATA with RPC validation:', toTokenAccount);
+          needsCreateATA = true;
+        } catch (deriveErr) {
+          // Fallback to simple derivation if RPC validation fails
+          logger.warn('RPC validation failed, using simple derivation:', deriveErr.message);
+          const result = await findATAAddress(toPubkey, mint, tokenProgramId);
+          toTokenAccount = result.address;
+          needsCreateATA = true;
+        }
       }
     } else if (!toTokenAccount) {
       // No RPC URL and no provided account, use standard derivation
@@ -792,6 +790,11 @@ async function computeATAAddress(owner, mint, tokenProgramId, bump) {
  * This mimics Solana's findProgramAddress behavior
  */
 async function findATAAddress(owner, mint, tokenProgramId) {
+  logger.log('[findATAAddress] Deriving ATA for:');
+  logger.log('  owner:', owner);
+  logger.log('  mint:', mint);
+  logger.log('  tokenProgramId:', tokenProgramId);
+  
   const ownerBytes = decodeToFixedSize(owner, 32);
   const mintBytes = decodeToFixedSize(mint, 32);
   const tokenProgramBytes = decodeToFixedSize(tokenProgramId, 32);

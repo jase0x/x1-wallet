@@ -1365,13 +1365,13 @@ export default function DAppApproval({ wallet, onComplete }) {
   
   // Known dApp logos
   const knownLogos = {
-    'xdex.xyz': 'https://xdex.s3.us-east-2.amazonaws.com/vimages/XDEX.png',
-    'app.xdex.xyz': 'https://xdex.s3.us-east-2.amazonaws.com/vimages/XDEX.png',
-    'dev.xdex.xyz': 'https://xdex.s3.us-east-2.amazonaws.com/vimages/XDEX.png',
-    'degen.fyi': 'https://xdex.s3.us-east-2.amazonaws.com/vimages/DEGEN.png',
-    'x1.xyz': 'https://logo44.s3.us-east-2.amazonaws.com/logos/X1.png',
-    'bridge.x1.xyz': 'https://logo44.s3.us-east-2.amazonaws.com/logos/X1.png',
-    'vero.x1.xyz': 'https://logo44.s3.us-east-2.amazonaws.com/logos/X1.png',
+    'xdex.xyz': '/icons/48-xdex.png',
+    'app.xdex.xyz': '/icons/48-xdex.png',
+    'dev.xdex.xyz': '/icons/48-xdex.png',
+    'degen.fyi': '/icons/48-degen.png',
+    'x1.xyz': '/icons/48-x1.png',
+    'bridge.x1.xyz': '/icons/48-x1.png',
+    'vero.x1.xyz': '/icons/48-x1.png',
   };
   
   // Get the best icon URL

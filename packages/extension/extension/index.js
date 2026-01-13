@@ -13735,7 +13735,7 @@ function requireInquire() {
   inquire_1 = inquire;
   function inquire(moduleName) {
     try {
-      var mod = eval("quire".replace(/^/, "re"))(moduleName);
+      var mod = null;
       if (mod && (mod.length || Object.keys(mod).length))
         return mod;
     } catch (e) {
@@ -14798,8 +14798,8 @@ function requireFetch() {
   if (hasRequiredFetch) return fetch_1;
   hasRequiredFetch = 1;
   fetch_1 = fetch;
-  var asPromise = requireAspromise(), inquire2 = requireInquire();
-  var fs = inquire2("fs");
+  var asPromise = requireAspromise(), inquire = requireInquire();
+  var fs = inquire("fs");
   function fetch(filename, options, callback) {
     if (typeof options === "function") {
       callback = options;

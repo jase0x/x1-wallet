@@ -619,9 +619,8 @@ function App() {
       const hasWallets = wallet.wallets && wallet.wallets.length > 0;
       const effectivePasswordExists = passwordExists && hasWallets;
       
-      // Set encryption password and create wallet
-      wallet.setEncryptionPasswordOnly(password);
-      await wallet.createWallet(mnemonic, name);
+      // Pass password directly to createWallet (avoids React state timing issue)
+      await wallet.createWallet(mnemonic, name, password);
       
       // Set up password hash if first time
       if (!effectivePasswordExists) {
@@ -633,6 +632,7 @@ function App() {
       storage.set('passwordProtection', true);  // Ensure protection is ON
       storage.set('lastActivity', Date.now());
       setScreen('main');
+      return; // FIX: stop execution after success
     } catch (err) {
       logger.error('Failed to create wallet:', err);
       showAlert(err.message || 'Failed to create wallet', 'Creation Failed', 'warning');
@@ -652,9 +652,8 @@ function App() {
       const hasWallets = wallet.wallets && wallet.wallets.length > 0;
       const effectivePasswordExists = passwordExists && hasWallets;
       
-      // Set encryption password and import wallet
-      wallet.setEncryptionPasswordOnly(password);
-      await wallet.importWallet(mnemonic, name);
+      // Pass password directly to importWallet (avoids React state timing issue)
+      await wallet.importWallet(mnemonic, name, password);
       
       // Set up password hash if first time
       if (!effectivePasswordExists) {
@@ -669,6 +668,7 @@ function App() {
       
       storage.set('lastActivity', Date.now());
       setScreen('main');
+      return; // FIX: stop execution after success
     } catch (err) {
       logger.error('Failed to import wallet:', err);
       showAlert(err.message || 'Failed to import wallet', 'Import Failed', 'warning');
@@ -720,9 +720,8 @@ function App() {
         activeAddressIndex: 0
       };
       
-      // Set encryption password and save
-      wallet.setEncryptionPasswordOnly(password);
-      await wallet.saveWallets([...existingWallets, newWallet]);
+      // Pass password directly to saveWallets (avoids React state timing issue)
+      await wallet.saveWallets([...existingWallets, newWallet], password);
       wallet.selectWallet(newWallet.id);
       
       // Set up password hash if first time
@@ -748,7 +747,7 @@ function App() {
   // BUG FIX: Use lockWallet() to lock, NOT clearWallet() which wipes data!
   const handleLock = () => {
     wallet.lockWallet();
-    setScreen('lock');
+    setIsLocked(true);
   };
 
   // Navigate to create from manager
@@ -765,18 +764,90 @@ function App() {
 
   // Navigate to hardware wallet from manager
   const handleManagerHardware = () => {
-    setReturnScreen('main');
-    setScreen('hardware');
+    // Check if we're in extension popup
+    const isExtensionPopup = typeof chrome !== 'undefined' && 
+                             chrome.runtime && 
+                             chrome.runtime.id &&
+                             window.innerWidth < 500;
+    
+    if (isExtensionPopup) {
+      // Open in full tab for better HID support
+      const extensionUrl = chrome.runtime.getURL('index.html');
+      chrome.tabs.create({ url: extensionUrl + '?hw=1' });
+      window.close();
+    } else {
+      setReturnScreen('main');
+      setScreen('hardware');
+    }
   };
 
+  // Track hardware wallet import in progress to prevent double-calls
+  const [hwImportInProgress, setHwImportInProgress] = useState(false);
+
   // Handle hardware wallet complete
-  const handleHardwareComplete = async (hwWallet) => {
+  const handleHardwareComplete = async (hwWalletOrArray) => {
+    // Prevent double-execution
+    if (hwImportInProgress) {
+      logger.warn('[App] Hardware wallet import already in progress, ignoring duplicate call');
+      return;
+    }
+    
+    setHwImportInProgress(true);
+    
     try {
-      await wallet.addHardwareWallet(hwWallet);
-      setScreen('main');
+      let passwordUsed = null;
+      
+      // Handle array of wallets (multi-select)
+      if (Array.isArray(hwWalletOrArray)) {
+        // Extract password from first wallet (if this is first wallet setup)
+        if (hwWalletOrArray.length > 0 && hwWalletOrArray[0].password) {
+          passwordUsed = hwWalletOrArray[0].password;
+        }
+        
+        for (let i = 0; i < hwWalletOrArray.length; i++) {
+          const { password, ...walletData } = hwWalletOrArray[i];
+          // Pass password to ALL wallets - they need it to decrypt localStorage for duplicate check
+          await wallet.addHardwareWallet(walletData, passwordUsed);
+        }
+      } else {
+        // Single wallet
+        const { password, ...walletData } = hwWalletOrArray;
+        passwordUsed = password;
+        await wallet.addHardwareWallet(walletData, password);
+      }
+      
+      // If password was provided (first wallet setup), set up password hash and protection flags
+      if (passwordUsed) {
+        const { setupPassword, hasPassword: checkHasPassword } = await import('@x1-wallet/core/services/wallet');
+        const passwordExists = await checkHasPassword();
+        
+        if (!passwordExists) {
+          await setupPassword(passwordUsed);
+        }
+        
+        // Set password protection flags
+        storage.set('passwordProtection', true);
+        setPasswordProtection(true);
+        setHasPasswordAsync(true);
+        localStorage.setItem('x1wallet_encrypted', 'true');
+      }
+      
+      storage.set('lastActivity', Date.now());
+      
+      // If we're in a full tab (hw=1 param), show success screen
+      const urlParams = new URLSearchParams(window.location.search);
+      const isFullTab = urlParams.get('hw') === '1' && window.innerWidth >= 500;
+      
+      if (isFullTab) {
+        setScreen('hardware-success');
+      } else {
+        setScreen('main');
+      }
     } catch (err) {
       logger.error('Failed to add hardware wallet:', err);
-      showAlert(err.message || 'Failed to add hardware wallet', 'Wallet Already Exists', 'warning');
+      showAlert(err.message || 'Failed to add hardware wallet', 'Error', 'warning');
+    } finally {
+      setHwImportInProgress(false);
     }
   };
 
@@ -848,7 +919,12 @@ function App() {
         <WelcomeScreen
           onCreateWallet={() => { setReturnScreen('main'); setScreen('create'); }}
           onImportWallet={() => { setReturnScreen('main'); setScreen('import'); }}
-          onHardwareWallet={() => { setReturnScreen('main'); setScreen('hardware'); }}
+          onHardwareWallet={() => {
+            // In full tab mode, proceed directly
+            // (Popup mode is handled inside WelcomeScreen itself)
+            setReturnScreen('welcome'); 
+            setScreen('hardware');
+          }}
           onBack={wallet.wallets?.length > 0 ? () => setScreen('main') : null}
         />
       </div>
@@ -899,6 +975,47 @@ function App() {
 
   // Hardware wallet flow
   if (screen === 'hardware') {
+    // Check if we're in full tab mode (hw=1 parameter present and wide window)
+    const isFullTab = window.innerWidth >= 500;
+    
+    // Full tab mode - centered card like Phantom
+    if (isFullTab) {
+      return (
+        <div className="hardware-fullpage">
+          <div className="hardware-fullpage-bg" />
+          <div className="hardware-fullpage-logo">
+            <img src="/icons/128-x1.png" alt="X1" />
+          </div>
+          <div className="hardware-fullpage-card">
+            {alertModal.show && (
+              <AlertModal
+                title={alertModal.title}
+                message={alertModal.message}
+                type={alertModal.type}
+                onClose={closeAlert}
+              />
+            )}
+            <HardwareWallet
+              onComplete={handleHardwareComplete}
+              onBack={() => {
+                // In full tab, go back to welcome or close tab
+                if (wallet.wallets && wallet.wallets.length > 0) {
+                  setScreen('main');
+                } else {
+                  setScreen('welcome');
+                }
+              }}
+              isFirstWallet={!wallet.wallets || wallet.wallets.length === 0}
+              existingWallets={wallet.wallets || []}
+              network={wallet.network}
+              isFullTab={true}
+            />
+          </div>
+        </div>
+      );
+    }
+    
+    // Popup mode (shouldn't normally happen, but fallback)
     return (
       <div className="app">
         {alertModal.show && (
@@ -912,7 +1029,83 @@ function App() {
         <HardwareWallet
           onComplete={handleHardwareComplete}
           onBack={() => setScreen(returnScreen === 'manage' ? 'manage' : 'main')}
+          isFirstWallet={!wallet.wallets || wallet.wallets.length === 0}
+          existingWallets={wallet.wallets || []}
+          network={wallet.network}
         />
+      </div>
+    );
+  }
+
+  // Hardware wallet success screen (full tab only)
+  if (screen === 'hardware-success') {
+    return (
+      <div className="hardware-fullpage">
+        <div className="hardware-fullpage-bg" />
+        <div className="hardware-fullpage-logo">
+          <img src="/icons/128-x1.png" alt="X1" />
+        </div>
+        <div className="hardware-fullpage-card" style={{ textAlign: 'center', padding: '48px 32px' }}>
+          {/* Success checkmark */}
+          <div style={{
+            width: 80,
+            height: 80,
+            borderRadius: '50%',
+            background: 'rgba(34, 197, 94, 0.1)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            margin: '0 auto 24px'
+          }}>
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="3">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          </div>
+          
+          <h2 style={{ marginBottom: 12, fontSize: 24 }}>Wallet Imported!</h2>
+          <p style={{ color: 'var(--text-muted)', marginBottom: 32, fontSize: 15, lineHeight: 1.5 }}>
+            Your hardware wallet has been successfully connected. Click the X1 Wallet extension icon in your browser toolbar to access your wallet.
+          </p>
+          
+          {/* Extension icon hint */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 12,
+            padding: '16px 20px',
+            background: 'var(--bg-secondary)',
+            borderRadius: 12,
+            marginBottom: 32
+          }}>
+            <img src="/icons/128-x1.png" alt="X1" style={{ width: 40, height: 40, objectFit: 'contain' }} />
+            <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}>
+              Click the extension icon to open your wallet
+            </span>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2">
+              <path d="M7 17L17 7M17 7H7M17 7V17" />
+            </svg>
+          </div>
+          
+          <button 
+            className="btn-secondary"
+            onClick={() => {
+              // Close the tab
+              if (typeof chrome !== 'undefined' && chrome.tabs) {
+                chrome.tabs.getCurrent((tab) => {
+                  if (tab?.id) {
+                    chrome.tabs.remove(tab.id);
+                  }
+                });
+              } else {
+                window.close();
+              }
+            }}
+            style={{ width: '100%', height: 48 }}
+          >
+            Close This Tab
+          </button>
+        </div>
       </div>
     );
   }
@@ -1077,19 +1270,19 @@ function App() {
       { 
         name: 'X1 Blockchain', 
         url: 'https://x1.xyz', 
-        logo: 'https://logo44.s3.us-east-2.amazonaws.com/logos/X1.png',
+        logo: '/icons/48-x1.png',
         desc: 'Layer-1 Blockchain' 
       },
       { 
         name: 'XDEX', 
         url: 'https://xdex.xyz', 
-        logo: 'https://xdex.s3.us-east-2.amazonaws.com/vimages/XDEX.png',
+        logo: '/icons/48-xdex.png',
         desc: 'X1 Native DEX' 
       },
       { 
         name: 'Degen', 
         url: 'https://degen.fyi', 
-        logo: 'https://xdex.s3.us-east-2.amazonaws.com/vimages/DEGEN.png',
+        logo: '/icons/48-degen.png',
         desc: 'Launchpad' 
       },
       { 

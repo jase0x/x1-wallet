@@ -11,6 +11,44 @@ const ACTIVE_KEY = 'x1wallet_active';
 const NETWORK_KEY = 'x1wallet_network';
 const CUSTOM_NETWORKS_KEY = 'x1wallet_customRpcs';
 const ENCRYPTION_ENABLED_KEY = 'x1wallet_encrypted';
+const BALANCE_CACHE_KEY = 'x1wallet_balance_cache';
+
+// Password policy (wallet-grade + usable)
+function validatePasswordStrength(password) {
+  if (typeof password !== 'string') return { ok: false, reason: 'Invalid password' };
+  if (password.length < 8) return { ok: false, reason: 'Password must be at least 8 characters' };
+  if (!/[a-zA-Z]/.test(password)) return { ok: false, reason: 'Password must contain at least one letter' };
+  if (!/[0-9]/.test(password)) return { ok: false, reason: 'Password must contain at least one number' };
+  const banned = ['password', '123456', 'qwerty', 'letmein'];
+  if (banned.includes(password.toLowerCase())) return { ok: false, reason: 'Password too weak' };
+  return { ok: true };
+}
+
+// Helper to get/set cached balance for instant loading
+function getCachedBalance(publicKey, network) {
+  try {
+    const cache = JSON.parse(localStorage.getItem(BALANCE_CACHE_KEY) || '{}');
+    const key = `${publicKey}:${network}`;
+    return cache[key]?.balance ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+function setCachedBalance(publicKey, network, balance) {
+  try {
+    const cache = JSON.parse(localStorage.getItem(BALANCE_CACHE_KEY) || '{}');
+    const key = `${publicKey}:${network}`;
+    cache[key] = { balance, timestamp: Date.now() };
+    // Keep only last 10 entries
+    const keys = Object.keys(cache);
+    if (keys.length > 10) {
+      const oldest = keys.sort((a, b) => (cache[a]?.timestamp || 0) - (cache[b]?.timestamp || 0))[0];
+      delete cache[oldest];
+    }
+    localStorage.setItem(BALANCE_CACHE_KEY, JSON.stringify(cache));
+  } catch {}
+}
 
 // Helper to get network config (built-in or custom)
 function getNetworkConfig(networkName) {
@@ -124,7 +162,8 @@ export function useWallet() {
   // Save wallets to storage (encrypted if password is set)
   // SEC-FIX: Encryption is now MANDATORY - no unencrypted save path
   // SAFETY: Added guards against accidental data loss
-  const saveWalletsToStorage = useCallback(async (walletsToSave) => {
+  // FIX: Accept optional passwordOverride to handle React state closure issues
+  const saveWalletsToStorage = useCallback(async (walletsToSave, passwordOverride = null) => {
     // SAFETY GUARD 1: Never save empty array if we have existing data
     const existingData = localStorage.getItem(STORAGE_KEY);
     if ((!walletsToSave || walletsToSave.length === 0) && existingData && existingData.length > 10) {
@@ -132,8 +171,11 @@ export function useWallet() {
       throw new Error('Cannot overwrite existing wallet data with empty array');
     }
     
+    // Use passwordOverride if provided (fixes React state timing issues), otherwise use state
+    const effectivePassword = passwordOverride || encryptionPassword;
+    
     // SAFETY GUARD 2: Require encryption password
-    if (!encryptionPassword) {
+    if (!effectivePassword) {
       // If we have existing encrypted data, don't allow save without password
       if (existingData && isEncrypted(existingData)) {
         logger.warn('[useWallet] Cannot save: wallet is locked, unlock first');
@@ -148,7 +190,7 @@ export function useWallet() {
       const jsonData = JSON.stringify(walletsToSave);
       
       // Encrypt and save
-      const encrypted = await encryptData(jsonData, encryptionPassword);
+      const encrypted = await encryptData(jsonData, effectivePassword);
       localStorage.setItem(STORAGE_KEY, encrypted);
       localStorage.setItem(ENCRYPTION_ENABLED_KEY, 'true');
       
@@ -158,7 +200,7 @@ export function useWallet() {
         try {
           await chrome.storage.session.set({
             x1wallet_session_wallets: jsonData,
-            x1wallet_session_password: encryptionPassword
+            x1wallet_session_password: effectivePassword
           });
           console.log('[useWallet] Session storage synced with', walletsToSave.length, 'wallets');
         } catch (e) {
@@ -185,8 +227,21 @@ export function useWallet() {
         
         console.log('[useWallet] Loading - saved data length:', saved?.length, 'first 50 chars:', saved?.substring(0, 50));
         
-        // For encrypted wallets, check session storage first (allows auto-lock timer to work)
-        if (saved && isEncrypted(saved)) {
+        // FRESH INSTALL CHECK: If localStorage is empty, clear any stale session storage
+        if (!saved || saved === '[]' || saved === 'null' || saved === '') {
+          console.log('[useWallet] Fresh install detected - clearing any stale session storage');
+          if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
+            try {
+              await chrome.storage.session.remove(['x1wallet_session_wallets', 'x1wallet_session_password']);
+            } catch (e) {
+              // Ignore errors
+            }
+          }
+          setWallets([]);
+          setIsLocked(false);
+          console.log('[useWallet] Fresh install - ready for first wallet');
+        } else if (saved && isEncrypted(saved)) {
+          // For encrypted wallets, check session storage first (allows auto-lock timer to work)
           console.log('[useWallet] Data is encrypted - checking session storage...');
           
           // Try to load from session storage (previous unlock in same browser session)
@@ -288,10 +343,11 @@ export function useWallet() {
   }, []);
 
   // Enable encryption on existing wallet
-  // X1W-SEC-008 FIX: Standardized to 12 char minimum
+  // X1W-SEC-008 FIX: Password policy Option 1 (min 8 chars, letter + number)
   const enableEncryption = useCallback(async (password) => {
-    if (!password || password.length < 12) {
-      throw new Error('Password must be at least 12 characters');
+    const pv = validatePasswordStrength(password);
+    if (!pv.ok) {
+      throw new Error(pv.reason);
     }
     
     // Set the encryption password for future saves
@@ -324,8 +380,9 @@ export function useWallet() {
   // Set encryption password without re-encrypting existing wallets
   // Use this when importing a new wallet to avoid corrupting existing data if import fails
   const setEncryptionPasswordOnly = useCallback((password) => {
-    if (!password || password.length < 12) {
-      throw new Error('Password must be at least 12 characters');
+    const pv = validatePasswordStrength(password);
+    if (!pv.ok) {
+      throw new Error(pv.reason);
     }
     setEncryptionPassword(password);
     localStorage.setItem(ENCRYPTION_ENABLED_KEY, 'true');
@@ -341,13 +398,13 @@ export function useWallet() {
   }, []);
 
   // Change encryption password
-  // X1W-SEC-008 FIX: Standardized to 12 char minimum
+  // X1W-SEC-008 FIX: Password policy Option 1 (min 8 chars, letter + number)
   const changePassword = useCallback(async (currentPassword, newPassword) => {
-    if (!newPassword || newPassword.length < 12) {
-      throw new Error('New password must be at least 12 characters');
+    const pv = validatePasswordStrength(newPassword);
+    if (!pv.ok) {
+      throw new Error(pv.reason);
     }
-    
-    // Verify current password by trying to decrypt
+// Verify current password by trying to decrypt
     const saved = localStorage.getItem(STORAGE_KEY);
     if (isEncrypted(saved)) {
       try {
@@ -386,8 +443,9 @@ export function useWallet() {
   }, []);
 
   // Save wallets to storage (session storage is updated automatically by saveWalletsToStorage)
-  const saveWallets = useCallback(async (newWallets) => {
-    await saveWalletsToStorage(newWallets);
+  // FIX: Accept optional password to pass through to saveWalletsToStorage
+  const saveWallets = useCallback(async (newWallets, password = null) => {
+    await saveWalletsToStorage(newWallets, password);
     setWallets(newWallets);
   }, [saveWalletsToStorage]);
 
@@ -414,12 +472,22 @@ export function useWallet() {
   const activeAddress = activeWallet ? getActiveAddress(activeWallet) : null;
 
   // Create new wallet from mnemonic
-  const createWallet = useCallback(async (mnemonic, name = null) => {
-    // SEC-FIX: Require encryption password before creating wallet
-    // This ensures wallet data is never saved unencrypted
-    if (!encryptionPassword) {
-      throw new Error('Please set a password before creating a wallet. Your wallet data must be encrypted.');
+  const createWallet = useCallback(async (mnemonic, name = null, password = null) => {
+    // Require a password before creating/importing the first wallet.
+    // React state may lag after enableEncryption(), so also consult the persisted flag.
+    const hasEncryption = Boolean(encryptionPassword) || localStorage.getItem(ENCRYPTION_ENABLED_KEY) === 'true';
+
+    // If encryption isn't initialized yet (fresh install), bootstrap it using the provided password.
+    if (!hasEncryption) {
+      if (password && wallets.length === 0) {
+        await enableEncryption(password);
+      } else {
+        throw new Error('Please set a password before creating a wallet. Your wallet data must be encrypted.');
+      }
     }
+    
+    // Determine effective password for saving (use provided password to avoid closure issues)
+    const effectivePassword = password || encryptionPassword;
     
     try {
       const keypair = await mnemonicToKeypair(mnemonic, 0);
@@ -461,7 +529,8 @@ export function useWallet() {
       };
       
       const newWallets = [...currentWallets, newWallet];
-      await saveWallets(newWallets);
+      // FIX: Pass password directly to avoid React state closure issues
+      await saveWallets(newWallets, effectivePassword);
       setActiveWalletId(newWallet.id);
       localStorage.setItem(ACTIVE_KEY, newWallet.id);
       
@@ -470,11 +539,11 @@ export function useWallet() {
       logger.error('Failed to create wallet:', e);
       throw e;
     }
-  }, [wallets, saveWallets]);
+  }, [wallets, saveWallets, encryptionPassword, enableEncryption]);
 
   // Import wallet
-  const importWallet = useCallback(async (mnemonic, name = null) => {
-    return createWallet(mnemonic, name);
+  const importWallet = useCallback(async (mnemonic, name = null, password = null) => {
+    return createWallet(mnemonic, name, password);
   }, [createWallet]);
 
   // Add new address to existing wallet
@@ -580,13 +649,72 @@ export function useWallet() {
   }, [wallets, saveWallets]);
 
   // Add hardware wallet
-  const addHardwareWallet = useCallback(async (walletDataOrPublicKey) => {
+  const addHardwareWallet = useCallback(async (walletDataOrPublicKey, password = null) => {
     // Support both object format and legacy (publicKey, name, derivationPath) format
     const isObject = typeof walletDataOrPublicKey === 'object' && walletDataOrPublicKey.publicKey;
     const publicKey = isObject ? walletDataOrPublicKey.publicKey : walletDataOrPublicKey;
     
+    // Check if encryption is enabled (same logic as createWallet)
+    const hasEncryption = Boolean(encryptionPassword) || localStorage.getItem(ENCRYPTION_ENABLED_KEY) === 'true';
+    
+    // If encryption isn't initialized yet (fresh install), bootstrap it using the provided password
+    if (!hasEncryption) {
+      if (password && wallets.length === 0) {
+        // Clear any stale session storage before first wallet setup
+        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
+          try {
+            await chrome.storage.session.remove(['x1wallet_session_wallets', 'x1wallet_session_password']);
+          } catch (e) {
+            // Ignore errors
+          }
+        }
+        await enableEncryption(password);
+      } else {
+        throw new Error('Please set a password before adding a wallet. Your wallet data must be encrypted.');
+      }
+    }
+    
+    // Determine effective password for saving
+    // IMPORTANT: Always prefer passed password over state - state may be stale in batch operations
+    const effectivePassword = password || encryptionPassword;
+    
+    if (!effectivePassword) {
+      throw new Error('No password available for encryption. Please unlock the wallet first.');
+    }
+    
+    // ALWAYS check localStorage directly for existing wallets to avoid React state staleness
+    let currentWallets = [];
+    const savedData = localStorage.getItem(STORAGE_KEY);
+    
+    if (savedData && savedData !== '[]' && savedData !== 'null' && savedData !== '') {
+      try {
+        if (isEncrypted(savedData)) {
+          // Decrypt to check for duplicates
+          const decrypted = await decryptData(savedData, effectivePassword);
+          currentWallets = JSON.parse(decrypted);
+        } else {
+          currentWallets = JSON.parse(savedData);
+        }
+      } catch (e) {
+        // If decryption fails, it might be because we're in a batch and state is stale
+        // Try with passed password explicitly
+        if (password && password !== effectivePassword) {
+          try {
+            const decrypted = await decryptData(savedData, password);
+            currentWallets = JSON.parse(decrypted);
+          } catch (e2) {
+            logger.error('[addHardwareWallet] Decryption failed with both passwords:', e2.message);
+            throw new Error('Failed to verify existing wallets. Please try again.');
+          }
+        } else {
+          logger.error('[addHardwareWallet] Could not decrypt localStorage:', e.message);
+          throw new Error('Failed to verify existing wallets. Please try again.');
+        }
+      }
+    }
+    
     // Check if this wallet already exists (same public key)
-    const existingWallet = wallets.find(w => 
+    const existingWallet = currentWallets.find(w => 
       w.addresses?.some(a => a.publicKey === publicKey)
     );
     if (existingWallet) {
@@ -612,18 +740,18 @@ export function useWallet() {
       activeAddressIndex: 0
     };
     
-    logger.log('Adding hardware wallet:', newWallet);
+    logger.log('Adding hardware wallet:', newWallet.name, 'to', currentWallets.length, 'existing wallets');
 
-    const newWallets = [...wallets, newWallet];
-    // Use saveWallets instead of saveWalletsToStorage to also update session storage
-    await saveWallets(newWallets);
+    const newWallets = [...currentWallets, newWallet];
+    // Pass password directly to avoid React state closure issues
+    await saveWallets(newWallets, effectivePassword);
     localStorage.setItem(ACTIVE_KEY, newWallet.id);
     setActiveWalletId(newWallet.id);
     
     return new Promise((resolve) => {
       setTimeout(() => resolve(newWallet), 100);
     });
-  }, [wallets, saveWallets]);
+  }, [wallets, saveWallets, encryptionPassword, enableEncryption]);
 
   // Switch active wallet
   const switchWallet = useCallback((walletId) => {
@@ -811,14 +939,23 @@ export function useWallet() {
       }
       
       setBalance(bal);
+      // Cache balance for instant loading on next open
+      setCachedBalance(activeAddress.publicKey, network, bal);
     } catch (e) {
       logger.error('[Balance] Failed to fetch:', e.message);
     }
   }, [activeAddress, network]);
 
-  // Refresh on wallet/address/network change
+  // Load cached balance immediately when wallet/network changes
   useEffect(() => {
     if (activeAddress && !isLocked) {
+      // Load from cache IMMEDIATELY for instant display
+      const cachedBal = getCachedBalance(activeAddress.publicKey, network);
+      if (cachedBal > 0) {
+        logger.log('[Balance] Loaded from cache:', cachedBal);
+        setBalance(cachedBal);
+      }
+      // Then fetch fresh balance in background
       refreshBalance();
     }
   }, [activeAddress, network, refreshBalance, isLocked]);

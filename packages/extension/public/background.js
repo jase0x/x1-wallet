@@ -8,6 +8,38 @@ chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() =>
 const CONNECTED_SITES_KEY = 'x1wallet_connected_sites';
 const PENDING_REQUESTS_KEY = 'x1wallet_pending_requests';
 
+// Tab registration for broadcasting (no tabs permission needed)
+// Maps tabId -> { origin, publicKey }
+const connectedTabs = new Map();
+
+// Track last broadcasted values to prevent spam
+let lastBroadcastedPublicKey = null;
+let lastBroadcastedNetwork = null;
+
+// Clean up when tab closes
+chrome.tabs.onRemoved.addListener((tabId) => {
+  if (connectedTabs.has(tabId)) {
+    console.log('[Background] Tab closed, removing from connectedTabs:', tabId);
+    connectedTabs.delete(tabId);
+  }
+});
+
+// Clean up when tab navigates away from connected site
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.url && connectedTabs.has(tabId)) {
+    const stored = connectedTabs.get(tabId);
+    try {
+      const newOrigin = new URL(changeInfo.url).origin;
+      if (newOrigin !== stored.origin) {
+        console.log('[Background] Tab navigated away, removing:', tabId);
+        connectedTabs.delete(tabId);
+      }
+    } catch (e) {
+      connectedTabs.delete(tabId);
+    }
+  }
+});
+
 // X1W-006: Session timeout constants
 const SESSION_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 hours
 const SENSITIVE_OPS_REAUTH_MS = 60 * 60 * 1000; // 1 hour for sensitive operations
@@ -130,19 +162,33 @@ async function getCurrentNetwork() {
 let pendingRequest = null;
 let pendingRequestCallback = null;
 
+// Request queue for sequential processing
+const requestQueue = [];
+let isProcessingQueue = false;
+
+// Track approval window to reuse it
+let approvalWindowId = null;
+
 // Listen for messages
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Handle side panel open
   if (message.action === 'openSidePanel') {
-    chrome.sidePanel.open({ windowId: sender.tab?.windowId });
-    return;
+    chrome.sidePanel.open({ windowId: sender.tab?.windowId }).catch(() => {});
+    return false;
   }
   
-  // Handle network change from popup - broadcast to all connected sites
+  // Handle network change from popup - broadcast to all connected tabs
   if (message.type === 'network-changed') {
     handleNetworkChanged(message.network);
     sendResponse({ success: true });
-    return;
+    return false;
+  }
+  
+  // Handle wallet/account change from popup - broadcast to all connected tabs
+  if (message.type === 'wallet-changed' || message.type === 'account-changed') {
+    handleAccountChanged(message.publicKey);
+    sendResponse({ success: true });
+    return false;
   }
   
   // Handle provider requests from content script
@@ -155,48 +201,67 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   
   // Handle responses from popup
   if (message.type === 'provider-response') {
+    // Close fallback approval window if open
+    if (approvalWindowId) {
+      chrome.windows.remove(approvalWindowId).catch(() => {});
+      approvalWindowId = null;
+    }
+    
     if (pendingRequestCallback) {
       const payload = message.payload;
-      const currentRequest = pendingRequest; // Save reference before clearing
+      const currentRequest = pendingRequest;
       
-      // If this is a successful connection, save the connected site BEFORE resolving
+      // If this is a successful connection, save the connected site and register tab
       if (currentRequest && currentRequest.type === 'connect' && payload.result && !payload.error) {
-        // Save synchronously before resolving the promise
+        const tabId = currentRequest.tabId;
+        const origin = currentRequest.origin;
+        const publicKey = payload.result.publicKey;
+        
+        // Register tab for broadcasts
+        if (tabId) {
+          connectedTabs.set(tabId, { origin, publicKey });
+          console.log('[Background] Registered tab for broadcasts:', tabId, origin);
+        }
+        
         getConnectedSites().then(sites => {
-          sites[currentRequest.origin] = {
+          sites[origin] = {
             connectedAt: Date.now(),
-            publicKey: payload.result.publicKey
+            publicKey: publicKey
           };
           return saveConnectedSites(sites);
         }).then(() => {
-          console.log('[Background] Saved connected site:', currentRequest.origin);
-          // Now resolve the promise
+          console.log('[Background] Saved connected site:', origin);
           pendingRequestCallback(payload);
           pendingRequestCallback = null;
           pendingRequest = null;
+          // Process next queued request after short delay
+          setTimeout(processNextRequest, 100);
         }).catch(err => {
           console.error('[Background] Error saving site:', err);
           pendingRequestCallback(payload);
           pendingRequestCallback = null;
           pendingRequest = null;
+          setTimeout(processNextRequest, 100);
         });
-        return; // Don't fall through
+      } else {
+        pendingRequestCallback(payload);
+        pendingRequestCallback = null;
+        pendingRequest = null;
+        // Process next queued request after short delay
+        setTimeout(processNextRequest, 100);
       }
-      
-      pendingRequestCallback(payload);
-      pendingRequestCallback = null;
-      pendingRequest = null;
     }
-    return;
+    sendResponse({ received: true });
+    return false;
   }
   
   // Handle get pending request from popup
   if (message.type === 'get-pending-request') {
     sendResponse(pendingRequest);
-    return;
+    return false;
   }
   
-  // Handle approve-sign from popup - do the actual signing
+  // Handle approve-sign from popup
   if (message.type === 'approve-sign') {
     handleApproveSign(message).then(sendResponse).catch(err => {
       sendResponse({ error: err.message });
@@ -211,51 +276,90 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     return true;
   }
+  
+  // Unknown message type
+  return false;
 });
 
-// Handle network change - broadcast to all connected tabs
+// Handle network change - broadcast to all registered connected tabs
 async function handleNetworkChanged(network) {
-  console.log('[Background] Network changed to:', network);
-  
-  const chain = networkToChain(network);
-  const connectedSites = await getConnectedSites();
-  const origins = Object.keys(connectedSites);
-  
-  if (origins.length === 0) {
-    console.log('[Background] No connected sites to notify');
+  // Skip if same as last broadcast (prevents spam)
+  if (network === lastBroadcastedNetwork) {
+    console.log('[Background] Network unchanged, skipping broadcast');
     return;
   }
   
-  // Get all tabs and send network change to connected ones
-  try {
-    const tabs = await chrome.tabs.query({});
-    
-    for (const tab of tabs) {
-      if (!tab.url) continue;
-      
-      try {
-        const tabOrigin = new URL(tab.url).origin;
-        
-        // Only notify connected sites
-        if (origins.includes(tabOrigin)) {
-          console.log('[Background] Notifying tab:', tab.id, tabOrigin);
-          
-          // Send message to content script
-          chrome.tabs.sendMessage(tab.id, {
-            type: 'network-changed',
-            target: 'x1-wallet-content',
-            payload: { network, chain }
-          }).catch(err => {
-            // Tab might not have content script loaded
-            console.log('[Background] Could not notify tab:', tab.id, err.message);
-          });
-        }
-      } catch (e) {
-        // Invalid URL, skip
-      }
-    }
-  } catch (err) {
-    console.error('[Background] Error broadcasting network change:', err);
+  console.log('[Background] Network changed to:', network);
+  lastBroadcastedNetwork = network;
+  
+  const chain = networkToChain(network);
+  
+  if (connectedTabs.size === 0) {
+    console.log('[Background] No connected tabs to notify');
+    return;
+  }
+  
+  console.log('[Background] Broadcasting to', connectedTabs.size, 'connected tabs');
+  
+  // Broadcast to all registered tabs
+  for (const [tabId, data] of connectedTabs) {
+    chrome.tabs.sendMessage(tabId, {
+      type: 'network-changed',
+      target: 'x1-wallet-content',
+      payload: { network, chain }
+    }).then(() => {
+      console.log('[Background] Notified tab:', tabId, data.origin);
+    }).catch(err => {
+      console.log('[Background] Tab unreachable, removing:', tabId);
+      connectedTabs.delete(tabId);
+    });
+  }
+}
+
+// Handle account/wallet change - broadcast to all registered connected tabs
+async function handleAccountChanged(publicKey) {
+  // Skip if same as last broadcast (prevents spam from popup reloads)
+  if (publicKey === lastBroadcastedPublicKey) {
+    console.log('[Background] Account unchanged, skipping broadcast');
+    return;
+  }
+  
+  console.log('[Background] Account changed to:', publicKey);
+  lastBroadcastedPublicKey = publicKey;
+  
+  if (!publicKey) return;
+  
+  if (connectedTabs.size === 0) {
+    console.log('[Background] No connected tabs to notify');
+    return;
+  }
+  
+  // Update stored public key for all connected sites
+  const connectedSites = await getConnectedSites();
+  for (const origin of Object.keys(connectedSites)) {
+    connectedSites[origin].publicKey = publicKey;
+  }
+  await saveConnectedSites(connectedSites);
+  
+  // Update in-memory tab data
+  for (const [tabId, data] of connectedTabs) {
+    data.publicKey = publicKey;
+  }
+  
+  console.log('[Background] Broadcasting account change to', connectedTabs.size, 'tabs');
+  
+  // Broadcast to all registered tabs
+  for (const [tabId, data] of connectedTabs) {
+    chrome.tabs.sendMessage(tabId, {
+      type: 'accountChanged',
+      target: 'x1-wallet-content',
+      payload: { publicKey }
+    }).then(() => {
+      console.log('[Background] Notified tab of account change:', tabId);
+    }).catch(err => {
+      console.log('[Background] Tab unreachable, removing:', tabId);
+      connectedTabs.delete(tabId);
+    });
   }
 }
 
@@ -298,6 +402,138 @@ async function handleProviderRequest(message, sender) {
   }
 }
 
+// Open approval popup window positioned in the dApp's browser window
+async function openApprovalPopup(windowId) {
+  // Check if we already have an approval window open - reuse it
+  if (approvalWindowId) {
+    try {
+      const existingWindow = await chrome.windows.get(approvalWindowId);
+      if (existingWindow) {
+        await chrome.windows.update(approvalWindowId, { focused: true });
+        console.log('[Background] Reusing existing approval window:', approvalWindowId);
+        return;
+      }
+    } catch (e) {
+      approvalWindowId = null;
+    }
+  }
+  
+  // Check if any extension popup is already open (toolbar dropdown or other)
+  // If so, don't open another - let the existing one handle it
+  try {
+    const contexts = await chrome.runtime.getContexts({ contextTypes: ['POPUP'] });
+    if (contexts && contexts.length > 0) {
+      console.log('[Background] Extension popup already open, not opening another');
+      return;
+    }
+  } catch (e) {
+    // getContexts might not be available, continue
+  }
+  
+  // Get the target window (where the dApp is)
+  let targetWindow;
+  try {
+    if (windowId) {
+      targetWindow = await chrome.windows.get(windowId);
+    } else {
+      targetWindow = await chrome.windows.getCurrent();
+    }
+  } catch (e) {
+    try {
+      targetWindow = await chrome.windows.getCurrent();
+    } catch (e2) {
+      console.error('[Background] No window available');
+      return;
+    }
+  }
+  
+  // Position popup in top-right of the target window
+  const popupWidth = 400;
+  const popupHeight = 620;
+  const left = Math.max(0, targetWindow.left + targetWindow.width - popupWidth - 20);
+  const top = Math.max(0, targetWindow.top + 80);
+  
+  try {
+    const win = await chrome.windows.create({
+      url: 'index.html',
+      type: 'popup',
+      width: popupWidth,
+      height: popupHeight,
+      left,
+      top,
+      focused: true
+    });
+    
+    approvalWindowId = win.id;
+    console.log('[Background] Opened approval window:', win.id, 'at position', left, top);
+  } catch (err) {
+    console.error('[Background] Failed to open approval window:', err);
+  }
+}
+
+// Clean up approval window tracking when window closes
+chrome.windows.onRemoved.addListener((windowId) => {
+  if (windowId === approvalWindowId) {
+    approvalWindowId = null;
+    console.log('[Background] Approval window closed');
+    
+    // Process next queued request if any
+    processNextRequest();
+  }
+});
+
+// Queue a request and process it
+function queueRequest(request, resolve, windowId) {
+  requestQueue.push({ request, resolve, windowId });
+  console.log('[Background] Queued request, queue length:', requestQueue.length);
+  
+  if (!isProcessingQueue) {
+    processNextRequest();
+  }
+}
+
+// Process the next request in queue
+function processNextRequest() {
+  console.log('[Background] processNextRequest called, queue length:', requestQueue.length, 'pendingRequest:', !!pendingRequest);
+  
+  if (requestQueue.length === 0) {
+    isProcessingQueue = false;
+    console.log('[Background] Queue empty, done processing');
+    // Close fallback window if open and queue is empty
+    if (approvalWindowId) {
+      chrome.windows.remove(approvalWindowId).catch(() => {});
+      approvalWindowId = null;
+    }
+    return;
+  }
+  
+  // Don't process if there's already a pending request
+  if (pendingRequest) {
+    console.log('[Background] Pending request exists, waiting');
+    return;
+  }
+  
+  isProcessingQueue = true;
+  const { request, resolve, windowId } = requestQueue.shift();
+  
+  pendingRequest = request;
+  pendingRequestCallback = resolve;
+  
+  console.log('[Background] Processing request:', request.type, 'from:', request.origin, 'remaining in queue:', requestQueue.length);
+  openApprovalPopup(windowId);
+  
+  // Timeout for this request
+  setTimeout(() => {
+    if (pendingRequest === request && pendingRequestCallback === resolve) {
+      console.log('[Background] Request timeout:', request.type);
+      pendingRequestCallback({ error: 'Request timeout' });
+      pendingRequestCallback = null;
+      pendingRequest = null;
+      processNextRequest();
+    }
+  }, 60000);
+}
+
 // Handle connect request
 async function handleConnect(origin, favicon, sender, params = {}) {
   // Check if already connected
@@ -314,51 +550,38 @@ async function handleConnect(origin, favicon, sender, params = {}) {
     }
     
     if (wallet) {
+      // Re-register tab if reconnecting
+      const tabId = sender?.tab?.id;
+      if (tabId) {
+        connectedTabs.set(tabId, { origin, publicKey: wallet.publicKey });
+        console.log('[Background] Re-registered tab on reconnect:', tabId);
+      }
       return { result: { publicKey: wallet.publicKey, network, chain } };
     }
   }
   
   // If onlyIfTrusted is set and site is not connected, reject silently
-  // This is used for "silent connect" / auto-reconnect attempts
   if (params.onlyIfTrusted) {
     console.log('[Background] Silent connect rejected - site not trusted:', origin);
     return { error: 'User rejected the request.' };
   }
   
-  // Need user approval - open popup
+  // Get tab info for registration after approval
+  const tabId = sender?.tab?.id;
+  const windowId = sender?.tab?.windowId;
+  
+  // Queue the request
   return new Promise((resolve) => {
-    pendingRequest = {
+    const request = {
       type: 'connect',
       origin,
       favicon,
-      chain: params.chain, // Pass requested chain to popup
+      chain: params.chain,
+      tabId,
       timestamp: Date.now()
     };
     
-    pendingRequestCallback = resolve;
-    
-    // Use windows.create directly - more reliable than openPopup
-    console.log('[Background] Opening approval window for connect');
-    chrome.windows.create({
-      url: 'index.html?request=connect',
-      type: 'popup',
-      width: 400,
-      height: 620,
-      focused: true
-    }).then(win => {
-      console.log('[Background] Approval window opened:', win?.id);
-    }).catch(err => {
-      console.error('[Background] Failed to open approval window:', err);
-    });
-    
-    // Timeout after 60 seconds
-    setTimeout(() => {
-      if (pendingRequestCallback === resolve) {
-        pendingRequestCallback = null;
-        pendingRequest = null;
-        resolve({ error: 'Request timeout' });
-      }
-    }, 60000);
+    queueRequest(request, resolve, windowId);
   });
 }
 
@@ -419,44 +642,22 @@ async function handleSignTransaction(params, origin, sender) {
   console.log('[Background] Site connected:', connected);
   
   if (!connected) {
-    // Log what sites ARE connected for debugging
     const sites = await getConnectedSites();
     console.log('[Background] Connected sites:', Object.keys(sites));
     throw new Error('Site not connected');
   }
   
+  const windowId = sender?.tab?.windowId;
+  
   return new Promise((resolve) => {
-    pendingRequest = {
+    const request = {
       type: 'signTransaction',
       origin,
       transaction: params.transaction,
       timestamp: Date.now()
     };
     
-    pendingRequestCallback = resolve;
-    
-    // Use windows.create directly - more reliable than openPopup
-    // openPopup requires user gesture context which may not exist
-    console.log('[Background] Opening approval window for signTransaction');
-    chrome.windows.create({
-      url: 'index.html?request=sign',
-      type: 'popup',
-      width: 400,
-      height: 620,
-      focused: true
-    }).then(win => {
-      console.log('[Background] Approval window opened:', win?.id);
-    }).catch(err => {
-      console.error('[Background] Failed to open approval window:', err);
-    });
-    
-    setTimeout(() => {
-      if (pendingRequestCallback === resolve) {
-        pendingRequestCallback = null;
-        pendingRequest = null;
-        resolve({ error: 'Request timeout' });
-      }
-    }, 60000);
+    queueRequest(request, resolve, windowId);
   });
 }
 
@@ -467,37 +668,17 @@ async function handleSignAllTransactions(params, origin, sender) {
     throw new Error('Site not connected');
   }
   
+  const windowId = sender?.tab?.windowId;
+  
   return new Promise((resolve) => {
-    pendingRequest = {
+    const request = {
       type: 'signAllTransactions',
       origin,
       transactions: params.transactions,
       timestamp: Date.now()
     };
     
-    pendingRequestCallback = resolve;
-    
-    // Use windows.create directly - more reliable than openPopup
-    console.log('[Background] Opening approval window for signAllTransactions');
-    chrome.windows.create({
-      url: 'index.html?request=signAll',
-      type: 'popup',
-      width: 400,
-      height: 620,
-      focused: true
-    }).then(win => {
-      console.log('[Background] Approval window opened:', win?.id);
-    }).catch(err => {
-      console.error('[Background] Failed to open approval window:', err);
-    });
-    
-    setTimeout(() => {
-      if (pendingRequestCallback === resolve) {
-        pendingRequestCallback = null;
-        pendingRequest = null;
-        resolve({ error: 'Request timeout' });
-      }
-    }, 60000);
+    queueRequest(request, resolve, windowId);
   });
 }
 
@@ -508,8 +689,10 @@ async function handleSignAndSendTransaction(params, origin, sender) {
     throw new Error('Site not connected');
   }
   
+  const windowId = sender?.tab?.windowId;
+  
   return new Promise((resolve) => {
-    pendingRequest = {
+    const request = {
       type: 'signAndSendTransaction',
       origin,
       transaction: params.transaction,
@@ -517,29 +700,7 @@ async function handleSignAndSendTransaction(params, origin, sender) {
       timestamp: Date.now()
     };
     
-    pendingRequestCallback = resolve;
-    
-    // Use windows.create directly - more reliable than openPopup
-    console.log('[Background] Opening approval window for signAndSendTransaction');
-    chrome.windows.create({
-      url: 'index.html?request=signAndSend',
-      type: 'popup',
-      width: 400,
-      height: 620,
-      focused: true
-    }).then(win => {
-      console.log('[Background] Approval window opened:', win?.id);
-    }).catch(err => {
-      console.error('[Background] Failed to open approval window:', err);
-    });
-    
-    setTimeout(() => {
-      if (pendingRequestCallback === resolve) {
-        pendingRequestCallback = null;
-        pendingRequest = null;
-        resolve({ error: 'Request timeout' });
-      }
-    }, 60000);
+    queueRequest(request, resolve, windowId);
   });
 }
 
@@ -550,37 +711,17 @@ async function handleSignMessage(params, origin, sender) {
     throw new Error('Site not connected');
   }
   
+  const windowId = sender?.tab?.windowId;
+  
   return new Promise((resolve) => {
-    pendingRequest = {
+    const request = {
       type: 'signMessage',
       origin,
       message: params.message,
       timestamp: Date.now()
     };
     
-    pendingRequestCallback = resolve;
-    
-    // Use windows.create directly - more reliable than openPopup
-    console.log('[Background] Opening approval window for signMessage');
-    chrome.windows.create({
-      url: 'index.html?request=signMessage',
-      type: 'popup',
-      width: 400,
-      height: 620,
-      focused: true
-    }).then(win => {
-      console.log('[Background] Approval window opened:', win?.id);
-    }).catch(err => {
-      console.error('[Background] Failed to open approval window:', err);
-    });
-    
-    setTimeout(() => {
-      if (pendingRequestCallback === resolve) {
-        pendingRequestCallback = null;
-        pendingRequest = null;
-        resolve({ error: 'Request timeout' });
-      }
-    }, 60000);
+    queueRequest(request, resolve, windowId);
   });
 }
 
@@ -595,11 +736,18 @@ async function handleGetNetwork() {
 async function handleApproveSign(message) {
   console.log('[Background] handleApproveSign received:', JSON.stringify(message));
   
+  // Close fallback approval window if open
+  if (approvalWindowId) {
+    chrome.windows.remove(approvalWindowId).catch(() => {});
+    approvalWindowId = null;
+  }
+  
   if (message.signedTransaction && pendingRequestCallback) {
     console.log('[Background] Sending signedTransaction back to DApp');
     pendingRequestCallback({ result: { signedTransaction: message.signedTransaction } });
     pendingRequestCallback = null;
     pendingRequest = null;
+    setTimeout(processNextRequest, 100);
     return { success: true };
   }
   
@@ -608,6 +756,7 @@ async function handleApproveSign(message) {
     pendingRequestCallback({ result: { signedTransactions: message.signedTransactions } });
     pendingRequestCallback = null;
     pendingRequest = null;
+    setTimeout(processNextRequest, 100);
     return { success: true };
   }
   
@@ -616,6 +765,7 @@ async function handleApproveSign(message) {
     pendingRequestCallback({ result: { signature: message.signature } });
     pendingRequestCallback = null;
     pendingRequest = null;
+    setTimeout(processNextRequest, 100);
     return { success: true };
   }
   
@@ -625,6 +775,7 @@ async function handleApproveSign(message) {
       pendingRequestCallback({ error: message.error });
       pendingRequestCallback = null;
       pendingRequest = null;
+      setTimeout(processNextRequest, 100);
     }
     return { success: false };
   }
@@ -637,10 +788,17 @@ async function handleApproveSign(message) {
 async function handleApproveSignMessage(message) {
   console.log('[Background] handleApproveSignMessage received');
   
+  // Close fallback approval window if open
+  if (approvalWindowId) {
+    chrome.windows.remove(approvalWindowId).catch(() => {});
+    approvalWindowId = null;
+  }
+  
   if (message.signature && pendingRequestCallback) {
     pendingRequestCallback({ result: { signature: message.signature } });
     pendingRequestCallback = null;
     pendingRequest = null;
+    setTimeout(processNextRequest, 100);
     return { success: true };
   }
   
@@ -649,6 +807,7 @@ async function handleApproveSignMessage(message) {
       pendingRequestCallback({ error: message.error });
       pendingRequestCallback = null;
       pendingRequest = null;
+      setTimeout(processNextRequest, 100);
     }
     return { success: false };
   }

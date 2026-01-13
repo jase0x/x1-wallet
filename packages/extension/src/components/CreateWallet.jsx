@@ -251,27 +251,20 @@ export default function CreateWallet({ onComplete, onBack, passwordProtection: p
       setError('Words do not match. Please try again.');
     }
   };
-
-  // X1W-SEC-008 FIX: Consistent password validation (12 chars, special char required)
+  // Password validation (Option 1: min 8 chars, at least one letter + one number)
   const validatePassword = (pwd) => {
-    if (!pwd || pwd.length < 12) {
-      return 'Password must be at least 12 characters';
+    if (!pwd || pwd.length < 8) {
+      return 'Password must be at least 8 characters';
     }
-    if (!/[a-z]/.test(pwd)) {
-      return 'Password must contain a lowercase letter';
-    }
-    if (!/[A-Z]/.test(pwd)) {
-      return 'Password must contain an uppercase letter';
+    if (!/[a-zA-Z]/.test(pwd)) {
+      return 'Password must contain at least one letter';
     }
     if (!/[0-9]/.test(pwd)) {
-      return 'Password must contain a number';
-    }
-    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?~`]/.test(pwd)) {
-      return 'Password must contain a special character (!@#$%^&*...)';
+      return 'Password must contain at least one number';
     }
     // Check for common weak patterns
-    const commonPatterns = ['password', '12345678', 'qwerty', 'abcdef'];
-    const lowerPwd = pwd.toLowerCase();
+    const commonPatterns = ['password', '12345678', 'qwerty', 'abcdef', 'letmein'];
+    const lowerPwd = String(pwd).toLowerCase();
     for (const pattern of commonPatterns) {
       if (lowerPwd.includes(pattern)) {
         return 'Password contains a common weak pattern';
@@ -784,7 +777,7 @@ export default function CreateWallet({ onComplete, onBack, passwordProtection: p
 
         <div className="info-box" style={{ marginBottom: 16 }}>
           <span>🔒</span>
-          <span>Min 12 characters with uppercase, lowercase, number, and special character.</span>
+          <span>Min 8 characters with at least one letter and one number.</span>
         </div>
 
         {error && <div className="error-message" style={{ marginBottom: 16 }}>{error}</div>}

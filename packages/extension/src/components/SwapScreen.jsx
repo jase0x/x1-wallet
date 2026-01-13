@@ -1,5 +1,5 @@
 // Swap Screen - Uses XDEX for X1, Jupiter for Solana
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import X1Logo from './X1Logo';
 import { NETWORKS } from '@x1-wallet/core/services/networks';
 import { getQuote, prepareSwap, getSwapTokens, getSwapProvider, isSolanaNetwork, XDEX_LOGOS, searchXDEXTokens, fetchTokenMetadata } from '@x1-wallet/core/services/xdex';
@@ -191,6 +191,11 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
   const [poolTokens, setPoolTokens] = useState([]);
   const [poolTokensLoading, setPoolTokensLoading] = useState(false);
   
+  // Locally fetched token balances (when userTokens prop is empty)
+  const [localTokens, setLocalTokens] = useState([]);
+  const [fetchingLocalTokens, setFetchingLocalTokens] = useState(false);
+  const localTokensFetchedRef = useRef(false);
+  
   // Track if initial token has been set
   const [initialTokenSet, setInitialTokenSet] = useState(false);
 
@@ -282,17 +287,79 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
     setSearchResults([]);
     setError('');
     setInitialTokenSet(false);
+    // Reset local token fetch state so we fetch fresh for new network
+    setLocalTokens([]);
+    localTokensFetchedRef.current = false;
   }, [currentNetwork]);
 
   // Known Solana-only tokens that should NEVER appear on X1 networks
   const SOLANA_ONLY_SYMBOLS = ['SOL', 'WSOL', 'RAY', 'SRM', 'ORCA', 'MNGO', 'STEP', 'COPE', 'FIDA', 'MAPS', 'OXY', 'mSOL', 'stSOL', 'jitoSOL', 'bSOL'];
   const X1_ONLY_SYMBOLS = ['XNT', 'WXNT', 'pXNT'];
 
-  // Filter userTokens to only include tokens appropriate for current network
-  const filteredUserTokens = React.useMemo(() => {
-    if (!userTokens || userTokens.length === 0) return [];
+  // Fetch token balances directly if userTokens prop is empty
+  // This handles the case when SwapScreen is opened before WalletMain has fetched tokens
+  useEffect(() => {
+    // Skip if we already have userTokens from parent
+    if (userTokens && userTokens.length > 0) {
+      logger.log('[SwapScreen] Using userTokens from parent:', userTokens.length);
+      localTokensFetchedRef.current = false; // Reset so we can fetch again if needed
+      return;
+    }
     
-    return userTokens.filter(token => {
+    // Skip if wallet not ready
+    if (!walletReady || !networkConfig?.rpcUrl || !wallet?.wallet?.publicKey) {
+      return;
+    }
+    
+    // Skip if already fetching or already fetched for this session
+    if (fetchingLocalTokens || localTokensFetchedRef.current) {
+      return;
+    }
+    
+    const fetchLocalTokens = async () => {
+      logger.log('[SwapScreen] Fetching token balances directly (userTokens empty)');
+      setFetchingLocalTokens(true);
+      
+      try {
+        const { fetchTokenAccounts } = await import('@x1-wallet/core/services/tokens');
+        const allTokens = await fetchTokenAccounts(
+          networkConfig.rpcUrl, 
+          wallet.wallet.publicKey, 
+          currentNetwork
+        );
+        
+        // Filter out NFTs
+        const tokenList = allTokens.filter(token => {
+          const isNFT = token.decimals === 0 && token.uiAmount === 1;
+          return !isNFT;
+        });
+        
+        logger.log('[SwapScreen] Directly fetched tokens:', tokenList.length, tokenList.map(t => `${t.symbol}:${t.balance || t.uiAmount}`));
+        setLocalTokens(tokenList);
+        localTokensFetchedRef.current = true;
+      } catch (err) {
+        logger.error('[SwapScreen] Failed to fetch tokens directly:', err);
+      } finally {
+        setFetchingLocalTokens(false);
+      }
+    };
+    
+    fetchLocalTokens();
+  }, [userTokens, walletReady, networkConfig?.rpcUrl, wallet?.wallet?.publicKey, currentNetwork, fetchingLocalTokens]);
+
+  // Combine userTokens with localTokens - prefer userTokens if available
+  const effectiveUserTokens = React.useMemo(() => {
+    if (userTokens && userTokens.length > 0) {
+      return userTokens;
+    }
+    return localTokens;
+  }, [userTokens, localTokens]);
+
+  // Filter effectiveUserTokens to only include tokens appropriate for current network
+  const filteredUserTokens = React.useMemo(() => {
+    if (!effectiveUserTokens || effectiveUserTokens.length === 0) return [];
+    
+    return effectiveUserTokens.filter(token => {
       const symbol = token.symbol?.toUpperCase() || '';
       
       // On X1 networks, exclude Solana-only tokens
@@ -313,9 +380,7 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
       
       return true;
     });
-  }, [userTokens, isSolana]);
-
-  // Fetch pool tokens from API
+  }, [effectiveUserTokens, isSolana]);
   useEffect(() => {
     logger.log('[SwapScreen] Pool tokens useEffect triggered - network:', currentNetwork, 'isSolana:', isSolana, 'walletReady:', walletReady);
     
@@ -606,6 +671,39 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
     }
   }, [tokens]);
 
+  // Also sync balances directly from userTokens when they update
+  useEffect(() => {
+    if (!filteredUserTokens || filteredUserTokens.length === 0) return;
+    
+    // Update fromToken balance if it exists in userTokens
+    if (fromToken && fromToken.symbol !== nativeSymbol) {
+      const userToken = filteredUserTokens.find(ut => 
+        ut.mint === fromToken.mint || ut.symbol === fromToken.symbol
+      );
+      if (userToken) {
+        const newBalance = parseFloat(userToken.balance || userToken.uiAmount) || 0;
+        if (newBalance !== fromToken.balance) {
+          logger.log('[SwapScreen] Syncing fromToken balance from userTokens:', fromToken.symbol, newBalance);
+          setFromToken(prev => ({ ...prev, balance: newBalance }));
+        }
+      }
+    }
+    
+    // Update toToken balance if it exists in userTokens
+    if (toToken && toToken.symbol !== nativeSymbol) {
+      const userToken = filteredUserTokens.find(ut => 
+        ut.mint === toToken.mint || ut.symbol === toToken.symbol
+      );
+      if (userToken) {
+        const newBalance = parseFloat(userToken.balance || userToken.uiAmount) || 0;
+        if (newBalance !== toToken.balance) {
+          logger.log('[SwapScreen] Syncing toToken balance from userTokens:', toToken.symbol, newBalance);
+          setToToken(prev => ({ ...prev, balance: newBalance }));
+        }
+      }
+    }
+  }, [filteredUserTokens, nativeSymbol]);
+
   // Sync native token balance with walletBalance
   useEffect(() => {
     if (fromToken && (fromToken.mint === 'native' || fromToken.isNative || fromToken.symbol === nativeSymbol)) {
@@ -890,9 +988,34 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
   };
 
   const handleSwapTokens = () => {
-    const temp = fromToken;
-    setFromToken(toToken);
-    setToToken(temp);
+    // Helper to get latest balance for a token
+    const getLatestBalance = (t) => {
+      if (!t) return 0;
+      // For native token, use wallet balance
+      if (t.symbol === nativeSymbol || t.mint === 'native' || t.isNative) {
+        return walletBalance;
+      }
+      // Check userTokens for the most current balance
+      const userToken = filteredUserTokens?.find(ut => 
+        ut.mint === t.mint || ut.symbol === t.symbol
+      );
+      if (userToken) {
+        return parseFloat(userToken.balance || userToken.uiAmount) || 0;
+      }
+      // Check tokens list
+      const tokenInList = tokens.find(lt => lt.mint === t.mint || lt.symbol === t.symbol);
+      if (tokenInList?.balance) {
+        return tokenInList.balance;
+      }
+      return t.balance || 0;
+    };
+    
+    // Swap with updated balances
+    const newFromToken = toToken ? { ...toToken, balance: getLatestBalance(toToken) } : null;
+    const newToToken = fromToken ? { ...fromToken, balance: getLatestBalance(fromToken) } : null;
+    
+    setFromToken(newFromToken);
+    setToToken(newToToken);
     setFromAmount('');
     setToAmount('');
     setQuote(null);
@@ -1289,7 +1412,10 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
         tokenOutParam = toToken.mint;
       }
       
-      logger.log('[Swap] Preparing with tokens:', { tokenIn: tokenInParam, tokenOut: tokenOutParam });
+      logger.log('[Swap] Preparing with tokens:', { tokenIn: tokenInParam, tokenOut: tokenOutParam, slippage });
+      
+      // Convert slippage percentage to basis points (0.5% = 50 bps)
+      const slippageBps = Math.round(slippage * 100);
       
       // Prepare the swap transaction
       const txData = await prepareSwap(
@@ -1297,7 +1423,8 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
         tokenInParam,
         tokenOutParam,
         parseFloat(fromAmount),
-        currentNetwork
+        currentNetwork,
+        slippageBps
       );
 
       logger.log('[Swap] Transaction prepared:', txData);
@@ -1546,11 +1673,26 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
       }
       // Check for simulation failure
       else if (userMessage.includes('Simulation failed') || userMessage.includes('custom program error')) {
-        if (userMessage.includes('0x1')) {
+        // Check for specific error codes
+        if (userMessage.includes('0x1787') || userMessage.includes('6023')) {
+          // Jupiter/Raydium error - usually route or liquidity issue
+          userMessage = 'Swap route expired or liquidity changed. Please try again. If the issue persists, try a smaller amount or different slippage.';
+        } else if (userMessage.includes('0x1786') || userMessage.includes('6022')) {
+          userMessage = 'Invalid market state. The liquidity pool may be temporarily unavailable. Please try again later.';
+        } else if (userMessage.includes('0x1') && !userMessage.includes('0x1786') && !userMessage.includes('0x1787')) {
+          userMessage = 'Slippage tolerance exceeded. Try increasing slippage or reducing the swap amount.';
+        } else if (userMessage.includes('0x0')) {
           userMessage = 'Transaction simulation failed. This may be a temporary API issue. Please try again in a few minutes.';
         } else {
-          userMessage = 'Transaction simulation failed. This may be due to network congestion or temporary API issues. Please try again.';
+          // Extract error code if present for debugging
+          const errorCodeMatch = userMessage.match(/0x[0-9a-fA-F]+/);
+          const errorCode = errorCodeMatch ? ` (Error: ${errorCodeMatch[0]})` : '';
+          userMessage = `Swap failed${errorCode}. This may be due to network congestion, expired quote, or liquidity changes. Please try again.`;
         }
+      }
+      // Check for blockhash errors (quote expired)
+      else if (userMessage.includes('blockhash') || userMessage.includes('Blockhash')) {
+        userMessage = 'Transaction expired. Please try again - quotes are time-sensitive.';
       }
       
       setError(userMessage);
@@ -1915,10 +2057,34 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
         setTokens(prev => [...prev, { ...token, balance: 0, isCustom: true }]);
       }
       
+      // Always look up the most current balance from userTokens or tokens list
+      const getLatestBalance = (t) => {
+        // For native token, use wallet balance
+        if (t.symbol === nativeSymbol || t.mint === 'native' || t.isNative) {
+          return walletBalance;
+        }
+        // Check userTokens for the most current balance
+        const userToken = filteredUserTokens?.find(ut => 
+          ut.mint === t.mint || ut.symbol === t.symbol
+        );
+        if (userToken) {
+          return parseFloat(userToken.balance || userToken.uiAmount) || 0;
+        }
+        // Check tokens list
+        const tokenInList = tokens.find(lt => lt.mint === t.mint || lt.symbol === t.symbol);
+        if (tokenInList?.balance) {
+          return tokenInList.balance;
+        }
+        // Fall back to token's own balance or 0
+        return t.balance || 0;
+      };
+      
+      const latestBalance = getLatestBalance(token);
+      
       if (selectingToken === 'from') {
-        setFromToken({ ...token, balance: token.balance || 0 });
+        setFromToken({ ...token, balance: latestBalance });
       } else {
-        setToToken({ ...token, balance: token.balance || 0 });
+        setToToken({ ...token, balance: latestBalance });
       }
       setSelectingToken(null);
       setTokenSearchQuery('');
