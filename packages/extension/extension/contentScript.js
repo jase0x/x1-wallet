@@ -66,7 +66,10 @@
 
   // Listen for messages from extension (events like disconnect, account change)
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    console.log('[X1 Wallet Content] Received message from extension:', message.type);
+    
     if (message.target === 'x1-wallet-content') {
+      console.log('[X1 Wallet Content] Forwarding to provider:', message.type, message.payload);
       // X1W-008 FIX: Use specific origin instead of wildcard
       window.postMessage({
         target: 'x1-wallet-provider',

@@ -1686,7 +1686,7 @@ function DefiTab({ wallet, tokens, isSolana, onStake }) {
                 </svg>
               </div>
               <div className="defi-item-info">
-                <span className="defi-item-title">{lp.symbol || 'LP Token'}</span>
+                <span className="defi-item-title">{lp.name || lp.symbol || 'LP Token'}</span>
                 <span className="defi-item-desc">{parseFloat(lp.balance || lp.uiAmount || 0).toFixed(6)} tokens</span>
               </div>
               <div className="defi-item-value">
@@ -1705,11 +1705,14 @@ function DefiTab({ wallet, tokens, isSolana, onStake }) {
 }
 
 // Logo URL for Solana from XDEX S3
-const SOLANA_LOGO_URL = 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png';
+const SOLANA_LOGO_URL = '/icons/48-sol.png';
 
 // Network Logo based on network type
 function NetworkLogo({ network, size = 40 }) {
-  const logoSize = Math.round(size * 0.8); // Logo at 80% of container
+  // X1 logo fills edge-to-edge, Solana logo has internal padding
+  // Use slightly larger size for Solana to make them visually consistent
+  const x1LogoSize = Math.round(size * 0.8);
+  const solanaLogoSize = Math.round(size * 0.95); // Larger to compensate for internal padding
   
   if (network?.includes('Solana')) {
     return (
@@ -1733,8 +1736,8 @@ function NetworkLogo({ network, size = 40 }) {
           src={SOLANA_LOGO_URL}
           alt="Solana"
           style={{
-            width: logoSize,
-            height: logoSize,
+            width: solanaLogoSize,
+            height: solanaLogoSize,
             objectFit: 'contain',
             display: 'block'
           }}
@@ -1742,7 +1745,42 @@ function NetworkLogo({ network, size = 40 }) {
       </div>
     );
   }
-  return <X1Logo size={size} />;
+  
+  // X1 logo
+  return (
+    <div
+      className="network-logo-container"
+      style={{
+        width: size,
+        height: size,
+        minWidth: size,
+        minHeight: size,
+        borderRadius: '50%',
+        background: '#000',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+        overflow: 'hidden'
+      }}
+    >
+      <img
+        src="/icons/48-x1.png"
+        alt="X1"
+        style={{ 
+          width: x1LogoSize,
+          height: x1LogoSize,
+          objectFit: 'contain', 
+          display: 'block'
+        }}
+        onError={(e) => {
+          // Fallback to text if image fails
+          e.target.style.display = 'none';
+          e.target.parentElement.innerHTML = '<span style="color: #0274fb; font-weight: bold; font-size: ' + Math.round(size * 0.4) + 'px;">X1</span>';
+        }}
+      />
+    </div>
+  );
 }
 
 

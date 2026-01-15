@@ -52,26 +52,66 @@ class RateLimiter {
 const xdexRateLimiter = new RateLimiter(5, 1000);
 
 // Cache for failed requests to avoid retrying them repeatedly
-const failedRequestsCache = new Map();
-const FAILED_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+// Now uses localStorage for persistence across sessions
+const FAILED_CACHE_KEY = 'x1wallet_failed_token_lookups';
+const FAILED_CACHE_TTL = 10 * 60 * 1000; // 10 minutes for failed lookups
+
+function getFailedCache() {
+  try {
+    const cached = localStorage.getItem(FAILED_CACHE_KEY);
+    return cached ? JSON.parse(cached) : {};
+  } catch {
+    return {};
+  }
+}
+
+function setFailedCache(cache) {
+  try {
+    // Clean up old entries
+    const now = Date.now();
+    const cleaned = {};
+    for (const [key, timestamp] of Object.entries(cache)) {
+      if (now - timestamp < FAILED_CACHE_TTL) {
+        cleaned[key] = timestamp;
+      }
+    }
+    // Keep max 100 entries
+    const entries = Object.entries(cleaned);
+    if (entries.length > 100) {
+      entries.sort((a, b) => b[1] - a[1]); // Sort by timestamp desc
+      const limited = Object.fromEntries(entries.slice(0, 100));
+      localStorage.setItem(FAILED_CACHE_KEY, JSON.stringify(limited));
+    } else {
+      localStorage.setItem(FAILED_CACHE_KEY, JSON.stringify(cleaned));
+    }
+  } catch {
+    // Ignore storage errors
+  }
+}
 
 function hasRecentlyFailed(key) {
-  const failedAt = failedRequestsCache.get(key);
+  const cache = getFailedCache();
+  const failedAt = cache[key];
   if (!failedAt) return false;
   
   if (Date.now() - failedAt > FAILED_CACHE_TTL) {
-    failedRequestsCache.delete(key);
+    delete cache[key];
+    setFailedCache(cache);
     return false;
   }
   return true;
 }
 
 function markFailed(key) {
-  failedRequestsCache.set(key, Date.now());
+  const cache = getFailedCache();
+  cache[key] = Date.now();
+  setFailedCache(cache);
 }
 
 function clearFailed(key) {
-  failedRequestsCache.delete(key);
+  const cache = getFailedCache();
+  delete cache[key];
+  setFailedCache(cache);
 }
 
 // Fetch with rate limiting
@@ -87,6 +127,10 @@ async function fetchWithRateLimit(url, options = {}) {
 // Cache for mint authority lookups (to avoid repeated RPC calls)
 const mintAuthorityCache = new Map();
 const MINT_AUTHORITY_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+
+// Cache for LP token info from XDEX API
+const lpTokenInfoCache = new Map();
+const LP_TOKEN_INFO_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
 // Fetch mint authority for a token
 async function fetchMintAuthority(rpcUrl, mintAddress) {
@@ -123,20 +167,99 @@ async function fetchMintAuthority(rpcUrl, mintAddress) {
   }
 }
 
+// Fetch LP token info from XDEX devapi
+async function fetchLPTokenInfoFromXDEX(lpMint) {
+  const cacheKey = `lp:${lpMint}`;
+  const cached = lpTokenInfoCache.get(cacheKey);
+  
+  if (cached && Date.now() - cached.timestamp < LP_TOKEN_INFO_CACHE_TTL) {
+    return cached.info;
+  }
+  
+  try {
+    // Use devapi endpoint first (more reliable for LP tokens)
+    const response = await fetchWithRateLimit(
+      `https://devapi.xdex.xyz/api/xendex/tokens/${lpMint}`,
+      { signal: AbortSignal.timeout(2000) }
+    );
+    
+    if (response.ok) {
+      const data = await response.json();
+      logger.log('[Tokens] XDEX devapi LP token data:', data);
+      
+      // Check if we got a valid name (not "Unknown Token" or empty)
+      if (data.name && data.name !== 'Unknown Token' && data.name.trim() !== '') {
+        const info = {
+          name: data.name,
+          symbol: data.symbol || 'XLP',
+          logoURI: data.image || data.logo || data.logoURI
+        };
+        lpTokenInfoCache.set(cacheKey, { info, timestamp: Date.now() });
+        return info;
+      }
+    }
+  } catch (e) {
+    logger.warn('[Tokens] XDEX devapi LP lookup failed:', e.message);
+  }
+  
+  // Cache null to avoid repeated failed lookups
+  lpTokenInfoCache.set(cacheKey, { info: null, timestamp: Date.now() });
+  return null;
+}
+
 // Check if a token is an XDEX LP token by its mint authority
 async function checkAndApplyLPBranding(rpcUrl, token, network) {
-  // Only check on X1 networks where XDEX operates
-  if (!network?.includes('X1')) return false;
+  // Check on X1 networks where XDEX operates, or Solana
+  const isX1 = network?.includes('X1');
+  const isSolana = network?.includes('Solana');
+  
+  if (!isX1 && !isSolana) return false;
   
   try {
     const mintAuthority = await fetchMintAuthority(rpcUrl, token.mint);
     
     if (mintAuthority === XDEX_LP_MINT_AUTHORITY) {
-      token.symbol = 'XLP';
-      token.name = 'XDEX LP Token';
-      token.logoURI = XLP_LOGO_URL;
       token.isLPToken = true;
-      logger.log(`[Tokens] Detected XDEX LP token: ${token.mint}`);
+      if (!token.logoURI) token.logoURI = XLP_LOGO_URL;
+      
+      // Check if token already has a meaningful LP name (from XDEX wallet API)
+      const hasGoodName = token.name && 
+                          token.name !== 'SPL Token' && 
+                          token.name !== 'Token-2022' && 
+                          token.name !== 'Unknown Token' &&
+                          token.name.trim() !== '';
+      
+      if (hasGoodName) {
+        // Preserve existing good name, just ensure symbol is set
+        if (!token.symbol || token.symbol === token.mint?.slice(0, 4).toUpperCase()) {
+          token.symbol = 'XLP';
+        }
+        logger.log(`[Tokens] XDEX LP token with existing name: ${token.mint} -> ${token.name}`);
+        return true;
+      }
+      
+      if (isX1) {
+        // Try to get actual LP name from XDEX devapi
+        const lpInfo = await fetchLPTokenInfoFromXDEX(token.mint);
+        
+        if (lpInfo && lpInfo.name) {
+          token.name = lpInfo.name;
+          token.symbol = lpInfo.symbol || 'XLP';
+          if (lpInfo.logoURI) token.logoURI = lpInfo.logoURI;
+          logger.log(`[Tokens] XDEX LP token with API name: ${token.mint} -> ${token.name}`);
+        } else {
+          // Fallback for X1
+          token.name = 'XDEX LP Token';
+          token.symbol = 'XLP';
+          logger.log(`[Tokens] XDEX LP token (fallback): ${token.mint}`);
+        }
+      } else if (isSolana) {
+        // Fallback for Solana
+        token.name = 'SLP Token';
+        token.symbol = 'SLP';
+        logger.log(`[Tokens] Solana LP token: ${token.mint}`);
+      }
+      
       return true;
     }
   } catch (e) {
@@ -359,6 +482,25 @@ export async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null, o
         if (xdexData.name) token.name = xdexData.name;
         if (xdexData.image) token.logoURI = xdexData.image;
         
+        // Check if this is an LP token (by symbol or name)
+        const isLPToken = xdexData.symbol === 'XLP' || 
+                          xdexData.symbol === 'SLP' || 
+                          (xdexData.name && xdexData.name.includes(' LP'));
+        
+        if (isLPToken) {
+          token.isLPToken = true;
+          if (!token.logoURI) token.logoURI = XLP_LOGO_URL;
+          metadataCache.set(cacheKey, { 
+            symbol: token.symbol, 
+            name: token.name, 
+            logoURI: token.logoURI, 
+            price: token.price,
+            isLPToken: true
+          });
+          logger.log('[Tokens] Quick pass: cached LP token from XDEX:', token.name);
+          continue;
+        }
+        
         // If XDEX provided complete data (symbol, name, AND image), cache it
         if (xdexData.symbol && xdexData.name && xdexData.image) {
           metadataCache.set(cacheKey, { 
@@ -452,6 +594,10 @@ export async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null, o
   }
 }
 
+// Cache for wallet tokens response (short TTL to prevent rapid duplicate calls)
+const walletTokensCache = new Map();
+const WALLET_TOKENS_CACHE_TTL = 30 * 1000; // 30 seconds
+
 /**
  * Fetch wallet tokens with prices from XDEX API (batch endpoint)
  * This is the primary source for token prices - fetches ALL tokens in ONE call
@@ -459,6 +605,15 @@ export async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null, o
 async function fetchXDEXWalletTokens(walletAddress, network) {
   try {
     const networkName = network || 'X1 Mainnet';
+    const cacheKey = `${walletAddress}:${networkName}`;
+    
+    // Check cache first
+    const cached = walletTokensCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < WALLET_TOKENS_CACHE_TTL) {
+      logger.log('[XDEX] Using cached wallet tokens response');
+      return cached.data;
+    }
+    
     const url = `https://devapi.xdex.xyz/api/xendex/wallet/tokens?wallet_address=${walletAddress}&network=${encodeURIComponent(networkName)}&price=true`;
     
     logger.log('[XDEX] Fetching wallet tokens with prices:', url);
@@ -531,6 +686,9 @@ async function fetchXDEXWalletTokens(walletAddress, network) {
     }
     
     logger.log('[XDEX] Total prices extracted:', Object.values(priceMap).filter(p => p.price !== null).length);
+    
+    // Cache the result
+    walletTokensCache.set(cacheKey, { data: priceMap, timestamp: Date.now() });
     
     return priceMap;
   } catch (e) {
@@ -653,6 +811,13 @@ async function fetchTokenAccountsByProgram(rpcUrl, ownerAddress, programId) {
 async function enrichTokenMetadata(rpcUrl, token, network = null) {
   const cacheKey = network ? `${network}:${token.mint}` : token.mint;
   
+  // If token is already marked as LP token with a name, preserve it
+  if (token.isLPToken && token.name && token.name !== 'SPL Token' && token.name !== 'Token-2022') {
+    metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, isLPToken: true, price: token.price });
+    logger.log('[Tokens] Preserving existing LP token data:', token.name);
+    return;
+  }
+  
   if (metadataCache.has(cacheKey)) {
     const cached = metadataCache.get(cacheKey);
     Object.assign(token, cached);
@@ -674,7 +839,7 @@ async function enrichTokenMetadata(rpcUrl, token, network = null) {
   // Check if this is an XDEX LP token (by mint authority)
   const isLP = await checkAndApplyLPBranding(rpcUrl, token, network);
   if (isLP) {
-    metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, isLPToken: true });
+    metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, isLPToken: true, price: token.price });
     return;
   }
   
@@ -809,7 +974,7 @@ async function enrichTokenMetadata(rpcUrl, token, network = null) {
       
       const xdexResponse = await fetchWithRateLimit(
         'https://api.xdex.xyz/api/xendex/tokens/' + token.mint,
-        { signal: AbortSignal.timeout(5000) }
+        { signal: AbortSignal.timeout(2000) }
       );
       
       if (xdexResponse.status === 429) {
@@ -925,7 +1090,7 @@ async function fetchMetaplexMetadata(rpcUrl, mint) {
     logger.log('[Metaplex] Fetching metadata for mint:', mint);
     
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
+    const timeout = setTimeout(() => controller.abort(), 3000);
     
     const response = await fetch(rpcUrl, {
       method: 'POST',
@@ -1051,7 +1216,7 @@ export async function fetchTokenMetadataFromURI(uri) {
     }
     
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
+    const timeout = setTimeout(() => controller.abort(), 3000);
     
     const response = await fetch(fetchUrl, { signal: controller.signal });
     clearTimeout(timeout);

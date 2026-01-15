@@ -5,7 +5,36 @@ import * as base58 from '@x1-wallet/core/utils/base58';
 import { logger, getUserFriendlyError, ErrorMessages } from '@x1-wallet/core';
 import { hardwareWallet } from '../services/hardware';
 
-// Transaction priority options (same as SendFlow)
+// Transaction priority options - network aware
+function getPriorityOptions(network) {
+  const isX1 = network?.includes('X1');
+  // X1 has higher base fees than Solana
+  if (isX1) {
+    return [
+      { id: 'auto', name: 'Auto', fee: 0, description: 'Standard speed' },
+      { id: 'fast', name: 'Fast', fee: 0.001, description: 'Higher priority' },
+      { id: 'turbo', name: 'Turbo', fee: 0.005, description: 'Very high priority' },
+      { id: 'degen', name: 'Degen', fee: 0.01, description: 'Maximum priority' },
+      { id: 'custom', name: 'Custom', fee: 0, description: 'Set your own fee' }
+    ];
+  }
+  // Solana fees
+  return [
+    { id: 'auto', name: 'Auto', fee: 0, description: 'Standard speed' },
+    { id: 'fast', name: 'Fast', fee: 0.000005, description: 'Higher priority' },
+    { id: 'turbo', name: 'Turbo', fee: 0.00005, description: 'Very high priority' },
+    { id: 'degen', name: 'Degen', fee: 0.001, description: 'Maximum priority' },
+    { id: 'custom', name: 'Custom', fee: 0, description: 'Set your own fee' }
+  ];
+}
+
+// Get base transaction fee for network
+function getBaseFee(network) {
+  const isX1 = network?.includes('X1');
+  return isX1 ? 0.002 : 0.000005; // X1: 0.002 XNT, Solana: 5000 lamports
+}
+
+// Legacy constant for backwards compatibility
 const PRIORITY_OPTIONS = [
   { id: 'auto', name: 'Auto', fee: 0, description: 'Standard speed' },
   { id: 'fast', name: 'Fast', fee: 0.000005, description: 'Higher priority' },
@@ -292,7 +321,7 @@ function decodeTransaction(txBytes) {
       instructions,
       hasUnknownPrograms: instructions.some(i => !i.isKnownSafe),
       hasAddressLookupTables,
-      estimatedFee: 0.000005 * numSignatures
+      estimatedFee: null // Will be calculated in display using getBaseFee(network) * numSignatures
     };
   } catch (e) {
     logger.error('[decodeTransaction] Error:', e);
@@ -969,13 +998,13 @@ export default function DAppApproval({ wallet, onComplete }) {
     try {
       const txBytes = Uint8Array.from(atob(pendingRequest.transaction), c => c.charCodeAt(0));
       
-      // Log selected priority for reference
-      const priorityFeeSOL = priority === 'custom' 
+      // Log selected priority for reference (network-aware fee options)
+      const priorityFeeNative = priority === 'custom' 
         ? (parseFloat(customFee) || 0) 
-        : (PRIORITY_OPTIONS.find(p => p.id === priority)?.fee || 0);
+        : (getPriorityOptions(currentNetwork).find(p => p.id === priority)?.fee || 0);
       
-      if (priorityFeeSOL > 0) {
-        logger.log('[DAppApproval] User selected priority fee:', priorityFeeSOL, 'SOL');
+      if (priorityFeeNative > 0) {
+        logger.log('[DAppApproval] User selected priority fee:', priorityFeeNative, currentNetwork?.includes('Solana') ? 'SOL' : 'XNT');
       }
       
       // Get RPC URL based on network
@@ -1644,14 +1673,14 @@ export default function DAppApproval({ wallet, onComplete }) {
             {/* Estimated Fee Row */}
             <div className="dapp-tx-row">
               <span className="dapp-tx-row-label">Estimated Fee</span>
-              <span className="dapp-tx-row-value">{(decodedTx.estimatedFee || 0.000005).toFixed(6)} {currentNetwork?.includes('Solana') ? 'SOL' : 'XNT'}</span>
+              <span className="dapp-tx-row-value">{(getBaseFee(currentNetwork) * (decodedTx.numSignatures || 1)).toFixed(6)} {currentNetwork?.includes('Solana') ? 'SOL' : 'XNT'}</span>
             </div>
             
             {/* Priority Fee Section */}
             <div className="dapp-tx-row priority-section">
               <span className="dapp-tx-row-label">Priority</span>
               <div className="dapp-priority-chips">
-                {PRIORITY_OPTIONS.filter(opt => opt.id !== 'custom').map(opt => (
+                {getPriorityOptions(currentNetwork).filter(opt => opt.id !== 'custom').map(opt => (
                   <button
                     key={opt.id}
                     className={`dapp-priority-chip ${priority === opt.id ? 'active' : ''}`}
@@ -1701,7 +1730,7 @@ export default function DAppApproval({ wallet, onComplete }) {
             <div className="dapp-tx-row total">
               <span className="dapp-tx-row-label">Total Fee</span>
               <span className="dapp-tx-row-value highlight">
-                {((decodedTx.estimatedFee || 0.000005) + (priority === 'custom' ? parseFloat(customFee) || 0 : PRIORITY_OPTIONS.find(p => p.id === priority)?.fee || 0)).toFixed(6)} {currentNetwork?.includes('Solana') ? 'SOL' : 'XNT'}
+                {((getBaseFee(currentNetwork) * (decodedTx.numSignatures || 1)) + (priority === 'custom' ? parseFloat(customFee) || 0 : getPriorityOptions(currentNetwork).find(p => p.id === priority)?.fee || 0)).toFixed(6)} {currentNetwork?.includes('Solana') ? 'SOL' : 'XNT'}
               </span>
             </div>
           </div>

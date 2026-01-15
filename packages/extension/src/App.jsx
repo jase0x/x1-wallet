@@ -371,6 +371,10 @@ function App() {
   });
   const [passwordCheckComplete, setPasswordCheckComplete] = useState(false);
   
+  // Session password cache - stores password in memory during session
+  // This allows creating multiple wallets without re-entering password
+  const [sessionPassword, setSessionPassword] = useState(null);
+  
   useEffect(() => {
     const checkHasPassword = async () => {
       try {
@@ -594,6 +598,7 @@ function App() {
   // Handle unlock - supports both legacy password and encrypted wallet
   const handleUnlock = async (password) => {
     setIsLocked(false);
+    setSessionPassword(password); // Cache password for session
     const now = Date.now();
     lastActivityRef.current = now;
     storage.set('lastActivity', now);
@@ -612,6 +617,9 @@ function App() {
         throw new Error('Password is required to create a wallet');
       }
       
+      // Clear tokens immediately for instant UI update (no stale data)
+      setUserTokens([]);
+      
       logger.log('[handleCreateComplete] Creating encrypted wallet');
       
       const { setupPassword, hasPassword: checkHasPassword } = await import('@x1-wallet/core/services/wallet');
@@ -626,6 +634,9 @@ function App() {
       if (!effectivePasswordExists) {
         await setupPassword(password);
       }
+      
+      // Cache password in session for subsequent wallet creations
+      setSessionPassword(password);
       
       setHasPasswordAsync(true);
       localStorage.setItem('x1wallet_encrypted', 'true');
@@ -647,6 +658,9 @@ function App() {
         throw new Error('Password is required');
       }
       
+      // Clear tokens immediately for instant UI update (no stale data)
+      setUserTokens([]);
+      
       const { setupPassword, hasPassword: checkHasPassword } = await import('@x1-wallet/core/services/wallet');
       const passwordExists = await checkHasPassword();
       const hasWallets = wallet.wallets && wallet.wallets.length > 0;
@@ -659,6 +673,9 @@ function App() {
       if (!effectivePasswordExists) {
         await setupPassword(password);
       }
+      
+      // Cache password in session for subsequent wallet creations
+      setSessionPassword(password);
       
       // Import always turns ON password protection
       storage.set('passwordProtection', true);
@@ -697,6 +714,9 @@ function App() {
         return;
       }
       
+      // Clear tokens immediately for instant UI update (no stale data)
+      setUserTokens([]);
+      
       const { setupPassword, hasPassword: checkHasPassword } = await import('@x1-wallet/core/services/wallet');
       const passwordExists = await checkHasPassword();
       const hasWallets = existingWallets.length > 0;
@@ -729,6 +749,9 @@ function App() {
         await setupPassword(password);
       }
       
+      // Cache password in session for subsequent wallet creations
+      setSessionPassword(password);
+      
       // Import always turns ON password protection
       storage.set('passwordProtection', true);
       setPasswordProtection(true);
@@ -747,6 +770,7 @@ function App() {
   // BUG FIX: Use lockWallet() to lock, NOT clearWallet() which wipes data!
   const handleLock = () => {
     wallet.lockWallet();
+    setSessionPassword(null); // Clear session password on lock
     setIsLocked(true);
   };
 
@@ -947,6 +971,7 @@ function App() {
           onComplete={handleCreateComplete}
           onBack={() => setScreen(returnScreen === 'manage' ? 'manage' : 'welcome')}
           passwordProtection={passwordProtection}
+          sessionPassword={sessionPassword}
         />
       </div>
     );
@@ -968,6 +993,7 @@ function App() {
           onComplete={handleImportComplete}
           onCompletePrivateKey={handleImportPrivateKey}
           onBack={() => setScreen(returnScreen === 'manage' ? 'manage' : 'welcome')}
+          sessionPassword={sessionPassword}
         />
       </div>
     );
@@ -1183,7 +1209,7 @@ function App() {
           onBack={() => { setSelectedToken(null); setScreen('main'); }}
           onSend={(token) => { setSelectedToken(token); setScreen('send'); }}
           onReceive={() => setScreen('receive')}
-          onSwap={() => setScreen('swap')}
+          onSwap={(token) => { setSelectedToken(token); setScreen('swap'); }}
           onBridge={() => setScreen('bridge')}
           onStake={() => setScreen('stake')}
         />
@@ -1212,9 +1238,13 @@ function App() {
         <SwapScreen
           wallet={wallet}
           onBack={() => setScreen('main')}
-          onSwapComplete={() => {
+          onSwapComplete={(updatedTokens) => {
+            // Apply optimistic token updates immediately if provided
+            if (updatedTokens && updatedTokens.length > 0) {
+              setUserTokens(updatedTokens);
+            }
             triggerActivityRefresh();
-            fetchUserTokens();
+            triggerBalanceRefresh();
           }}
           userTokens={userTokens}
           initialFromToken={selectedToken}
@@ -1404,6 +1434,7 @@ function App() {
         />
       )}
       <WalletMain
+        key={`${wallet.wallet?.publicKey}-${wallet.network}`}
         wallet={wallet}
         userTokens={userTokens}
         onTokensUpdate={setUserTokens}

@@ -24,7 +24,7 @@ const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 const X1_LOGO_URL = '/icons/48-x1.png';
 
 // Solana Logo URL
-const SOLANA_LOGO_URL = 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png';
+const SOLANA_LOGO_URL = '/icons/48-sol.png';
 
 // Base58 alphabet and helper functions
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
@@ -503,8 +503,13 @@ export default function BridgeScreen({ wallet, onBack }) {
       setError('Minimum amount is 0.01 USDC');
       return;
     }
-    if (inputAmount > userUsdcBalance) {
-      setError('Insufficient USDC balance');
+    // Use integer comparison to avoid floating-point precision issues
+    const multiplier = Math.pow(10, USDC_DECIMALS);
+    const requiredAmount = Math.round(inputAmount * multiplier);
+    const availableAmount = Math.round(userUsdcBalance * multiplier);
+    
+    if (requiredAmount > availableAmount) {
+      setError(`Insufficient USDC balance. Required: ${inputAmount} USDC, Available: ${userUsdcBalance} USDC`);
       return;
     }
     if (inputAmount > dailyCapRemaining) {

@@ -7,11 +7,40 @@ import { logger } from '../utils/logger.js';
 const XDEX_API = 'https://api.xdex.xyz/api/xendex';
 const JUPITER_TOKEN_API = 'https://lite-api.jup.ag/tokens/v2';
 
+// Token metadata cache - prevents repeated API calls for same tokens
+// Stores both successful and failed lookups
+const tokenMetadataCache = new Map();
+const CACHE_TTL_SUCCESS = 30 * 60 * 1000; // 30 minutes for successful lookups
+const CACHE_TTL_FAILED = 5 * 60 * 1000;   // 5 minutes for failed lookups (404s)
+
+function getCachedMetadata(mintAddress) {
+  const cached = tokenMetadataCache.get(mintAddress);
+  if (!cached) return null;
+  
+  const age = Date.now() - cached.timestamp;
+  const ttl = cached.failed ? CACHE_TTL_FAILED : CACHE_TTL_SUCCESS;
+  
+  if (age > ttl) {
+    tokenMetadataCache.delete(mintAddress);
+    return null;
+  }
+  
+  return cached;
+}
+
+function setCachedMetadata(mintAddress, data, failed = false) {
+  tokenMetadataCache.set(mintAddress, {
+    data,
+    failed,
+    timestamp: Date.now()
+  });
+}
+
 // Logo URLs
 const XDEX_LOGOS = {
   X1: '/icons/48-x1.png',
   WXNT: '/icons/48-x1.png',
-  SOL: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png',
+  SOL: '/icons/48-sol.png',
   USDC: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png',
   USDC_X: '/icons/48-usdcx.png',
 };
@@ -271,7 +300,15 @@ export async function getQuote(tokenIn, tokenOut, amountIn, network, tokenInData
         requestParams: Object.fromEntries(params)
       });
       
-      const errorMsg = data.error || data.message || '';
+      let errorMsg = data.error || data.message || '';
+      
+      // Strip HTML tags
+      errorMsg = errorMsg.replace(/<[^>]*>/g, '').trim();
+      
+      // Check for rate limit first
+      if (response.status === 429 || errorMsg.includes('429') || errorMsg.includes('Too Many Requests')) {
+        throw new Error('Too many requests. Please wait a moment and try again.');
+      }
       
       // Provide user-friendly error messages
       if (errorMsg.includes('Pool not found') || errorMsg.includes('No pool')) {
@@ -351,7 +388,16 @@ export async function prepareSwap(walletAddress, tokenIn, tokenOut, amountIn, ne
   if (!response.ok) {
     logger.error('[XDEX] Prepare failed:', response.status);
     logger.error('[XDEX] Error response:', JSON.stringify(data));
-    const errorMsg = data.error || data.message || data.detail || JSON.stringify(data) || `Swap prepare failed: ${response.status}`;
+    let errorMsg = data.error || data.message || data.detail || `Swap prepare failed: ${response.status}`;
+    
+    // Strip HTML tags
+    errorMsg = errorMsg.replace(/<[^>]*>/g, '').trim();
+    
+    // Check for rate limit
+    if (errorMsg.includes('429') || errorMsg.includes('Too Many Requests')) {
+      throw new Error('Too many requests. Please wait 30 seconds and try again.');
+    }
+    
     throw new Error(errorMsg);
   }
   
@@ -408,7 +454,7 @@ const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
 // Hardcoded Solana token list (always available)
 const SOLANA_TOKEN_LIST = [
-  { symbol: 'SOL', name: 'Solana', address: 'So11111111111111111111111111111111111111112', decimals: 9, logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png' },
+  { symbol: 'SOL', name: 'Solana', address: 'So11111111111111111111111111111111111111112', decimals: 9, logoURI: '/icons/48-sol.png' },
   { symbol: 'USDC', name: 'USD Coin', address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', decimals: 6, logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png' },
   { symbol: 'USDT', name: 'Tether USD', address: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', decimals: 6, logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.svg' },
   { symbol: 'JUP', name: 'Jupiter', address: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN', decimals: 6, logoURI: 'https://static.jup.ag/jup/icon.png' },
@@ -653,12 +699,23 @@ export async function fetchTokenMetadata(rpcUrl, mintAddress, network = null) {
   try {
     logger.log('[XDEX] Fetching token metadata for:', mintAddress, 'on', network || 'unknown network');
     
+    // Check cache first (including failed lookups)
+    const cached = getCachedMetadata(mintAddress);
+    if (cached) {
+      if (cached.failed) {
+        logger.log('[XDEX] Cache hit (failed):', mintAddress, '- skipping API call');
+        return null;
+      }
+      logger.log('[XDEX] Cache hit:', mintAddress, cached.data?.symbol);
+      return cached.data;
+    }
+    
     // Check network-specific known tokens first
     if (network) {
       const knownToken = getKnownToken(network, mintAddress);
       if (knownToken) {
         logger.log('[XDEX] Found in known tokens:', knownToken.symbol);
-        return {
+        const result = {
           mint: mintAddress,
           symbol: knownToken.symbol,
           name: knownToken.name,
@@ -667,6 +724,8 @@ export async function fetchTokenMetadata(rpcUrl, mintAddress, network = null) {
           isToken2022: knownToken.isToken2022 || false,
           isCustom: true
         };
+        setCachedMetadata(mintAddress, result);
+        return result;
       }
     }
     
@@ -680,7 +739,7 @@ export async function fetchTokenMetadata(rpcUrl, mintAddress, network = null) {
           const token = tokens.find(t => (t.id || t.address) === mintAddress);
           if (token) {
             logger.log('[XDEX] Found token in Jupiter:', token.symbol);
-            return {
+            const result = {
               mint: mintAddress,
               symbol: token.symbol,
               name: token.name,
@@ -689,6 +748,8 @@ export async function fetchTokenMetadata(rpcUrl, mintAddress, network = null) {
               isToken2022: false,
               isCustom: true
             };
+            setCachedMetadata(mintAddress, result);
+            return result;
           }
         }
       } catch (e) {
@@ -899,7 +960,7 @@ export async function fetchTokenMetadata(rpcUrl, mintAddress, network = null) {
     
     logger.log('[XDEX] Token metadata result:', { symbol, name, decimals: mintInfo.decimals, isToken2022, logoURI });
     
-    return {
+    const result = {
       mint: mintAddress,
       symbol,
       name,
@@ -909,8 +970,15 @@ export async function fetchTokenMetadata(rpcUrl, mintAddress, network = null) {
       logoURI,
       isCustom: true
     };
+    
+    // Cache successful result
+    setCachedMetadata(mintAddress, result);
+    
+    return result;
   } catch (error) {
     logger.error('[XDEX] Failed to fetch token metadata:', error);
+    // Cache failed lookup to avoid repeated 404s
+    setCachedMetadata(mintAddress, null, true);
     throw error;
   }
 }

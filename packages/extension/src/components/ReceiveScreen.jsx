@@ -3,14 +3,16 @@ import { logger } from '@x1-wallet/core';
 import React, { useState, useEffect, useRef } from 'react';
 import X1Logo from './X1Logo';
 
-const SOLANA_LOGO_URL = 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png';
+const SOLANA_LOGO_URL = '/icons/48-sol.png';
 
 function NetworkLogo({ network, size = 40 }) {
-  const logoSize = Math.round(size * 0.8);
+  // X1 logo fills edge-to-edge, Solana logo has internal padding
+  const x1LogoSize = Math.round(size * 0.8);
+  const solanaLogoSize = Math.round(size * 0.95);
   if (network?.includes('Solana')) {
     return (
       <div style={{ width: size, height: size, minWidth: size, minHeight: size, borderRadius: '50%', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
-        <img src={SOLANA_LOGO_URL} alt="Solana" style={{ width: logoSize, height: logoSize, objectFit: 'contain', display: 'block' }} />
+        <img src={SOLANA_LOGO_URL} alt="Solana" style={{ width: solanaLogoSize, height: solanaLogoSize, objectFit: 'contain', display: 'block' }} />
       </div>
     );
   }

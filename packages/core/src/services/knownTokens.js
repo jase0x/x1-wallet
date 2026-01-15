@@ -15,7 +15,7 @@ export const ICONS = {
   WALLET: '/icons/48-wallet.png',
   DEGEN: '/icons/48-degen.png',
   // External icons (third-party tokens)
-  SOL: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png',
+  SOL: '/icons/48-sol.png',
   USDC: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png',
   USDT: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.png',
   MSOL: 'https://raw.githubusercontent.com/marinade-finance/msol-logo/main/msol-logo.png',

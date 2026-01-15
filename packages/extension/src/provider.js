@@ -184,7 +184,7 @@
   const pendingRequests = new Map();
 
   // X1 Wallet icon as data URI
-  const X1_WALLET_ICON = "/icons/128-wallet.png";
+  const X1_WALLET_ICON = "https://x1logos.s3.us-east-1.amazonaws.com/128+-+wallet.png";
 
   // X1 Wallet Provider Class
   class X1WalletProvider extends EventEmitter {
@@ -202,14 +202,69 @@
       this._initialized = true;
       this._chain = "x1:mainnet"; // Default chain - will be updated from storage
       this._network = "X1 Mainnet"; // Human readable - will be updated from storage
+      this._connectionCheckPromise = null; // Promise for initial connection check
       
-      // Try to load saved network from storage immediately
-      this._loadSavedNetwork();
-
-      // Listen for messages from content script
+      // Listen for messages from content script - MUST be set up before any requests
       window.addEventListener("message", this._handleMessage.bind(this));
 
       console.log("[X1 Wallet] Provider initialized");
+      
+      // Load saved network from storage (async)
+      this._loadSavedNetwork();
+      
+      // Check if already connected (restore connection on page refresh)
+      // Store the promise so connect() can wait for it
+      this._connectionCheckPromise = this._checkExistingConnection();
+    }
+    
+    // Check if site is already connected and restore state
+    async _checkExistingConnection() {
+      try {
+        console.log("[X1 Wallet] Checking existing connection...");
+        const result = await this._sendRequest("getConnectionStatus", {});
+        console.log("[X1 Wallet] getConnectionStatus result:", JSON.stringify(result));
+        
+        if (result && result.connected && result.publicKey) {
+          this._connected = true;
+          this._publicKey = new PublicKey(result.publicKey);
+          
+          if (result.chain) {
+            this._chain = result.chain;
+          }
+          if (result.network) {
+            this._network = result.network;
+          }
+          
+          console.log("[X1 Wallet] Restored connection:", this._publicKey.toBase58());
+          
+          // Emit connect event so dApps know we're connected
+          // Use setTimeout to ensure event listeners are set up by the dApp
+          setTimeout(() => {
+            console.log("[X1 Wallet] Emitting connect event for restored connection");
+            this.emit("connect", this._publicKey);
+            
+            // Also emit accountChanged in case dApps listen for that
+            this.emit("accountChanged", this._publicKey);
+          }, 50);
+          
+          // Emit again after a longer delay for slower dApps
+          setTimeout(() => {
+            if (this._connected && this._publicKey) {
+              console.log("[X1 Wallet] Re-emitting connect event (delayed)");
+              this.emit("connect", this._publicKey);
+            }
+          }, 500);
+          
+          return true;
+        } else {
+          console.log("[X1 Wallet] No existing connection found");
+          return false;
+        }
+      } catch (e) {
+        // Ignore errors - site not connected
+        console.log("[X1 Wallet] Error checking connection:", e.message);
+        return false;
+      }
     }
     
     // Load saved network from storage
@@ -305,8 +360,10 @@
           break;
 
         case "accountChanged":
+          console.log("[X1 Wallet] Received accountChanged message:", payload);
           if (payload && payload.publicKey) {
             this._publicKey = new PublicKey(payload.publicKey);
+            console.log("[X1 Wallet] Updated publicKey, emitting accountChanged");
             this.emit("accountChanged", this._publicKey);
           }
           break;
@@ -351,14 +408,13 @@
 
         pendingRequests.set(id, { resolve, reject, timeout });
 
-        // SEC-001 FIX: Use specific origin instead of wildcard
         window.postMessage({
           target: "x1-wallet-content",
           type: "request",
           method,
           params,
           id,
-        }, window.location.origin);
+        }, "*");
       });
     }
 
@@ -369,7 +425,24 @@
      * @param {boolean} options.onlyIfTrusted - Only connect if already trusted
      */
     async connect(options = {}) {
-      console.log("[X1 Wallet] connect() with options:", options);
+      console.log("[X1 Wallet] connect() called with options:", JSON.stringify(options));
+      
+      // If this is a silent/auto connect, wait for our connection check to complete first
+      // This prevents race conditions where autoConnect fires before we've checked storage
+      if (options.onlyIfTrusted && this._connectionCheckPromise) {
+        console.log("[X1 Wallet] Waiting for connection check to complete...");
+        try {
+          await this._connectionCheckPromise;
+        } catch (e) {
+          // Ignore errors
+        }
+      }
+      
+      // If we're already connected and have a public key, return immediately
+      if (this._connected && this._publicKey) {
+        console.log("[X1 Wallet] Already connected, returning existing connection");
+        return { publicKey: this._publicKey, chain: this._chain };
+      }
       
       try {
         // Pass chain info to the wallet
@@ -381,8 +454,9 @@
           console.log("[X1 Wallet] Requesting chain:", options.chain);
         }
         
+        console.log("[X1 Wallet] Sending connect request to background...");
         const result = await this._sendRequest("connect", connectParams);
-        console.log("[X1 Wallet] Connect result:", result);
+        console.log("[X1 Wallet] Connect result:", JSON.stringify(result));
         
         if (result && result.publicKey) {
           this._connected = true;

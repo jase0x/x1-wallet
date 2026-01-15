@@ -1928,13 +1928,145 @@ function parseTransaction(txData, walletAddress, signature, network = '') {
 }
 
 /**
+ * Modify the priority fee (ComputeUnitPrice) in a transaction
+ * @param {Uint8Array} messageBytes - Transaction message bytes (without signature prefix)
+ * @param {number} priorityMicroLamports - Priority fee in microlamports
+ * @param {string} rpcUrl - RPC endpoint to get fresh blockhash
+ * @returns {Promise<Uint8Array>} Modified message bytes
+ */
+async function modifyTransactionPriorityFee(messageBytes, priorityMicroLamports, rpcUrl) {
+  try {
+    // Check if this is a versioned transaction (v0)
+    const isVersioned = messageBytes[0] === 0x80;
+    let offset = isVersioned ? 1 : 0;
+    
+    // Read header
+    const numRequiredSigs = messageBytes[offset];
+    const numReadonlySigned = messageBytes[offset + 1];
+    const numReadonlyUnsigned = messageBytes[offset + 2];
+    offset += 3;
+    
+    // Read number of account keys
+    const numAccountKeys = messageBytes[offset];
+    offset += 1;
+    
+    // Find ComputeBudget program index in account keys
+    let computeBudgetIndex = -1;
+    const computeBudgetPubkey = decodeBase58(COMPUTE_BUDGET_PROGRAM_ID);
+    
+    for (let i = 0; i < numAccountKeys; i++) {
+      const keyStart = offset + (i * 32);
+      const key = messageBytes.slice(keyStart, keyStart + 32);
+      
+      // Compare with ComputeBudget program ID
+      let match = true;
+      for (let j = 0; j < 32; j++) {
+        if (key[j] !== computeBudgetPubkey[j]) {
+          match = false;
+          break;
+        }
+      }
+      if (match) {
+        computeBudgetIndex = i;
+        break;
+      }
+    }
+    
+    if (computeBudgetIndex === -1) {
+      logger.log('[Priority Fee] ComputeBudget program not found in transaction');
+      return messageBytes; // Return unchanged
+    }
+    
+    // Skip account keys
+    offset += numAccountKeys * 32;
+    
+    // Skip blockhash (32 bytes) - we'll update it later
+    const blockhashOffset = offset;
+    offset += 32;
+    
+    // Read number of instructions
+    const numInstructions = messageBytes[offset];
+    offset += 1;
+    
+    // Search for SetComputeUnitPrice instruction (discriminator 0x03)
+    for (let i = 0; i < numInstructions; i++) {
+      const programIndex = messageBytes[offset];
+      offset += 1;
+      
+      // Read number of account indices (compact-u16, but typically small)
+      const numAccounts = messageBytes[offset];
+      offset += 1;
+      
+      // Skip account indices
+      offset += numAccounts;
+      
+      // Read data length (compact-u16, but typically small)
+      const dataLen = messageBytes[offset];
+      offset += 1;
+      
+      // Check if this is ComputeBudget SetComputeUnitPrice
+      if (programIndex === computeBudgetIndex && dataLen === 9 && messageBytes[offset] === 0x03) {
+        // Found SetComputeUnitPrice instruction!
+        // Data format: [0x03 (discriminator), u64 microlamports (8 bytes LE)]
+        logger.log('[Priority Fee] Found SetComputeUnitPrice at offset', offset);
+        
+        // Create modified message
+        const modifiedMessage = new Uint8Array(messageBytes);
+        
+        // Write new priority fee (u64 little-endian) at offset+1
+        const feeBytes = new BigUint64Array([BigInt(priorityMicroLamports)]);
+        const feeView = new Uint8Array(feeBytes.buffer);
+        for (let j = 0; j < 8; j++) {
+          modifiedMessage[offset + 1 + j] = feeView[j];
+        }
+        
+        logger.log('[Priority Fee] Updated priority fee to', priorityMicroLamports, 'microlamports');
+        
+        // Get fresh blockhash
+        const blockhashResponse = await fetch(rpcUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'getLatestBlockhash',
+            params: [{ commitment: 'finalized' }]
+          })
+        });
+        const blockhashResult = await blockhashResponse.json();
+        
+        if (blockhashResult.result?.value?.blockhash) {
+          const newBlockhash = decodeBase58(blockhashResult.result.value.blockhash);
+          for (let j = 0; j < 32; j++) {
+            modifiedMessage[blockhashOffset + j] = newBlockhash[j];
+          }
+          logger.log('[Priority Fee] Updated blockhash');
+        }
+        
+        return modifiedMessage;
+      }
+      
+      // Skip instruction data
+      offset += dataLen;
+    }
+    
+    logger.log('[Priority Fee] SetComputeUnitPrice instruction not found');
+    return messageBytes;
+  } catch (error) {
+    logger.error('[Priority Fee] Error modifying priority fee:', error);
+    return messageBytes; // Return unchanged on error
+  }
+}
+
+/**
  * Sign and send an externally prepared transaction (e.g., from XDEX API)
  * @param {string} transactionBase64 - Base64 encoded transaction from API
  * @param {Uint8Array|string} privateKey - 64-byte secret key
  * @param {string} rpcUrl - RPC endpoint
+ * @param {number} priorityMicroLamports - Optional priority fee in microlamports (0 = use existing)
  * @returns {Promise<string>} Transaction signature
  */
-export async function signAndSendExternalTransaction(transactionBase64, privateKey, rpcUrl) {
+export async function signAndSendExternalTransaction(transactionBase64, privateKey, rpcUrl, priorityMicroLamports = 0) {
   try {
     logger.log('[Swap TX] Starting to sign external transaction');
     
@@ -2011,8 +2143,14 @@ export async function signAndSendExternalTransaction(transactionBase64, privateK
     
     // The message starts after signature placeholders
     const messageOffset = 1 + (numSignatures * 64);
-    const message = txBytes.slice(messageOffset);
+    let message = txBytes.slice(messageOffset);
     logger.log('[Swap TX] Message length:', message.length, 'bytes');
+    
+    // Modify priority fee if specified
+    if (priorityMicroLamports > 0) {
+      logger.log('[Swap TX] Modifying priority fee to', priorityMicroLamports, 'microlamports');
+      message = await modifyTransactionPriorityFee(message, priorityMicroLamports, rpcUrl);
+    }
     
     // Sign the message
     const signature = await sign(message, secretKey);
@@ -2065,8 +2203,13 @@ export async function signAndSendExternalTransaction(transactionBase64, privateK
 /**
  * Sign and send an external transaction using hardware wallet (Ledger)
  * Similar to signAndSendExternalTransaction but uses hardware wallet for signing
+ * @param {string} transactionBase64 - Base64 encoded transaction from API
+ * @param {object} hardwareWallet - Hardware wallet instance
+ * @param {string} rpcUrl - RPC endpoint
+ * @param {string} derivationPath - Derivation path for signing
+ * @param {number} priorityMicroLamports - Optional priority fee in microlamports (0 = use existing)
  */
-export async function signAndSendExternalTransactionHardware(transactionBase64, hardwareWallet, rpcUrl, derivationPath = null) {
+export async function signAndSendExternalTransactionHardware(transactionBase64, hardwareWallet, rpcUrl, derivationPath = null, priorityMicroLamports = 0) {
   try {
     logger.log('[Swap TX HW] Starting to sign external transaction with hardware wallet');
     logger.log('[Swap TX HW] Using derivation path:', derivationPath);
@@ -2112,8 +2255,14 @@ export async function signAndSendExternalTransactionHardware(transactionBase64, 
     
     // The message starts after signature placeholders
     const messageOffset = 1 + (numSignatures * 64);
-    const message = txBytes.slice(messageOffset);
+    let message = txBytes.slice(messageOffset);
     logger.log('[Swap TX HW] Message length:', message.length, 'bytes');
+    
+    // Modify priority fee if specified
+    if (priorityMicroLamports > 0) {
+      logger.log('[Swap TX HW] Modifying priority fee to', priorityMicroLamports, 'microlamports');
+      message = await modifyTransactionPriorityFee(message, priorityMicroLamports, rpcUrl);
+    }
     
     // Sign with hardware wallet - pass the derivation path
     const signature = await hardwareWallet.signTransaction(message, derivationPath);

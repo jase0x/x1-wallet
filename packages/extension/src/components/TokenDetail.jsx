@@ -297,7 +297,7 @@ export default function TokenDetail({
         <div className="token-detail-header-title">
           {isNative ? (
             isSolana ? (
-              <img src="https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png" alt="SOL" className="token-detail-header-icon" />
+              <img src="/icons/48-sol.png" alt="SOL" className="token-detail-header-icon" />
             ) : (
               <X1Logo size={24} />
             )
@@ -380,7 +380,7 @@ export default function TokenDetail({
             <div className="token-balance-left">
               {isNative ? (
                 isSolana ? (
-                  <img src="https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png" alt="SOL" className="token-balance-icon" />
+                  <img src="/icons/48-sol.png" alt="SOL" className="token-balance-icon" />
                 ) : (
                   <X1Logo size={40} />
                 )

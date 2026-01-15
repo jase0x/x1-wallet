@@ -502,7 +502,21 @@ class HardwareWalletService {
     // Preflight check - verify Solana app is still responsive
     await this.preflightCheck();
 
-    const derivePath = path || this.derivationPath;
+    // Normalize derivation path
+    let derivePath = path || this.derivationPath;
+    
+    // Strip 'm/' prefix if present (Ledger SDK handles this internally but be consistent)
+    if (derivePath && derivePath.startsWith('m/')) {
+      derivePath = derivePath.slice(2);
+    }
+    
+    // Ensure path has correct format for Ledger Solana app
+    // Format should be: 44'/501'/account'/change'
+    if (!derivePath || derivePath === 'null' || derivePath === 'undefined') {
+      derivePath = "44'/501'/0'/0'"; // Default fallback
+      logger.log('[Hardware] Using default derivation path as provided path was invalid');
+    }
+    
     logger.log('[Hardware] signTransaction using derivation path:', derivePath, '(passed:', path, ', default:', this.derivationPath, ')');
     
     try {
@@ -515,6 +529,7 @@ class HardwareWalletService {
       return result.signature;
     } catch (error) {
       logger.error('Sign transaction error:', error);
+      logger.error('[Hardware] Derivation path that failed:', derivePath);
       
       if (error.statusCode === 0x6985) {
         throw new Error('Transaction rejected by user');
@@ -551,7 +566,14 @@ class HardwareWalletService {
     // Preflight check - verify Solana app is still responsive
     await this.preflightCheck();
 
-    const derivePath = path || this.derivationPath;
+    // Normalize derivation path
+    let derivePath = path || this.derivationPath;
+    if (derivePath && derivePath.startsWith('m/')) {
+      derivePath = derivePath.slice(2);
+    }
+    if (!derivePath || derivePath === 'null' || derivePath === 'undefined') {
+      derivePath = "44'/501'/0'/0'";
+    }
     
     // Handle Buffer, Uint8Array, or string
     const msgBuffer = Buffer.isBuffer(message)

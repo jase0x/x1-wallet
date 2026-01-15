@@ -3,7 +3,7 @@ import { logger, getUserFriendlyError, ErrorMessages } from '@x1-wallet/core';
 import React, { useState, useRef, useEffect } from 'react';
 import { generateMnemonic, validateMnemonic, WORDLIST } from '@x1-wallet/core/utils/bip39';
 
-export default function CreateWallet({ onComplete, onBack, passwordProtection: propPasswordProtection }) {
+export default function CreateWallet({ onComplete, onBack, passwordProtection: propPasswordProtection, sessionPassword }) {
   const [step, setStep] = useState('choose'); // choose, generate, custom, verify, name, password, verify-password
   const [seedLength, setSeedLength] = useState(12);
   const [mnemonic, setMnemonic] = useState('');
@@ -274,11 +274,27 @@ export default function CreateWallet({ onComplete, onBack, passwordProtection: p
   };
 
   // Move to password step after naming (or verify if password exists, or skip if not required)
-  const handleNameContinue = () => {
+  const handleNameContinue = async () => {
     if (!passwordRequired) {
       // Password protection is OFF - complete without password
       onComplete(mnemonic, walletName.trim() || 'My Wallet', null);
       return;
+    }
+    
+    // If we have a session password, verify it and skip password entry
+    if (sessionPassword) {
+      try {
+        const { checkPassword } = await import('@x1-wallet/core/services/wallet');
+        const isValid = await checkPassword(sessionPassword);
+        if (isValid) {
+          // Session password is valid - complete with it
+          onComplete(mnemonic, walletName.trim() || 'My Wallet', sessionPassword);
+          return;
+        }
+      } catch (e) {
+        logger.warn('[CreateWallet] Session password verification failed:', e);
+      }
+      // Session password invalid - fall through to password entry
     }
     
     if (existingPasswordDetected) {

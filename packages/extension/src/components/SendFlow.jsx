@@ -8,9 +8,38 @@ import { validateAddress } from '@x1-wallet/core/utils/base58';
 import { hardwareWallet } from '../services/hardware';
 
 // Solana Logo URL
-const SOLANA_LOGO_URL = 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png';
+const SOLANA_LOGO_URL = '/icons/48-sol.png';
 
-// Transaction priority options
+// Transaction priority options - network aware
+function getPriorityOptions(network) {
+  const isX1 = network?.includes('X1');
+  // X1 has higher base fees than Solana
+  if (isX1) {
+    return [
+      { id: 'auto', name: 'Auto', fee: 0, description: 'Standard speed' },
+      { id: 'fast', name: 'Fast', fee: 0.001, description: 'Higher priority' },
+      { id: 'turbo', name: 'Turbo', fee: 0.005, description: 'Very high priority' },
+      { id: 'degen', name: 'Degen', fee: 0.01, description: 'Maximum priority' },
+      { id: 'custom', name: 'Custom', fee: 0, description: 'Set your own fee' }
+    ];
+  }
+  // Solana fees
+  return [
+    { id: 'auto', name: 'Auto', fee: 0, description: 'Standard speed' },
+    { id: 'fast', name: 'Fast', fee: 0.000005, description: 'Higher priority' },
+    { id: 'turbo', name: 'Turbo', fee: 0.00005, description: 'Very high priority' },
+    { id: 'degen', name: 'Degen', fee: 0.001, description: 'Maximum priority' },
+    { id: 'custom', name: 'Custom', fee: 0, description: 'Set your own fee' }
+  ];
+}
+
+// Get base transaction fee for network
+function getBaseFee(network) {
+  const isX1 = network?.includes('X1');
+  return isX1 ? 0.002 : 0.000005; // X1: 0.002 XNT, Solana: 5000 lamports
+}
+
+// Legacy constant for backwards compatibility
 const PRIORITY_OPTIONS = [
   { id: 'auto', name: 'Auto', fee: 0, description: 'Standard speed' },
   { id: 'fast', name: 'Fast', fee: 0.000005, description: 'Higher priority' },
@@ -21,7 +50,9 @@ const PRIORITY_OPTIONS = [
 
 // Network-aware logo component
 function NetworkLogo({ network, size = 40 }) {
-  const logoSize = Math.round(size * 0.8);
+  // X1 logo fills edge-to-edge, Solana logo has internal padding
+  const x1LogoSize = Math.round(size * 0.8);
+  const solanaLogoSize = Math.round(size * 0.95);
   
   if (network?.includes('Solana')) {
     return (
@@ -42,8 +73,8 @@ function NetworkLogo({ network, size = 40 }) {
           src={SOLANA_LOGO_URL}
           alt="Solana"
           style={{
-            width: logoSize,
-            height: logoSize,
+            width: solanaLogoSize,
+            height: solanaLogoSize,
             objectFit: 'contain',
             display: 'block'
           }}
@@ -340,8 +371,13 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
       return;
     }
     
-    if (sendAmount > displayBalance) {
-      setError('Insufficient balance');
+    // Use integer comparison to avoid floating-point precision issues
+    const multiplier = Math.pow(10, displayDecimals);
+    const requiredAmount = Math.round(sendAmount * multiplier);
+    const availableAmount = Math.round(displayBalance * multiplier);
+    
+    if (requiredAmount > availableAmount) {
+      setError(`Insufficient balance. Required: ${amount} ${displaySymbol}, Available: ${displayBalance} ${displaySymbol}`);
       return;
     }
     
@@ -419,10 +455,10 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
   const sendNative = async (sendAmount) => {
     const lamports = Math.floor(sendAmount * Math.pow(10, networkConfig.decimals));
     
-    // Get priority fee - use custom fee if selected, otherwise use preset
+    // Get priority fee - use custom fee if selected, otherwise use preset (network-aware)
     const priorityFee = priority === 'custom' 
       ? (parseFloat(customFee) || 0)
-      : (PRIORITY_OPTIONS.find(p => p.id === priority)?.fee || 0);
+      : (getPriorityOptions(network).find(p => p.id === priority)?.fee || 0);
     const priorityMicroLamports = Math.floor(priorityFee * 1e9); // Convert to microLamports
     
     const skipSimulation = (() => {
@@ -1058,7 +1094,7 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
               <div className="send-summary-row">
                 <span className="send-summary-label">Network Fee</span>
                 <span className="send-summary-value">
-                  ~{(0.000005 + (priority === 'custom' ? parseFloat(customFee) || 0 : PRIORITY_OPTIONS.find(p => p.id === priority)?.fee || 0)).toFixed(6)} {networkConfig.symbol}
+                  ~{(getBaseFee(network) + (priority === 'custom' ? parseFloat(customFee) || 0 : getPriorityOptions(network).find(p => p.id === priority)?.fee || 0)).toFixed(6)} {networkConfig.symbol}
                 </span>
               </div>
             </div>
@@ -1067,7 +1103,7 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
             <div className="send-priority-section">
               <div className="send-priority-label">Transaction Priority</div>
               <div className="send-priority-selector">
-                {PRIORITY_OPTIONS.filter(opt => opt.id !== 'custom').map(opt => (
+                {getPriorityOptions(network).filter(opt => opt.id !== 'custom').map(opt => (
                   <button
                     key={opt.id}
                     className={`send-priority-btn ${priority === opt.id ? 'active' : ''}`}

@@ -3,7 +3,7 @@ import { logger, getUserFriendlyError, ErrorMessages } from '@x1-wallet/core';
 import React, { useState, useRef, useEffect } from 'react';
 import { validateMnemonic, WORDLIST } from '@x1-wallet/core/utils/bip39';
 
-export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey }) {
+export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPassword }) {
   const [importType, setImportType] = useState('phrase'); // 'phrase' or 'privatekey'
   const [seedLength, setSeedLength] = useState(12);
   const [words, setWords] = useState(Array(12).fill(''));
@@ -107,9 +107,20 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
 
   const handleKeyDown = (e, index) => {
     if (e.key === 'Tab' || e.key === 'Enter') {
+      e.preventDefault(); // Always prevent default for Enter/Tab
       if (suggestions.length > 0) {
-        e.preventDefault();
         selectSuggestion(suggestions[0]);
+      } else if (e.key === 'Enter') {
+        // If on last word and all filled, trigger continue
+        // Otherwise move to next field
+        if (index === seedLength - 1) {
+          const filledWords = words.filter(w => w.trim());
+          if (filledWords.length === seedLength) {
+            handleContinue();
+          }
+        } else {
+          inputRefs.current[index + 1]?.focus();
+        }
       }
     } else if (e.key === ' ' && words[index]) {
       e.preventDefault();
@@ -181,11 +192,27 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
   };
 
   // Move to password step after naming (or verify if password exists, or skip if not required)
-  const handleNameContinue = () => {
+  const handleNameContinue = async () => {
     if (!passwordRequired) {
       // Password protection is OFF - complete without password
       onComplete(words.join(' '), walletName || 'Imported Wallet', null);
       return;
+    }
+    
+    // If we have a session password, verify it and skip password entry
+    if (sessionPassword) {
+      try {
+        const { checkPassword } = await import('@x1-wallet/core/services/wallet');
+        const isValid = await checkPassword(sessionPassword);
+        if (isValid) {
+          // Session password is valid - complete with it
+          onComplete(words.join(' '), walletName || 'Imported Wallet', sessionPassword);
+          return;
+        }
+      } catch (e) {
+        logger.warn('[ImportWallet] Session password verification failed:', e);
+      }
+      // Session password invalid - fall through to password entry
     }
     
     if (existingPasswordDetected) {
@@ -333,6 +360,22 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
       return;
     }
     
+    // If we have a session password, verify it and skip password entry
+    if (sessionPassword) {
+      try {
+        const { checkPassword } = await import('@x1-wallet/core/services/wallet');
+        const isValid = await checkPassword(sessionPassword);
+        if (isValid) {
+          // Session password is valid - complete with it
+          await completePrivateKeyImport(sessionPassword);
+          return;
+        }
+      } catch (e) {
+        logger.warn('[ImportWallet] Session password verification failed:', e);
+      }
+      // Session password invalid - fall through to password entry
+    }
+    
     if (existingPasswordDetected) {
       // Password already exists - require verification
       setStep('verify-password-pk');
@@ -474,7 +517,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
       <div className="screen no-nav">
         <div className="page-header">
           <div className="header-left">
-            <button className="back-btn" onClick={() => setStep('import')}>
+            <button className="back-btn" type="button" onClick={() => setStep('import')}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M19 12H5M12 19l-7-7 7-7" />
               </svg>
@@ -486,9 +529,9 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
         <div className="screen-content seed-container" style={{ paddingTop: 0 }}>
           <p className="seed-subtitle">Give your imported wallet a name</p>
           <div className="form-group" style={{ marginTop: 24 }}>
-            <input type="text" className="form-input" value={walletName} onChange={e => setWalletName(e.target.value)} placeholder="My Imported Wallet" autoFocus />
+            <input type="text" className="form-input" value={walletName} onChange={e => setWalletName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleNameContinue()} placeholder="My Imported Wallet" autoFocus />
           </div>
-          <button className="btn-primary" onClick={handleNameContinue} style={{ marginTop: 24 }}>Continue</button>
+          <button className="btn-primary" type="button" onClick={handleNameContinue} style={{ marginTop: 24 }}>Continue</button>
         </div>
       </div>
     );
@@ -500,7 +543,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
       <div className="screen no-nav">
         <div className="page-header">
           <div className="header-left">
-            <button className="back-btn" onClick={() => setStep('name')}>
+            <button className="back-btn" type="button" onClick={() => setStep('name')}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M19 12H5M12 19l-7-7 7-7" />
               </svg>
@@ -567,13 +610,36 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
 
           <div className="form-group" style={{ marginBottom: 16 }}>
             <label>Confirm Password</label>
-            <input
-              type={showPassword ? 'text' : 'password'}
-              className="form-input"
-              value={confirmPassword}
-              onChange={e => { setConfirmPassword(e.target.value); setError(''); }}
-              
-            />
+            <div style={{ position: 'relative' }}>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                className="form-input"
+                value={confirmPassword}
+                onChange={e => { setConfirmPassword(e.target.value); setError(''); }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                style={{
+                  position: 'absolute',
+                  right: 12,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: 4
+                }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth="2">
+                  {showPassword ? (
+                    <><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></>
+                  ) : (
+                    <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>
+                  )}
+                </svg>
+              </button>
+            </div>
           </div>
 
           <div className="info-box" style={{ marginBottom: 16 }}>
@@ -583,7 +649,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
 
           {error && <div className="error-message" style={{ marginBottom: 16 }}>{error}</div>}
 
-          <button className="btn-primary" onClick={handleComplete}>Import Wallet</button>
+          <button className="btn-primary" type="button" onClick={handleComplete}>Import Wallet</button>
         </div>
       </div>
     );
@@ -595,7 +661,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
       <div className="screen no-nav">
         <div className="page-header">
           <div className="header-left">
-            <button className="back-btn" onClick={() => setStep('name')}>
+            <button className="back-btn" type="button" onClick={() => setStep('name')}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M19 12H5M12 19l-7-7 7-7" />
               </svg>
@@ -665,6 +731,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
 
           <button 
             className="btn-primary" 
+            type="button"
             onClick={handleVerifyAndComplete}
             disabled={verifying}
           >
@@ -681,7 +748,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
       <div className="screen no-nav">
         <div className="page-header">
           <div className="header-left">
-            <button className="back-btn" onClick={() => setStep('import')}>
+            <button className="back-btn" type="button" onClick={() => setStep('import')}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M19 12H5M12 19l-7-7 7-7" />
               </svg>
@@ -693,10 +760,10 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
         <div className="screen-content seed-container" style={{ paddingTop: 0 }}>
           <p className="seed-subtitle">Give your imported wallet a name</p>
           <div className="form-group" style={{ marginTop: 24 }}>
-            <input type="text" className="form-input" value={walletName} onChange={e => setWalletName(e.target.value)} placeholder="My Imported Wallet" autoFocus />
+            <input type="text" className="form-input" value={walletName} onChange={e => setWalletName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleNamePkContinue()} placeholder="My Imported Wallet" autoFocus />
           </div>
           {error && <div className="error-message">{error}</div>}
-          <button className="btn-primary" onClick={handleNamePkContinue} style={{ marginTop: 24 }}>Continue</button>
+          <button className="btn-primary" type="button" onClick={handleNamePkContinue} style={{ marginTop: 24 }}>Continue</button>
         </div>
       </div>
     );
@@ -708,7 +775,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
       <div className="screen no-nav">
         <div className="page-header">
           <div className="header-left">
-            <button className="back-btn" onClick={() => setStep('name-pk')}>
+            <button className="back-btn" type="button" onClick={() => setStep('name-pk')}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M19 12H5M12 19l-7-7 7-7" />
               </svg>
@@ -775,13 +842,36 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
 
           <div className="form-group" style={{ marginBottom: 16 }}>
             <label>Confirm Password</label>
-            <input
-              type={showPassword ? 'text' : 'password'}
-              className="form-input"
-              value={confirmPassword}
-              onChange={e => { setConfirmPassword(e.target.value); setError(''); }}
-              
-            />
+            <div style={{ position: 'relative' }}>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                className="form-input"
+                value={confirmPassword}
+                onChange={e => { setConfirmPassword(e.target.value); setError(''); }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                style={{
+                  position: 'absolute',
+                  right: 12,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: 4
+                }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth="2">
+                  {showPassword ? (
+                    <><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></>
+                  ) : (
+                    <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>
+                  )}
+                </svg>
+              </button>
+            </div>
           </div>
 
           <div className="info-box" style={{ marginBottom: 16 }}>
@@ -791,7 +881,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
 
           {error && <div className="error-message" style={{ marginBottom: 16 }}>{error}</div>}
 
-          <button className="btn-primary" onClick={handleCompletePrivateKey}>Import Wallet</button>
+          <button className="btn-primary" type="button" onClick={handleCompletePrivateKey}>Import Wallet</button>
         </div>
       </div>
     );
@@ -803,7 +893,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
       <div className="screen no-nav">
         <div className="page-header">
           <div className="header-left">
-            <button className="back-btn" onClick={() => setStep('name-pk')}>
+            <button className="back-btn" type="button" onClick={() => setStep('name-pk')}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M19 12H5M12 19l-7-7 7-7" />
               </svg>
@@ -873,6 +963,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
 
           <button 
             className="btn-primary" 
+            type="button"
             onClick={handleVerifyAndCompletePk}
             disabled={verifying}
           >
@@ -888,7 +979,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
       {/* Header */}
       <div className="page-header">
         <div className="header-left">
-          <button className="back-btn" onClick={onBack}>
+          <button className="back-btn" type="button" onClick={onBack}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M19 12H5M12 19l-7-7 7-7" />
             </svg>
@@ -904,6 +995,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
         {/* Import Type Selector */}
         <div className="import-type-selector">
           <button 
+            type="button"
             className={`import-type-btn ${importType === 'phrase' ? 'active' : ''}`} 
             onClick={() => { setImportType('phrase'); setError(''); }}
           >
@@ -915,6 +1007,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
             Seed Phrase
           </button>
           <button 
+            type="button"
             className={`import-type-btn ${importType === 'privatekey' ? 'active' : ''}`} 
             onClick={() => { setImportType('privatekey'); setError(''); }}
           >
@@ -928,10 +1021,10 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
       {importType === 'phrase' && (
         <>
           <div className="seed-length-selector">
-            <button className={`seed-length-btn ${seedLength === 12 ? 'active' : ''}`} onClick={() => handleLengthChange(12)}>12 Words</button>
-            <button className={`seed-length-btn ${seedLength === 24 ? 'active' : ''}`} onClick={() => handleLengthChange(24)}>24 Words</button>
+            <button type="button" className={`seed-length-btn ${seedLength === 12 ? 'active' : ''}`} onClick={() => handleLengthChange(12)}>12 Words</button>
+            <button type="button" className={`seed-length-btn ${seedLength === 24 ? 'active' : ''}`} onClick={() => handleLengthChange(24)}>24 Words</button>
           </div>
-          <button className="paste-btn" onClick={handlePaste}>
+          <button type="button" className="paste-btn" onClick={handlePaste}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
               <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
@@ -966,7 +1059,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
             </div>
           )}
           {error && <div className="error-message">{error}</div>}
-          <button className="btn-primary" onClick={handleContinue}>Continue</button>
+          <button className="btn-primary" type="button" onClick={handleContinue}>Continue</button>
         </>
       )}
       
@@ -995,7 +1088,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey 
           
           {error && <div className="error-message" style={{ marginTop: 16 }}>{error}</div>}
           
-          <button className="btn-primary" onClick={handlePrivateKeyImport} style={{ marginTop: 20 }}>Continue</button>
+          <button className="btn-primary" type="button" onClick={handlePrivateKeyImport} style={{ marginTop: 20 }}>Continue</button>
         </>
       )}
       </div>

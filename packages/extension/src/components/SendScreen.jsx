@@ -6,6 +6,12 @@ import { logger, getUserFriendlyError, ErrorMessages } from '@x1-wallet/core';
 import { validateAddress } from '@x1-wallet/core/utils/base58';
 import { hardwareWallet } from '../services/hardware';
 
+// Get base transaction fee for network
+function getBaseFee(network) {
+  const isX1 = network?.includes('X1');
+  return isX1 ? 0.002 : 0.000005; // X1: 0.002 XNT, Solana: 5000 lamports
+}
+
 export default function SendScreen({ wallet, selectedToken: initialToken, userTokens = [], onBack, onSuccess }) {
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('');
@@ -199,10 +205,17 @@ export default function SendScreen({ wallet, selectedToken: initialToken, userTo
         await hardwareWallet.openApp();
       }
       
+      // Get derivation path from wallet - check multiple possible locations
+      const derivationPath = wallet?.wallet?.derivationPath || 
+                             wallet?.derivationPath || 
+                             wallet?.activeWallet?.derivationPath ||
+                             "44'/501'/0'/0'"; // Default fallback
+      logger.log('[SendScreen] Using derivation path:', derivationPath);
+      
       setHwStatus('Please confirm transaction on Ledger...');
       
-      // Sign the transaction message
-      const signature = await hardwareWallet.signTransaction(txMessage);
+      // Sign the transaction message with the correct derivation path
+      const signature = await hardwareWallet.signTransaction(txMessage, derivationPath);
       return signature;
     } catch (err) {
       logger.error('[SendScreen] Hardware signing error:', err);
@@ -755,7 +768,7 @@ export default function SendScreen({ wallet, selectedToken: initialToken, userTo
         <div className="send-summary">
           <div className="summary-row">
             <span>Network Fee</span>
-            <span>~0.000005 {networkConfig.symbol}</span>
+            <span>~{getBaseFee(network)} {networkConfig.symbol}</span>
           </div>
           <div className="summary-row total">
             <span>Total</span>

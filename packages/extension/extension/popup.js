@@ -12215,7 +12215,90 @@ function parseTransaction(txData, walletAddress, signature, network = "") {
     return null;
   }
 }
-async function signAndSendExternalTransaction(transactionBase64, privateKey, rpcUrl) {
+async function modifyTransactionPriorityFee(messageBytes, priorityMicroLamports, rpcUrl) {
+  var _a2, _b2;
+  try {
+    const isVersioned = messageBytes[0] === 128;
+    let offset = isVersioned ? 1 : 0;
+    const numRequiredSigs = messageBytes[offset];
+    const numReadonlySigned = messageBytes[offset + 1];
+    const numReadonlyUnsigned = messageBytes[offset + 2];
+    offset += 3;
+    const numAccountKeys = messageBytes[offset];
+    offset += 1;
+    let computeBudgetIndex = -1;
+    const computeBudgetPubkey = decodeBase58(COMPUTE_BUDGET_PROGRAM_ID);
+    for (let i = 0; i < numAccountKeys; i++) {
+      const keyStart = offset + i * 32;
+      const key = messageBytes.slice(keyStart, keyStart + 32);
+      let match = true;
+      for (let j = 0; j < 32; j++) {
+        if (key[j] !== computeBudgetPubkey[j]) {
+          match = false;
+          break;
+        }
+      }
+      if (match) {
+        computeBudgetIndex = i;
+        break;
+      }
+    }
+    if (computeBudgetIndex === -1) {
+      logger$1.log("[Priority Fee] ComputeBudget program not found in transaction");
+      return messageBytes;
+    }
+    offset += numAccountKeys * 32;
+    const blockhashOffset = offset;
+    offset += 32;
+    const numInstructions = messageBytes[offset];
+    offset += 1;
+    for (let i = 0; i < numInstructions; i++) {
+      const programIndex = messageBytes[offset];
+      offset += 1;
+      const numAccounts = messageBytes[offset];
+      offset += 1;
+      offset += numAccounts;
+      const dataLen = messageBytes[offset];
+      offset += 1;
+      if (programIndex === computeBudgetIndex && dataLen === 9 && messageBytes[offset] === 3) {
+        logger$1.log("[Priority Fee] Found SetComputeUnitPrice at offset", offset);
+        const modifiedMessage = new Uint8Array(messageBytes);
+        const feeBytes = new BigUint64Array([BigInt(priorityMicroLamports)]);
+        const feeView = new Uint8Array(feeBytes.buffer);
+        for (let j = 0; j < 8; j++) {
+          modifiedMessage[offset + 1 + j] = feeView[j];
+        }
+        logger$1.log("[Priority Fee] Updated priority fee to", priorityMicroLamports, "microlamports");
+        const blockhashResponse = await fetch(rpcUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "getLatestBlockhash",
+            params: [{ commitment: "finalized" }]
+          })
+        });
+        const blockhashResult = await blockhashResponse.json();
+        if ((_b2 = (_a2 = blockhashResult.result) == null ? void 0 : _a2.value) == null ? void 0 : _b2.blockhash) {
+          const newBlockhash = decodeBase58(blockhashResult.result.value.blockhash);
+          for (let j = 0; j < 32; j++) {
+            modifiedMessage[blockhashOffset + j] = newBlockhash[j];
+          }
+          logger$1.log("[Priority Fee] Updated blockhash");
+        }
+        return modifiedMessage;
+      }
+      offset += dataLen;
+    }
+    logger$1.log("[Priority Fee] SetComputeUnitPrice instruction not found");
+    return messageBytes;
+  } catch (error) {
+    logger$1.error("[Priority Fee] Error modifying priority fee:", error);
+    return messageBytes;
+  }
+}
+async function signAndSendExternalTransaction(transactionBase64, privateKey, rpcUrl, priorityMicroLamports = 0) {
   try {
     logger$1.log("[Swap TX] Starting to sign external transaction");
     if (typeof privateKey === "string" && privateKey.includes(" ")) {
@@ -12259,8 +12342,12 @@ async function signAndSendExternalTransaction(transactionBase64, privateKey, rpc
     const numSignatures = txBytes[0];
     logger$1.log("[Swap TX] Number of signatures:", numSignatures);
     const messageOffset = 1 + numSignatures * 64;
-    const message = txBytes.slice(messageOffset);
+    let message = txBytes.slice(messageOffset);
     logger$1.log("[Swap TX] Message length:", message.length, "bytes");
+    if (priorityMicroLamports > 0) {
+      logger$1.log("[Swap TX] Modifying priority fee to", priorityMicroLamports, "microlamports");
+      message = await modifyTransactionPriorityFee(message, priorityMicroLamports, rpcUrl);
+    }
     const signature = await sign$1(message, secretKey);
     logger$1.log("[Swap TX] Signature generated");
     const signedTx = new Uint8Array(1 + 64 + message.length);
@@ -12297,7 +12384,7 @@ async function signAndSendExternalTransaction(transactionBase64, privateKey, rpc
     throw error;
   }
 }
-async function signAndSendExternalTransactionHardware(transactionBase64, hardwareWallet2, rpcUrl, derivationPath = null) {
+async function signAndSendExternalTransactionHardware(transactionBase64, hardwareWallet2, rpcUrl, derivationPath = null, priorityMicroLamports = 0) {
   try {
     logger$1.log("[Swap TX HW] Starting to sign external transaction with hardware wallet");
     logger$1.log("[Swap TX HW] Using derivation path:", derivationPath);
@@ -12323,8 +12410,12 @@ async function signAndSendExternalTransactionHardware(transactionBase64, hardwar
     const numSignatures = txBytes[0];
     logger$1.log("[Swap TX HW] Number of signatures:", numSignatures);
     const messageOffset = 1 + numSignatures * 64;
-    const message = txBytes.slice(messageOffset);
+    let message = txBytes.slice(messageOffset);
     logger$1.log("[Swap TX HW] Message length:", message.length, "bytes");
+    if (priorityMicroLamports > 0) {
+      logger$1.log("[Swap TX HW] Modifying priority fee to", priorityMicroLamports, "microlamports");
+      message = await modifyTransactionPriorityFee(message, priorityMicroLamports, rpcUrl);
+    }
     const signature = await hardwareWallet2.signTransaction(message, derivationPath);
     logger$1.log("[Swap TX HW] Signature generated via hardware wallet");
     const signedTx = new Uint8Array(1 + 64 + message.length);
@@ -13399,10 +13490,31 @@ function getTxExplorerUrl(network, txSignature) {
 }
 const XDEX_API$1 = "https://api.xdex.xyz/api/xendex";
 const JUPITER_TOKEN_API = "https://lite-api.jup.ag/tokens/v2";
+const tokenMetadataCache = /* @__PURE__ */ new Map();
+const CACHE_TTL_SUCCESS = 30 * 60 * 1e3;
+const CACHE_TTL_FAILED = 5 * 60 * 1e3;
+function getCachedMetadata(mintAddress) {
+  const cached = tokenMetadataCache.get(mintAddress);
+  if (!cached) return null;
+  const age = Date.now() - cached.timestamp;
+  const ttl = cached.failed ? CACHE_TTL_FAILED : CACHE_TTL_SUCCESS;
+  if (age > ttl) {
+    tokenMetadataCache.delete(mintAddress);
+    return null;
+  }
+  return cached;
+}
+function setCachedMetadata(mintAddress, data, failed = false) {
+  tokenMetadataCache.set(mintAddress, {
+    data,
+    failed,
+    timestamp: Date.now()
+  });
+}
 const XDEX_LOGOS = {
   X1: "/icons/48-x1.png",
   WXNT: "/icons/48-x1.png",
-  SOL: "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png",
+  SOL: "/icons/48-sol.png",
   USDC: "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png",
   USDC_X: "/icons/48-usdcx.png"
 };
@@ -13571,7 +13683,11 @@ async function getQuote(tokenIn, tokenOut, amountIn, network, tokenInData = null
         data,
         requestParams: Object.fromEntries(params)
       });
-      const errorMsg = data.error || data.message || "";
+      let errorMsg = data.error || data.message || "";
+      errorMsg = errorMsg.replace(/<[^>]*>/g, "").trim();
+      if (response.status === 429 || errorMsg.includes("429") || errorMsg.includes("Too Many Requests")) {
+        throw new Error("Too many requests. Please wait a moment and try again.");
+      }
       if (errorMsg.includes("Pool not found") || errorMsg.includes("No pool")) {
         throw new Error("No liquidity pool exists for this pair");
       }
@@ -13634,7 +13750,11 @@ async function prepareSwap(walletAddress, tokenIn, tokenOut, amountIn, network, 
   if (!response.ok) {
     logger$1.error("[XDEX] Prepare failed:", response.status);
     logger$1.error("[XDEX] Error response:", JSON.stringify(data));
-    const errorMsg = data.error || data.message || data.detail || JSON.stringify(data) || `Swap prepare failed: ${response.status}`;
+    let errorMsg = data.error || data.message || data.detail || `Swap prepare failed: ${response.status}`;
+    errorMsg = errorMsg.replace(/<[^>]*>/g, "").trim();
+    if (errorMsg.includes("429") || errorMsg.includes("Too Many Requests")) {
+      throw new Error("Too many requests. Please wait 30 seconds and try again.");
+    }
     throw new Error(errorMsg);
   }
   logger$1.log("[XDEX] Prepare response received");
@@ -13660,7 +13780,7 @@ let jupiterTokensCache = null;
 let jupiterTokensCacheTime = 0;
 const CACHE_DURATION = 5 * 60 * 1e3;
 const SOLANA_TOKEN_LIST = [
-  { symbol: "SOL", name: "Solana", address: "So11111111111111111111111111111111111111112", decimals: 9, logoURI: "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png" },
+  { symbol: "SOL", name: "Solana", address: "So11111111111111111111111111111111111111112", decimals: 9, logoURI: "/icons/48-sol.png" },
   { symbol: "USDC", name: "USD Coin", address: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", decimals: 6, logoURI: "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png" },
   { symbol: "USDT", name: "Tether USD", address: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", decimals: 6, logoURI: "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.svg" },
   { symbol: "JUP", name: "Jupiter", address: "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN", decimals: 6, logoURI: "https://static.jup.ag/jup/icon.png" },
@@ -13812,14 +13932,23 @@ async function searchTokens(query, network) {
   }));
 }
 async function fetchTokenMetadata(rpcUrl, mintAddress, network = null) {
-  var _a2, _b2, _c, _d, _e, _f;
+  var _a2, _b2, _c, _d, _e, _f, _g;
   try {
     logger$1.log("[XDEX] Fetching token metadata for:", mintAddress, "on", network || "unknown network");
+    const cached = getCachedMetadata(mintAddress);
+    if (cached) {
+      if (cached.failed) {
+        logger$1.log("[XDEX] Cache hit (failed):", mintAddress, "- skipping API call");
+        return null;
+      }
+      logger$1.log("[XDEX] Cache hit:", mintAddress, (_a2 = cached.data) == null ? void 0 : _a2.symbol);
+      return cached.data;
+    }
     if (network) {
       const knownToken = getKnownToken(network, mintAddress);
       if (knownToken) {
         logger$1.log("[XDEX] Found in known tokens:", knownToken.symbol);
-        return {
+        const result2 = {
           mint: mintAddress,
           symbol: knownToken.symbol,
           name: knownToken.name,
@@ -13828,6 +13957,8 @@ async function fetchTokenMetadata(rpcUrl, mintAddress, network = null) {
           isToken2022: knownToken.isToken2022 || false,
           isCustom: true
         };
+        setCachedMetadata(mintAddress, result2);
+        return result2;
       }
     }
     if (network && isSolanaNetwork(network)) {
@@ -13839,7 +13970,7 @@ async function fetchTokenMetadata(rpcUrl, mintAddress, network = null) {
           const token = tokens.find((t2) => (t2.id || t2.address) === mintAddress);
           if (token) {
             logger$1.log("[XDEX] Found token in Jupiter:", token.symbol);
-            return {
+            const result2 = {
               mint: mintAddress,
               symbol: token.symbol,
               name: token.name,
@@ -13848,6 +13979,8 @@ async function fetchTokenMetadata(rpcUrl, mintAddress, network = null) {
               isToken2022: false,
               isCustom: true
             };
+            setCachedMetadata(mintAddress, result2);
+            return result2;
           }
         }
       } catch (e) {
@@ -13866,11 +13999,11 @@ async function fetchTokenMetadata(rpcUrl, mintAddress, network = null) {
       })
     });
     const accountData = await accountResponse.json();
-    logger$1.log("[XDEX] RPC response:", accountData.result ? "found" : "not found", ((_a2 = accountData.error) == null ? void 0 : _a2.message) || "");
-    if (!((_b2 = accountData.result) == null ? void 0 : _b2.value)) {
-      throw new Error(((_c = accountData.error) == null ? void 0 : _c.message) || "Token not found on this network");
+    logger$1.log("[XDEX] RPC response:", accountData.result ? "found" : "not found", ((_b2 = accountData.error) == null ? void 0 : _b2.message) || "");
+    if (!((_c = accountData.result) == null ? void 0 : _c.value)) {
+      throw new Error(((_d = accountData.error) == null ? void 0 : _d.message) || "Token not found on this network");
     }
-    const parsedData = (_d = accountData.result.value.data) == null ? void 0 : _d.parsed;
+    const parsedData = (_e = accountData.result.value.data) == null ? void 0 : _e.parsed;
     if (!parsedData || parsedData.type !== "mint") {
       throw new Error("Not a valid token mint");
     }
@@ -13935,9 +14068,9 @@ async function fetchTokenMetadata(rpcUrl, mintAddress, network = null) {
         });
         const metaAccounts = await metaAccountResponse.json();
         logger$1.log("[XDEX] Metaplex accounts:", metaAccounts);
-        if (((_e = metaAccounts.result) == null ? void 0 : _e.length) > 0) {
+        if (((_f = metaAccounts.result) == null ? void 0 : _f.length) > 0) {
           const metaAccount = metaAccounts.result[0];
-          const metaData = (_f = metaAccount.account) == null ? void 0 : _f.data;
+          const metaData = (_g = metaAccount.account) == null ? void 0 : _g.data;
           if (metaData) {
             logger$1.log("[XDEX] Found Metaplex metadata account");
           }
@@ -14017,7 +14150,7 @@ async function fetchTokenMetadata(rpcUrl, mintAddress, network = null) {
       }
     }
     logger$1.log("[XDEX] Token metadata result:", { symbol, name, decimals: mintInfo.decimals, isToken2022, logoURI });
-    return {
+    const result = {
       mint: mintAddress,
       symbol,
       name,
@@ -14027,8 +14160,11 @@ async function fetchTokenMetadata(rpcUrl, mintAddress, network = null) {
       logoURI,
       isCustom: true
     };
+    setCachedMetadata(mintAddress, result);
+    return result;
   } catch (error) {
     logger$1.error("[XDEX] Failed to fetch token metadata:", error);
+    setCachedMetadata(mintAddress, null, true);
     throw error;
   }
 }
@@ -15282,7 +15418,7 @@ function WelcomeScreen({ onCreateWallet, onImportWallet, onHardwareWallet, onBac
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "welcome-footer", children: "Powered by X1 Blockchain" })
   ] });
 }
-function CreateWallet({ onComplete, onBack, passwordProtection: propPasswordProtection }) {
+function CreateWallet({ onComplete, onBack, passwordProtection: propPasswordProtection, sessionPassword }) {
   const [step, setStep] = reactExports.useState("choose");
   const [seedLength, setSeedLength] = reactExports.useState(12);
   const [mnemonic, setMnemonic] = reactExports.useState("");
@@ -15504,10 +15640,25 @@ function CreateWallet({ onComplete, onBack, passwordProtection: propPasswordProt
     }
     return null;
   };
-  const handleNameContinue = () => {
+  const handleNameContinue = async () => {
     if (!passwordRequired) {
       onComplete(mnemonic, walletName.trim() || "My Wallet", null);
       return;
+    }
+    if (sessionPassword) {
+      try {
+        const { checkPassword } = await __vitePreload(async () => {
+          const { checkPassword: checkPassword2 } = await import("./wallet.js");
+          return { checkPassword: checkPassword2 };
+        }, true ? [] : void 0);
+        const isValid = await checkPassword(sessionPassword);
+        if (isValid) {
+          onComplete(mnemonic, walletName.trim() || "My Wallet", sessionPassword);
+          return;
+        }
+      } catch (e) {
+        logger$1.warn("[CreateWallet] Session password verification failed:", e);
+      }
     }
     if (existingPasswordDetected) {
       setStep("verify-password");
@@ -15993,7 +16144,7 @@ function CreateWallet({ onComplete, onBack, passwordProtection: propPasswordProt
   }
   return null;
 }
-function ImportWallet({ onComplete, onBack, onCompletePrivateKey }) {
+function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPassword }) {
   const [importType, setImportType] = reactExports.useState("phrase");
   const [seedLength, setSeedLength] = reactExports.useState(12);
   const [words, setWords] = reactExports.useState(Array(12).fill(""));
@@ -16072,15 +16223,24 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey }) {
     }
   };
   const handleKeyDown = (e, index) => {
-    var _a2;
+    var _a2, _b2;
     if (e.key === "Tab" || e.key === "Enter") {
+      e.preventDefault();
       if (suggestions.length > 0) {
-        e.preventDefault();
         selectSuggestion(suggestions[0]);
+      } else if (e.key === "Enter") {
+        if (index === seedLength - 1) {
+          const filledWords = words.filter((w2) => w2.trim());
+          if (filledWords.length === seedLength) {
+            handleContinue();
+          }
+        } else {
+          (_a2 = inputRefs.current[index + 1]) == null ? void 0 : _a2.focus();
+        }
       }
     } else if (e.key === " " && words[index]) {
       e.preventDefault();
-      if (index < seedLength - 1) (_a2 = inputRefs.current[index + 1]) == null ? void 0 : _a2.focus();
+      if (index < seedLength - 1) (_b2 = inputRefs.current[index + 1]) == null ? void 0 : _b2.focus();
     }
   };
   const handlePaste = async () => {
@@ -16140,10 +16300,25 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey }) {
     }
     return null;
   };
-  const handleNameContinue = () => {
+  const handleNameContinue = async () => {
     if (!passwordRequired) {
       onComplete(words.join(" "), walletName || "Imported Wallet", null);
       return;
+    }
+    if (sessionPassword) {
+      try {
+        const { checkPassword } = await __vitePreload(async () => {
+          const { checkPassword: checkPassword2 } = await import("./wallet.js");
+          return { checkPassword: checkPassword2 };
+        }, true ? [] : void 0);
+        const isValid = await checkPassword(sessionPassword);
+        if (isValid) {
+          onComplete(words.join(" "), walletName || "Imported Wallet", sessionPassword);
+          return;
+        }
+      } catch (e) {
+        logger$1.warn("[ImportWallet] Session password verification failed:", e);
+      }
     }
     if (existingPasswordDetected) {
       setStep("verify-password");
@@ -16262,6 +16437,21 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey }) {
     if (!passwordRequired) {
       await completePrivateKeyImport(null);
       return;
+    }
+    if (sessionPassword) {
+      try {
+        const { checkPassword } = await __vitePreload(async () => {
+          const { checkPassword: checkPassword2 } = await import("./wallet.js");
+          return { checkPassword: checkPassword2 };
+        }, true ? [] : void 0);
+        const isValid = await checkPassword(sessionPassword);
+        if (isValid) {
+          await completePrivateKeyImport(sessionPassword);
+          return;
+        }
+      } catch (e) {
+        logger$1.warn("[ImportWallet] Session password verification failed:", e);
+      }
     }
     if (existingPasswordDetected) {
       setStep("verify-password-pk");
@@ -16387,21 +16577,21 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey }) {
   if (step === "name") {
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen no-nav", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "page-header", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-left", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", onClick: () => setStep("import"), children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-left", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", type: "button", onClick: () => setStep("import"), children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }) }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "header-title", children: "Name Your Wallet" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-right" })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen-content seed-container", style: { paddingTop: 0 }, children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "seed-subtitle", children: "Give your imported wallet a name" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "form-group", style: { marginTop: 24 }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "text", className: "form-input", value: walletName, onChange: (e) => setWalletName(e.target.value), placeholder: "My Imported Wallet", autoFocus: true }) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", onClick: handleNameContinue, style: { marginTop: 24 }, children: "Continue" })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "form-group", style: { marginTop: 24 }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "text", className: "form-input", value: walletName, onChange: (e) => setWalletName(e.target.value), onKeyDown: (e) => e.key === "Enter" && handleNameContinue(), placeholder: "My Imported Wallet", autoFocus: true }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", type: "button", onClick: handleNameContinue, style: { marginTop: 24 }, children: "Continue" })
       ] })
     ] });
   }
   if (step === "password") {
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen no-nav", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "page-header", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-left", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", onClick: () => setStep("name"), children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-left", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", type: "button", onClick: () => setStep("name"), children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }) }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "header-title", children: "Secure Wallet" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-right" })
       ] }),
@@ -16467,32 +16657,58 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey }) {
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "form-group", style: { marginBottom: 16 }, children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("label", { children: "Confirm Password" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "input",
-            {
-              type: showPassword ? "text" : "password",
-              className: "form-input",
-              value: confirmPassword,
-              onChange: (e) => {
-                setConfirmPassword(e.target.value);
-                setError("");
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { position: "relative" }, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "input",
+              {
+                type: showPassword ? "text" : "password",
+                className: "form-input",
+                value: confirmPassword,
+                onChange: (e) => {
+                  setConfirmPassword(e.target.value);
+                  setError("");
+                }
               }
-            }
-          )
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                type: "button",
+                onClick: () => setShowPassword(!showPassword),
+                style: {
+                  position: "absolute",
+                  right: 12,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  padding: 4
+                },
+                children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "var(--text-secondary)", strokeWidth: "2", children: showPassword ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "1", y1: "1", x2: "23", y2: "23" })
+                ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "3" })
+                ] }) })
+              }
+            )
+          ] })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "info-box", style: { marginBottom: 16 }, children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "🔒" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Min 8 characters with at least one letter and one number." })
         ] }),
         error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", style: { marginBottom: 16 }, children: error }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", onClick: handleComplete, children: "Import Wallet" })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", type: "button", onClick: handleComplete, children: "Import Wallet" })
       ] })
     ] });
   }
   if (step === "verify-password") {
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen no-nav", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "page-header", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-left", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", onClick: () => setStep("name"), children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-left", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", type: "button", onClick: () => setStep("name"), children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }) }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "header-title", children: "Verify Password" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-right" })
       ] }),
@@ -16562,6 +16778,7 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey }) {
           "button",
           {
             className: "btn-primary",
+            type: "button",
             onClick: handleVerifyAndComplete,
             disabled: verifying,
             children: verifying ? "Verifying..." : "Import Wallet"
@@ -16573,22 +16790,22 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey }) {
   if (step === "name-pk") {
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen no-nav", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "page-header", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-left", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", onClick: () => setStep("import"), children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-left", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", type: "button", onClick: () => setStep("import"), children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }) }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "header-title", children: "Name Your Wallet" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-right" })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen-content seed-container", style: { paddingTop: 0 }, children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "seed-subtitle", children: "Give your imported wallet a name" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "form-group", style: { marginTop: 24 }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "text", className: "form-input", value: walletName, onChange: (e) => setWalletName(e.target.value), placeholder: "My Imported Wallet", autoFocus: true }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "form-group", style: { marginTop: 24 }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "text", className: "form-input", value: walletName, onChange: (e) => setWalletName(e.target.value), onKeyDown: (e) => e.key === "Enter" && handleNamePkContinue(), placeholder: "My Imported Wallet", autoFocus: true }) }),
         error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", children: error }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", onClick: handleNamePkContinue, style: { marginTop: 24 }, children: "Continue" })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", type: "button", onClick: handleNamePkContinue, style: { marginTop: 24 }, children: "Continue" })
       ] })
     ] });
   }
   if (step === "password-pk") {
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen no-nav", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "page-header", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-left", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", onClick: () => setStep("name-pk"), children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-left", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", type: "button", onClick: () => setStep("name-pk"), children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }) }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "header-title", children: "Secure Wallet" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-right" })
       ] }),
@@ -16654,32 +16871,58 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey }) {
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "form-group", style: { marginBottom: 16 }, children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("label", { children: "Confirm Password" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "input",
-            {
-              type: showPassword ? "text" : "password",
-              className: "form-input",
-              value: confirmPassword,
-              onChange: (e) => {
-                setConfirmPassword(e.target.value);
-                setError("");
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { position: "relative" }, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "input",
+              {
+                type: showPassword ? "text" : "password",
+                className: "form-input",
+                value: confirmPassword,
+                onChange: (e) => {
+                  setConfirmPassword(e.target.value);
+                  setError("");
+                }
               }
-            }
-          )
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                type: "button",
+                onClick: () => setShowPassword(!showPassword),
+                style: {
+                  position: "absolute",
+                  right: 12,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  padding: 4
+                },
+                children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "var(--text-secondary)", strokeWidth: "2", children: showPassword ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "1", y1: "1", x2: "23", y2: "23" })
+                ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "3" })
+                ] }) })
+              }
+            )
+          ] })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "info-box", style: { marginBottom: 16 }, children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "🔒" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Min 8 characters with at least one letter and one number." })
         ] }),
         error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", style: { marginBottom: 16 }, children: error }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", onClick: handleCompletePrivateKey, children: "Import Wallet" })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", type: "button", onClick: handleCompletePrivateKey, children: "Import Wallet" })
       ] })
     ] });
   }
   if (step === "verify-password-pk") {
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen no-nav", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "page-header", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-left", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", onClick: () => setStep("name-pk"), children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-left", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", type: "button", onClick: () => setStep("name-pk"), children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }) }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "header-title", children: "Verify Password" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-right" })
       ] }),
@@ -16749,6 +16992,7 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey }) {
           "button",
           {
             className: "btn-primary",
+            type: "button",
             onClick: handleVerifyAndCompletePk,
             disabled: verifying,
             children: verifying ? "Verifying..." : "Import Wallet"
@@ -16759,7 +17003,7 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey }) {
   }
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen no-nav", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "page-header", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-left", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", onClick: onBack, children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-left", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", type: "button", onClick: onBack, children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }) }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "header-title", children: "Import Wallet" }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-right" })
     ] }),
@@ -16769,6 +17013,7 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey }) {
         /* @__PURE__ */ jsxRuntimeExports.jsxs(
           "button",
           {
+            type: "button",
             className: `import-type-btn ${importType === "phrase" ? "active" : ""}`,
             onClick: () => {
               setImportType("phrase");
@@ -16787,6 +17032,7 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey }) {
         /* @__PURE__ */ jsxRuntimeExports.jsxs(
           "button",
           {
+            type: "button",
             className: `import-type-btn ${importType === "privatekey" ? "active" : ""}`,
             onClick: () => {
               setImportType("privatekey");
@@ -16801,10 +17047,10 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey }) {
       ] }),
       importType === "phrase" && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "seed-length-selector", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: `seed-length-btn ${seedLength === 12 ? "active" : ""}`, onClick: () => handleLengthChange(12), children: "12 Words" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: `seed-length-btn ${seedLength === 24 ? "active" : ""}`, onClick: () => handleLengthChange(24), children: "24 Words" })
+          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: `seed-length-btn ${seedLength === 12 ? "active" : ""}`, onClick: () => handleLengthChange(12), children: "12 Words" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: `seed-length-btn ${seedLength === 24 ? "active" : ""}`, onClick: () => handleLengthChange(24), children: "24 Words" })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "paste-btn", onClick: handlePaste, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", className: "paste-btn", onClick: handlePaste, children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "8", y: "2", width: "8", height: "4", rx: "1", ry: "1" })
@@ -16835,7 +17081,7 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey }) {
         ] }, i)) }),
         suggestions.length > 0 && activeInput >= 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "suggestions-dropdown", children: suggestions.map((word, i) => /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `suggestion ${i === 0 ? "first" : ""}`, onClick: () => selectSuggestion(word), children: word }, word)) }),
         error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", children: error }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", onClick: handleContinue, children: "Continue" })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", type: "button", onClick: handleContinue, children: "Continue" })
       ] }),
       importType === "privatekey" && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "warning-box", style: { marginTop: 16 }, children: [
@@ -16863,7 +17109,7 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey }) {
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Accepts base58 format or byte array [1,2,3,...] format." })
         ] }),
         error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", style: { marginTop: 16 }, children: error }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", onClick: handlePrivateKeyImport, style: { marginTop: 20 }, children: "Continue" })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", type: "button", onClick: handlePrivateKeyImport, style: { marginTop: 20 }, children: "Continue" })
       ] })
     ] })
   ] });
@@ -19034,7 +19280,14 @@ class HardwareWalletService {
       await this.openApp();
     }
     await this.preflightCheck();
-    const derivePath2 = path || this.derivationPath;
+    let derivePath2 = path || this.derivationPath;
+    if (derivePath2 && derivePath2.startsWith("m/")) {
+      derivePath2 = derivePath2.slice(2);
+    }
+    if (!derivePath2 || derivePath2 === "null" || derivePath2 === "undefined") {
+      derivePath2 = "44'/501'/0'/0'";
+      logger.log("[Hardware] Using default derivation path as provided path was invalid");
+    }
     logger.log("[Hardware] signTransaction using derivation path:", derivePath2, "(passed:", path, ", default:", this.derivationPath, ")");
     try {
       const txBuffer = buffer.Buffer.isBuffer(transaction2) ? transaction2 : buffer.Buffer.from(transaction2);
@@ -19042,6 +19295,7 @@ class HardwareWalletService {
       return result.signature;
     } catch (error) {
       logger.error("Sign transaction error:", error);
+      logger.error("[Hardware] Derivation path that failed:", derivePath2);
       if (error.statusCode === 27013) {
         throw new Error("Transaction rejected by user");
       }
@@ -19066,7 +19320,13 @@ class HardwareWalletService {
       await this.openApp();
     }
     await this.preflightCheck();
-    const derivePath2 = path || this.derivationPath;
+    let derivePath2 = path || this.derivationPath;
+    if (derivePath2 && derivePath2.startsWith("m/")) {
+      derivePath2 = derivePath2.slice(2);
+    }
+    if (!derivePath2 || derivePath2 === "null" || derivePath2 === "undefined") {
+      derivePath2 = "44'/501'/0'/0'";
+    }
     const msgBuffer = buffer.Buffer.isBuffer(message) ? message : message instanceof Uint8Array ? buffer.Buffer.from(message) : buffer.Buffer.from(message, "utf8");
     try {
       const result = await this.solanaApp.signOffchainMessage(derivePath2, msgBuffer);
@@ -19377,6 +19637,7 @@ function HardwareWallet({ onComplete, onBack, isFirstWallet = false, existingWal
   const [password, setPassword] = reactExports.useState("");
   const [confirmPassword, setConfirmPassword] = reactExports.useState("");
   const [passwordError, setPasswordError] = reactExports.useState("");
+  const [showPassword, setShowPassword] = reactExports.useState(false);
   const getWallet = () => getHardwareWallet(deviceType);
   const existingAddresses = existingWallets.flatMap(
     (w2) => {
@@ -20265,31 +20526,83 @@ function HardwareWallet({ onComplete, onBack, isFirstWallet = false, existingWal
       passwordError && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", style: { marginTop: 16 }, children: passwordError }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "form-group", style: { marginTop: 24 }, children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("label", { className: "form-label", children: "Password" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "input",
-          {
-            type: "password",
-            className: "form-input",
-            value: password,
-            onChange: (e) => setPassword(e.target.value),
-            placeholder: "Enter password (min 8 characters)",
-            autoFocus: true
-          }
-        )
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { position: "relative" }, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              type: showPassword ? "text" : "password",
+              className: "form-input",
+              value: password,
+              onChange: (e) => setPassword(e.target.value),
+              placeholder: "Enter password (min 8 characters)",
+              autoFocus: true
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              type: "button",
+              onClick: () => setShowPassword(!showPassword),
+              style: {
+                position: "absolute",
+                right: 12,
+                top: "50%",
+                transform: "translateY(-50%)",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                padding: 4
+              },
+              children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "var(--text-secondary)", strokeWidth: "2", children: showPassword ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "1", y1: "1", x2: "23", y2: "23" })
+              ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "3" })
+              ] }) })
+            }
+          )
+        ] })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "form-group", style: { marginTop: 16 }, children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("label", { className: "form-label", children: "Confirm Password" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "input",
-          {
-            type: "password",
-            className: "form-input",
-            value: confirmPassword,
-            onChange: (e) => setConfirmPassword(e.target.value),
-            placeholder: "Confirm password",
-            onKeyDown: (e) => e.key === "Enter" && handlePasswordSubmit()
-          }
-        )
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { position: "relative" }, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              type: showPassword ? "text" : "password",
+              className: "form-input",
+              value: confirmPassword,
+              onChange: (e) => setConfirmPassword(e.target.value),
+              placeholder: "Confirm password",
+              onKeyDown: (e) => e.key === "Enter" && handlePasswordSubmit()
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              type: "button",
+              onClick: () => setShowPassword(!showPassword),
+              style: {
+                position: "absolute",
+                right: 12,
+                top: "50%",
+                transform: "translateY(-50%)",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                padding: 4
+              },
+              children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "var(--text-secondary)", strokeWidth: "2", children: showPassword ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "1", y1: "1", x2: "23", y2: "23" })
+              ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "3" })
+              ] }) })
+            }
+          )
+        ] })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { fontSize: 12, color: "var(--text-muted)", marginTop: 16 }, children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "Password requirements:" }),
@@ -21721,7 +22034,7 @@ function DefiTab({ wallet, tokens, isSolana, onStake }) {
           /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M8 12h8M12 8v8" })
         ] }) }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "defi-item-info", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "defi-item-title", children: lp.symbol || "LP Token" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "defi-item-title", children: lp.name || lp.symbol || "LP Token" }),
           /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "defi-item-desc", children: [
             parseFloat(lp.balance || lp.uiAmount || 0).toFixed(6),
             " tokens"
@@ -21732,9 +22045,10 @@ function DefiTab({ wallet, tokens, isSolana, onStake }) {
     ] })
   ] });
 }
-const SOLANA_LOGO_URL$3 = "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png";
+const SOLANA_LOGO_URL$3 = "/icons/48-sol.png";
 function NetworkLogo$2({ network, size = 40 }) {
-  const logoSize = Math.round(size * 0.8);
+  const x1LogoSize = Math.round(size * 0.8);
+  const solanaLogoSize = Math.round(size * 0.95);
   if (network == null ? void 0 : network.includes("Solana")) {
     return /* @__PURE__ */ jsxRuntimeExports.jsx(
       "div",
@@ -21759,8 +22073,8 @@ function NetworkLogo$2({ network, size = 40 }) {
             src: SOLANA_LOGO_URL$3,
             alt: "Solana",
             style: {
-              width: logoSize,
-              height: logoSize,
+              width: solanaLogoSize,
+              height: solanaLogoSize,
               objectFit: "contain",
               display: "block"
             }
@@ -21769,7 +22083,42 @@ function NetworkLogo$2({ network, size = 40 }) {
       }
     );
   }
-  return /* @__PURE__ */ jsxRuntimeExports.jsx(X1Logo, { size });
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "div",
+    {
+      className: "network-logo-container",
+      style: {
+        width: size,
+        height: size,
+        minWidth: size,
+        minHeight: size,
+        borderRadius: "50%",
+        background: "#000",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+        overflow: "hidden"
+      },
+      children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "img",
+        {
+          src: "/icons/48-x1.png",
+          alt: "X1",
+          style: {
+            width: x1LogoSize,
+            height: x1LogoSize,
+            objectFit: "contain",
+            display: "block"
+          },
+          onError: (e) => {
+            e.target.style.display = "none";
+            e.target.parentElement.innerHTML = '<span style="color: #0274fb; font-weight: bold; font-size: ' + Math.round(size * 0.4) + 'px;">X1</span>';
+          }
+        }
+      )
+    }
+  );
 }
 function NetworkPanel({ network, networks, onSelect, onClose, onCustomRpc }) {
   const mainnets = Object.keys(networks).filter((n2) => !n2.includes("Testnet") && !n2.includes("Devnet"));
@@ -25582,16 +25931,32 @@ Address: ${publicKeyBase58.slice(0, 20)}...`);
     ] })
   ] });
 }
-const SOLANA_LOGO_URL$2 = "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png";
-const PRIORITY_OPTIONS$2 = [
-  { id: "auto", name: "Auto", fee: 0, description: "Standard speed" },
-  { id: "fast", name: "Fast", fee: 5e-6, description: "Higher priority" },
-  { id: "turbo", name: "Turbo", fee: 5e-5, description: "Very high priority" },
-  { id: "degen", name: "Degen", fee: 1e-3, description: "Maximum priority" },
-  { id: "custom", name: "Custom", fee: 0, description: "Set your own fee" }
-];
+const SOLANA_LOGO_URL$2 = "/icons/48-sol.png";
+function getPriorityOptions$2(network) {
+  const isX1 = network == null ? void 0 : network.includes("X1");
+  if (isX1) {
+    return [
+      { id: "auto", name: "Auto", fee: 0, description: "Standard speed" },
+      { id: "fast", name: "Fast", fee: 1e-3, description: "Higher priority" },
+      { id: "turbo", name: "Turbo", fee: 5e-3, description: "Very high priority" },
+      { id: "degen", name: "Degen", fee: 0.01, description: "Maximum priority" },
+      { id: "custom", name: "Custom", fee: 0, description: "Set your own fee" }
+    ];
+  }
+  return [
+    { id: "auto", name: "Auto", fee: 0, description: "Standard speed" },
+    { id: "fast", name: "Fast", fee: 5e-6, description: "Higher priority" },
+    { id: "turbo", name: "Turbo", fee: 5e-5, description: "Very high priority" },
+    { id: "degen", name: "Degen", fee: 1e-3, description: "Maximum priority" },
+    { id: "custom", name: "Custom", fee: 0, description: "Set your own fee" }
+  ];
+}
+function getBaseFee$2(network) {
+  const isX1 = network == null ? void 0 : network.includes("X1");
+  return isX1 ? 2e-3 : 5e-6;
+}
 function NetworkLogo$1({ network, size = 40 }) {
-  const logoSize = Math.round(size * 0.8);
+  const solanaLogoSize = Math.round(size * 0.95);
   if (network == null ? void 0 : network.includes("Solana")) {
     return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: {
       width: size,
@@ -25611,8 +25976,8 @@ function NetworkLogo$1({ network, size = 40 }) {
         src: SOLANA_LOGO_URL$2,
         alt: "Solana",
         style: {
-          width: logoSize,
-          height: logoSize,
+          width: solanaLogoSize,
+          height: solanaLogoSize,
           objectFit: "contain",
           display: "block"
         }
@@ -25671,7 +26036,7 @@ function SendFlow({ wallet, selectedToken: initialToken, userTokens = [], onBack
   const isTokenSend = currentToken && currentToken.mint;
   const displaySymbol = isTokenSend ? currentToken.symbol : networkConfig.symbol;
   const displayBalance = isTokenSend ? parseFloat(currentToken.balance || currentToken.uiAmount) || 0 : (wallet == null ? void 0 : wallet.balance) || 0;
-  isTokenSend ? currentToken.decimals || 9 : networkConfig.decimals;
+  const displayDecimals = isTokenSend ? currentToken.decimals || 9 : networkConfig.decimals;
   isTokenSend ? currentToken.name : network.includes("Solana") ? "Solana" : "X1 Native Token";
   reactExports.useEffect(() => {
     const loadData = async () => {
@@ -25842,8 +26207,11 @@ function SendFlow({ wallet, selectedToken: initialToken, userTokens = [], onBack
       setError("Please enter a valid amount");
       return;
     }
-    if (sendAmount > displayBalance) {
-      setError("Insufficient balance");
+    const multiplier = Math.pow(10, displayDecimals);
+    const requiredAmount = Math.round(sendAmount * multiplier);
+    const availableAmount = Math.round(displayBalance * multiplier);
+    if (requiredAmount > availableAmount) {
+      setError(`Insufficient balance. Required: ${amount} ${displaySymbol}, Available: ${displayBalance} ${displaySymbol}`);
       return;
     }
     goToStep(STEPS.CONFIRM, "left");
@@ -25910,7 +26278,7 @@ function SendFlow({ wallet, selectedToken: initialToken, userTokens = [], onBack
   const sendNative = async (sendAmount) => {
     var _a3, _b3, _c2, _d2, _e;
     const lamports = Math.floor(sendAmount * Math.pow(10, networkConfig.decimals));
-    const priorityFee = priority === "custom" ? parseFloat(customFee) || 0 : ((_a3 = PRIORITY_OPTIONS$2.find((p2) => p2.id === priority)) == null ? void 0 : _a3.fee) || 0;
+    const priorityFee = priority === "custom" ? parseFloat(customFee) || 0 : ((_a3 = getPriorityOptions$2(network).find((p2) => p2.id === priority)) == null ? void 0 : _a3.fee) || 0;
     const priorityMicroLamports = Math.floor(priorityFee * 1e9);
     const skipSimulation = (() => {
       try {
@@ -26436,7 +26804,7 @@ function SendFlow({ wallet, selectedToken: initialToken, userTokens = [], onBack
               /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "send-summary-label", children: "Network Fee" }),
               /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "send-summary-value", children: [
                 "~",
-                (5e-6 + (priority === "custom" ? parseFloat(customFee) || 0 : ((_b3 = PRIORITY_OPTIONS$2.find((p2) => p2.id === priority)) == null ? void 0 : _b3.fee) || 0)).toFixed(6),
+                (getBaseFee$2(network) + (priority === "custom" ? parseFloat(customFee) || 0 : ((_b3 = getPriorityOptions$2(network).find((p2) => p2.id === priority)) == null ? void 0 : _b3.fee) || 0)).toFixed(6),
                 " ",
                 networkConfig.symbol
               ] })
@@ -26445,7 +26813,7 @@ function SendFlow({ wallet, selectedToken: initialToken, userTokens = [], onBack
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-priority-section", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "send-priority-label", children: "Transaction Priority" }),
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-priority-selector", children: [
-              PRIORITY_OPTIONS$2.filter((opt) => opt.id !== "custom").map((opt) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+              getPriorityOptions$2(network).filter((opt) => opt.id !== "custom").map((opt) => /* @__PURE__ */ jsxRuntimeExports.jsx(
                 "button",
                 {
                   className: `send-priority-btn ${priority === opt.id ? "active" : ""}`,
@@ -26578,11 +26946,11 @@ function SendFlow({ wallet, selectedToken: initialToken, userTokens = [], onBack
     )
   ] });
 }
-const SOLANA_LOGO_URL$1 = "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png";
+const SOLANA_LOGO_URL$1 = "/icons/48-sol.png";
 function NetworkLogo({ network, size = 40 }) {
-  const logoSize = Math.round(size * 0.8);
+  const solanaLogoSize = Math.round(size * 0.95);
   if (network == null ? void 0 : network.includes("Solana")) {
-    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { width: size, height: size, minWidth: size, minHeight: size, borderRadius: "50%", background: "#000", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, overflow: "hidden" }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: SOLANA_LOGO_URL$1, alt: "Solana", style: { width: logoSize, height: logoSize, objectFit: "contain", display: "block" } }) });
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { width: size, height: size, minWidth: size, minHeight: size, borderRadius: "50%", background: "#000", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, overflow: "hidden" }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: SOLANA_LOGO_URL$1, alt: "Solana", style: { width: solanaLogoSize, height: solanaLogoSize, objectFit: "contain", display: "block" } }) });
   }
   return /* @__PURE__ */ jsxRuntimeExports.jsx(X1Logo, { size });
 }
@@ -26664,13 +27032,35 @@ function ReceiveScreen({ wallet, onBack }) {
     ] })
   ] });
 }
-const PRIORITY_OPTIONS$1 = [
-  { id: "auto", name: "Auto", fee: 0, description: "Standard speed" },
-  { id: "fast", name: "Fast", fee: 5e-6, description: "Higher priority" },
-  { id: "turbo", name: "Turbo", fee: 5e-5, description: "Very high priority" },
-  { id: "degen", name: "Degen", fee: 1e-3, description: "Maximum priority" },
-  { id: "custom", name: "Custom", fee: 0, description: "Custom fee" }
-];
+function getPriorityOptions$1(network) {
+  const isX1 = network == null ? void 0 : network.includes("X1");
+  if (isX1) {
+    return [
+      { id: "auto", name: "Auto", microLamports: 0, fee: 0, description: "Use API default" },
+      { id: "fast", name: "Fast", microLamports: 1e3, fee: 15e-5, description: "~0.00015 XNT extra" },
+      { id: "turbo", name: "Turbo", microLamports: 1e4, fee: 15e-4, description: "~0.0015 XNT extra" },
+      { id: "degen", name: "Degen", microLamports: 1e5, fee: 0.015, description: "~0.015 XNT extra" },
+      { id: "custom", name: "Custom", microLamports: 0, fee: 0, description: "Custom fee" }
+    ];
+  }
+  return [
+    { id: "auto", name: "Auto", microLamports: 0, fee: 0, description: "Use API default" },
+    { id: "fast", name: "Fast", microLamports: 1e4, fee: 15e-4, description: "~0.0015 SOL extra" },
+    { id: "turbo", name: "Turbo", microLamports: 1e5, fee: 0.015, description: "~0.015 SOL extra" },
+    { id: "degen", name: "Degen", microLamports: 1e6, fee: 0.15, description: "~0.15 SOL extra" },
+    { id: "custom", name: "Custom", microLamports: 0, fee: 0, description: "Custom fee" }
+  ];
+}
+function customFeeToMicroLamports(feeInSol, computeUnits = 15e4) {
+  if (!feeInSol || feeInSol <= 0) return 0;
+  const lamports = Math.floor(feeInSol * 1e9);
+  const microLamports = Math.floor(lamports * 1e6 / computeUnits);
+  return microLamports;
+}
+function getBaseFee$1(network) {
+  const isX1 = network == null ? void 0 : network.includes("X1");
+  return isX1 ? 2e-3 : 5e-6;
+}
 const imageCache = /* @__PURE__ */ new Map();
 function preloadImage(url) {
   if (!url || imageCache.has(url)) return;
@@ -26776,12 +27166,16 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
   const [toAmount, setToAmount] = reactExports.useState("");
   const [inputMode, setInputMode] = reactExports.useState("from");
   const [selectingToken, setSelectingToken] = reactExports.useState(null);
-  const [slippage, setSlippage] = reactExports.useState(0.5);
+  const [slippage, setSlippage] = reactExports.useState(() => {
+    const savedNetwork = localStorage.getItem("x1wallet_network") || "";
+    return savedNetwork.includes("X1") ? 1 : 0.5;
+  });
   const [customSlippage, setCustomSlippage] = reactExports.useState("");
-  const slippageOptions = [0.1, 0.5, 1, 3];
+  const slippageOptions = [0.5, 1, 2, 5];
   const [loading, setLoading] = reactExports.useState(false);
   const [quoteLoading, setQuoteLoading] = reactExports.useState(false);
   const [quote, setQuote] = reactExports.useState(null);
+  const [quoteTimestamp, setQuoteTimestamp] = reactExports.useState(null);
   const [error, setError] = reactExports.useState("");
   const [swapStatus, setSwapStatus] = reactExports.useState("");
   const [hwStatus, setHwStatus] = reactExports.useState("");
@@ -26804,6 +27198,7 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
   const [fetchingLocalTokens, setFetchingLocalTokens] = reactExports.useState(false);
   const localTokensFetchedRef = reactExports.useRef(false);
   const [initialTokenSet, setInitialTokenSet] = reactExports.useState(false);
+  const lastOptimisticUpdate = reactExports.useRef(0);
   const walletReady = !!(wallet && wallet.network);
   const currentNetwork2 = (wallet == null ? void 0 : wallet.network) || "X1 Mainnet";
   const getNetworkConfig2 = () => {
@@ -27150,6 +27545,9 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
     loadTokens();
   }, [currentNetwork2, walletBalance, nativeSymbol, filteredUserTokens, walletReady]);
   reactExports.useEffect(() => {
+    if (Date.now() - lastOptimisticUpdate.current < 5e3) {
+      return;
+    }
     if (fromToken && tokens.length > 0) {
       const updatedFrom = tokens.find((t2) => t2.mint === fromToken.mint || t2.symbol === fromToken.symbol);
       if (updatedFrom && updatedFrom.balance !== fromToken.balance) {
@@ -27164,6 +27562,9 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
     }
   }, [tokens]);
   reactExports.useEffect(() => {
+    if (Date.now() - lastOptimisticUpdate.current < 5e3) {
+      return;
+    }
     if (!filteredUserTokens || filteredUserTokens.length === 0) return;
     if (fromToken && fromToken.symbol !== nativeSymbol) {
       const userToken = filteredUserTokens.find(
@@ -27191,6 +27592,9 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
     }
   }, [filteredUserTokens, nativeSymbol]);
   reactExports.useEffect(() => {
+    if (Date.now() - lastOptimisticUpdate.current < 5e3) {
+      return;
+    }
     if (fromToken && (fromToken.mint === "native" || fromToken.isNative || fromToken.symbol === nativeSymbol)) {
       if (fromToken.balance !== walletBalance) {
         setFromToken((prev) => ({ ...prev, balance: walletBalance }));
@@ -27319,6 +27723,7 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
   reactExports.useEffect(() => {
     if (!activeAmount || !fromToken || !toToken || parseFloat(activeAmount) <= 0) {
       setQuote(null);
+      setQuoteTimestamp(null);
       return;
     }
     if (isWrapUnwrap(fromToken, toToken)) {
@@ -27329,6 +27734,7 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
         rate: 1,
         data: { rate: 1, outputAmount: parseFloat(activeAmount) }
       });
+      setQuoteTimestamp(Date.now());
       if (inputMode === "from") setToAmount(activeAmount);
       else setFromAmount(activeAmount);
       setQuoteLoading(false);
@@ -27352,6 +27758,7 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
         );
         logger$1.log("[Swap] Quote data received:", quoteData);
         setQuote(quoteData);
+        setQuoteTimestamp(Date.now());
         const outputAmount = ((_a3 = quoteData == null ? void 0 : quoteData.data) == null ? void 0 : _a3.outputAmount) || ((_b3 = quoteData == null ? void 0 : quoteData.data) == null ? void 0 : _b3.token_out_amount) || (quoteData == null ? void 0 : quoteData.outputAmount) || (quoteData == null ? void 0 : quoteData.token_out_amount) || (quoteData == null ? void 0 : quoteData.estimatedOutput) || (quoteData == null ? void 0 : quoteData.outAmount);
         logger$1.log("[Swap] Output amount:", outputAmount);
         if (outputAmount !== void 0 && outputAmount !== null) {
@@ -27374,14 +27781,19 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
         }
       } catch (err) {
         logger$1.error("[Swap] Quote error:", err);
-        setError(getUserFriendlyError(err, ErrorMessages.swap.quoteFailed));
+        const errMsg = (err == null ? void 0 : err.message) || "";
+        if (errMsg.includes("429") || errMsg.includes("Too Many Requests")) {
+          setError("Rate limited. Please wait a moment...");
+        } else {
+          setError(getUserFriendlyError(err, ErrorMessages.swap.quoteFailed));
+        }
         if (inputMode === "from") setToAmount("");
         else setFromAmount("");
       } finally {
         setQuoteLoading(false);
       }
     };
-    const timeoutId = setTimeout(fetchQuote, 500);
+    const timeoutId = setTimeout(fetchQuote, 150);
     return () => clearTimeout(timeoutId);
   }, [activeAmount, inputMode, fromToken, toToken, currentNetwork2]);
   if (!walletReady) {
@@ -27550,15 +27962,27 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
       setError("Please wait for quote");
       return;
     }
-    if (parseFloat(fromAmount) > ((fromToken == null ? void 0 : fromToken.balance) || 0)) {
-      setError("Insufficient balance");
+    const quoteAge = quoteTimestamp ? (Date.now() - quoteTimestamp) / 1e3 : 0;
+    if (!isWrapOperation && quoteAge > 30) {
+      logger$1.log("[Swap] Quote is stale:", quoteAge, "seconds old");
+    }
+    const decimals = (fromToken == null ? void 0 : fromToken.decimals) || 9;
+    const multiplier = Math.pow(10, decimals);
+    const requiredAmount = Math.round(parseFloat(fromAmount) * multiplier);
+    const availableAmount = Math.round(((fromToken == null ? void 0 : fromToken.balance) || 0) * multiplier);
+    if (requiredAmount > availableAmount) {
+      setError(`Insufficient balance. Required: ${fromAmount} tokens, Available: ${(fromToken == null ? void 0 : fromToken.balance) || 0} tokens`);
       return;
     }
     setError("");
     setShowConfirm(true);
   };
   const handleSwap = async () => {
-    var _a3, _b3, _c2, _d2, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
+    var _a3, _b3, _c2, _d2, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x;
+    if (loading) {
+      logger$1.log("[Swap] Already processing, ignoring duplicate call");
+      return;
+    }
     logger$1.log("[Swap] Executing swap...");
     logger$1.log("[Swap] isHardwareWallet:", isHardwareWallet);
     logger$1.log("[Swap] wallet?.wallet?.isHardware:", (_a3 = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _a3.isHardware);
@@ -27607,8 +28031,14 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
               await hardwareWallet.openApp();
             }
             setHwStatus("Please confirm on your Ledger...");
-            const derivationPath = (_g = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _g.derivationPath;
+            const derivationPath = ((_g = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _g.derivationPath) || (wallet == null ? void 0 : wallet.derivationPath) || ((_h = wallet == null ? void 0 : wallet.activeWallet) == null ? void 0 : _h.derivationPath) || ((_j = (_i = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _i.activeAddress) == null ? void 0 : _j.derivationPath) || "44'/501'/0'/0'";
             logger$1.log("[Swap Wrap/Unwrap] Using derivation path:", derivationPath);
+            logger$1.log("[Swap Wrap/Unwrap] Wallet structure:", {
+              hasWalletWallet: !!(wallet == null ? void 0 : wallet.wallet),
+              walletDerivPath: (_k = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _k.derivationPath,
+              directDerivPath: wallet == null ? void 0 : wallet.derivationPath,
+              activeWalletDerivPath: (_l = wallet == null ? void 0 : wallet.activeWallet) == null ? void 0 : _l.derivationPath
+            });
             if (wrapDirection === "wrap") {
               signature2 = await createWrapTransactionHardware({
                 owner: walletPublicKey,
@@ -27670,26 +28100,48 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
           setTxHash(signature2);
           setSwapStatus("success");
           setShowConfirm(false);
-          if (wallet.refreshBalance) {
-            wallet.refreshBalance();
-          }
+          setLoading(false);
           const swappedFromAmount2 = parseFloat(fromAmount);
           const swappedToAmount2 = parseFloat(toAmount);
           const swappedFromToken2 = { ...fromToken };
           const swappedToToken2 = { ...toToken };
-          setLoading(false);
-          setTimeout(() => {
-            if (onSwapComplete) onSwapComplete();
-            setTokens((prev) => prev.map((t2) => {
-              if (t2.symbol === swappedFromToken2.symbol || t2.mint === swappedFromToken2.mint) {
-                return { ...t2, balance: Math.max(0, (t2.balance || 0) - swappedFromAmount2) };
-              }
-              if (t2.symbol === swappedToToken2.symbol || t2.mint === swappedToToken2.mint) {
-                return { ...t2, balance: (t2.balance || 0) + swappedToAmount2 };
-              }
-              return t2;
-            }));
-          }, 2e3);
+          lastOptimisticUpdate.current = Date.now();
+          setTokens((prev) => prev.map((t2) => {
+            if (t2.symbol === swappedFromToken2.symbol || t2.mint === swappedFromToken2.mint) {
+              return { ...t2, balance: Math.max(0, (t2.balance || 0) - swappedFromAmount2) };
+            }
+            if (t2.symbol === swappedToToken2.symbol || t2.mint === swappedToToken2.mint) {
+              return { ...t2, balance: (t2.balance || 0) + swappedToAmount2 };
+            }
+            return t2;
+          }));
+          setFromToken((prev) => {
+            if (!prev) return prev;
+            if (prev.symbol === swappedFromToken2.symbol || prev.mint === swappedFromToken2.mint) {
+              return { ...prev, balance: Math.max(0, (prev.balance || 0) - swappedFromAmount2) };
+            }
+            return prev;
+          });
+          setToToken((prev) => {
+            if (!prev) return prev;
+            if (prev.symbol === swappedToToken2.symbol || prev.mint === swappedToToken2.mint) {
+              return { ...prev, balance: (prev.balance || 0) + swappedToAmount2 };
+            }
+            return prev;
+          });
+          const updatedTokensForParent2 = userTokens.map((t2) => {
+            if (t2.symbol === swappedFromToken2.symbol || t2.mint === swappedFromToken2.mint) {
+              return { ...t2, balance: Math.max(0, (t2.balance || t2.uiAmount || 0) - swappedFromAmount2), uiAmount: Math.max(0, (t2.uiAmount || t2.balance || 0) - swappedFromAmount2) };
+            }
+            if (t2.symbol === swappedToToken2.symbol || t2.mint === swappedToToken2.mint) {
+              return { ...t2, balance: (t2.balance || t2.uiAmount || 0) + swappedToAmount2, uiAmount: (t2.uiAmount || t2.balance || 0) + swappedToAmount2 };
+            }
+            return t2;
+          });
+          if (onSwapComplete) onSwapComplete(updatedTokensForParent2);
+          if (wallet.refreshBalance) {
+            wallet.refreshBalance();
+          }
           return;
         } catch (wrapErr) {
           console.error("[Swap] RAW ERROR:", wrapErr);
@@ -27739,7 +28191,7 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
       );
       logger$1.log("[Swap] Transaction prepared:", txData);
       let transactions = [];
-      if (Array.isArray((_h = txData == null ? void 0 : txData.data) == null ? void 0 : _h.transaction)) {
+      if (Array.isArray((_m = txData == null ? void 0 : txData.data) == null ? void 0 : _m.transaction)) {
         transactions = txData.data.transaction;
         logger$1.log("[Swap] Received array of", transactions.length, "transactions");
       } else if (Array.isArray(txData == null ? void 0 : txData.transaction)) {
@@ -27747,15 +28199,15 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
         logger$1.log("[Swap] Received array of", transactions.length, "transactions");
       } else if (typeof (txData == null ? void 0 : txData.transaction) === "string") {
         transactions = [txData.transaction];
-      } else if (typeof ((_i = txData == null ? void 0 : txData.data) == null ? void 0 : _i.transaction) === "string") {
+      } else if (typeof ((_n = txData == null ? void 0 : txData.data) == null ? void 0 : _n.transaction) === "string") {
         transactions = [txData.data.transaction];
-      } else if (typeof ((_j = txData == null ? void 0 : txData.transaction) == null ? void 0 : _j.serializedTransaction) === "string") {
+      } else if (typeof ((_o = txData == null ? void 0 : txData.transaction) == null ? void 0 : _o.serializedTransaction) === "string") {
         transactions = [txData.transaction.serializedTransaction];
-      } else if (typeof ((_l = (_k = txData == null ? void 0 : txData.data) == null ? void 0 : _k.transaction) == null ? void 0 : _l.serializedTransaction) === "string") {
+      } else if (typeof ((_q = (_p = txData == null ? void 0 : txData.data) == null ? void 0 : _p.transaction) == null ? void 0 : _q.serializedTransaction) === "string") {
         transactions = [txData.data.transaction.serializedTransaction];
       } else if (typeof (txData == null ? void 0 : txData.swapTransaction) === "string") {
         transactions = [txData.swapTransaction];
-      } else if (typeof ((_m = txData == null ? void 0 : txData.data) == null ? void 0 : _m.swapTransaction) === "string") {
+      } else if (typeof ((_r = txData == null ? void 0 : txData.data) == null ? void 0 : _r.swapTransaction) === "string") {
         transactions = [txData.data.swapTransaction];
       }
       if (transactions.length === 0) {
@@ -27775,8 +28227,19 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
       let lastSignature = null;
       if (isHardwareWallet) {
         setHwStatus("Connecting to Ledger...");
-        const derivationPath = (_n = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _n.derivationPath;
+        const derivationPath = ((_s = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _s.derivationPath) || (wallet == null ? void 0 : wallet.derivationPath) || ((_t = wallet == null ? void 0 : wallet.activeWallet) == null ? void 0 : _t.derivationPath) || ((_v = (_u = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _u.activeAddress) == null ? void 0 : _v.derivationPath) || "44'/501'/0'/0'";
         logger$1.log("[Swap] Using derivation path:", derivationPath);
+        logger$1.log("[Swap] Wallet structure:", {
+          hasWalletWallet: !!(wallet == null ? void 0 : wallet.wallet),
+          walletDerivPath: (_w = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _w.derivationPath,
+          directDerivPath: wallet == null ? void 0 : wallet.derivationPath,
+          activeWalletDerivPath: (_x = wallet == null ? void 0 : wallet.activeWallet) == null ? void 0 : _x.derivationPath
+        });
+        const priorityOption = getPriorityOptions$1(currentNetwork2).find((p2) => p2.id === swapPriority);
+        const priorityMicroLamports = swapPriority === "custom" ? customFeeToMicroLamports(parseFloat(customFee) || 0) : (priorityOption == null ? void 0 : priorityOption.microLamports) || 0;
+        if (priorityMicroLamports > 0) {
+          logger$1.log(`[Swap] Using priority fee: ${priorityMicroLamports} microlamports/CU (${swapPriority})`);
+        }
         if (!hardwareWallet.isReady()) {
           await hardwareWallet.connect("hid");
           await hardwareWallet.openApp();
@@ -27790,13 +28253,14 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
               tx,
               hardwareWallet,
               networkConfig.rpcUrl,
-              derivationPath
+              derivationPath,
+              priorityMicroLamports
             );
             logger$1.log(`[Swap] Transaction ${i + 1} sent! Signature:`, signature2);
             lastSignature = signature2;
             if (i < transactions.length - 1) {
               setHwStatus("Waiting for confirmation...");
-              await new Promise((resolve) => setTimeout(resolve, 2e3));
+              await new Promise((resolve) => setTimeout(resolve, 200));
             }
           } catch (txErr) {
             logger$1.error(`[Swap] Transaction ${i + 1} failed:`, txErr);
@@ -27809,6 +28273,11 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
         }
         setHwStatus("");
       } else {
+        const priorityOption = getPriorityOptions$1(currentNetwork2).find((p2) => p2.id === swapPriority);
+        const priorityMicroLamports = swapPriority === "custom" ? customFeeToMicroLamports(parseFloat(customFee) || 0) : (priorityOption == null ? void 0 : priorityOption.microLamports) || 0;
+        if (priorityMicroLamports > 0) {
+          logger$1.log(`[Swap] Using priority fee: ${priorityMicroLamports} microlamports/CU (${swapPriority})`);
+        }
         for (let i = 0; i < transactions.length; i++) {
           const tx = transactions[i];
           logger$1.log(`[Swap] Signing transaction ${i + 1}/${transactions.length}, length:`, tx.length);
@@ -27817,13 +28286,14 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
             const signature2 = await signAndSendExternalTransaction(
               tx,
               privateKey,
-              networkConfig.rpcUrl
+              networkConfig.rpcUrl,
+              priorityMicroLamports
             );
             logger$1.log(`[Swap] Transaction ${i + 1} sent! Signature:`, signature2);
             lastSignature = signature2;
             if (i < transactions.length - 1) {
               logger$1.log("[Swap] Waiting for transaction to be processed before next...");
-              await new Promise((resolve) => setTimeout(resolve, 2e3));
+              await new Promise((resolve) => setTimeout(resolve, 200));
             }
           } catch (txErr) {
             logger$1.error(`[Swap] Transaction ${i + 1} failed:`, txErr);
@@ -27869,50 +28339,60 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
       }).catch((err) => {
         logger$1.warn("[Swap] XP tracking failed:", err);
       });
-      setTxHash(signature);
-      setSwapStatus("success");
-      setShowConfirm(false);
-      if (wallet.refreshBalance) {
-        wallet.refreshBalance();
-      }
       const swappedFromAmount = parseFloat(fromAmount);
       const swappedToAmount = parseFloat(toAmount);
       const swappedFromToken = { ...fromToken };
       const swappedToToken = { ...toToken };
-      setTimeout(() => {
-        if (onSwapComplete) {
-          onSwapComplete();
+      lastOptimisticUpdate.current = Date.now();
+      setTokens((prev) => prev.map((t2) => {
+        if (t2.symbol === swappedFromToken.symbol || t2.mint === swappedFromToken.mint) {
+          return { ...t2, balance: Math.max(0, (t2.balance || 0) - swappedFromAmount) };
         }
-        setTokens((prev) => prev.map((t2) => {
-          if (t2.symbol === swappedFromToken.symbol || t2.mint === swappedFromToken.mint) {
-            return { ...t2, balance: Math.max(0, (t2.balance || 0) - swappedFromAmount) };
-          }
-          if (t2.symbol === swappedToToken.symbol || t2.mint === swappedToToken.mint) {
-            return { ...t2, balance: (t2.balance || 0) + swappedToAmount };
-          }
-          return t2;
-        }));
-        setFromToken((prev) => {
-          if (!prev) return prev;
-          if (prev.symbol === swappedFromToken.symbol || prev.mint === swappedFromToken.mint) {
-            return { ...prev, balance: Math.max(0, (prev.balance || 0) - swappedFromAmount) };
-          }
-          return prev;
-        });
-        setToToken((prev) => {
-          if (!prev) return prev;
-          if (prev.symbol === swappedToToken.symbol || prev.mint === swappedToToken.mint) {
-            return { ...prev, balance: (prev.balance || 0) + swappedToAmount };
-          }
-          return prev;
-        });
-      }, 2e3);
+        if (t2.symbol === swappedToToken.symbol || t2.mint === swappedToToken.mint) {
+          return { ...t2, balance: (t2.balance || 0) + swappedToAmount };
+        }
+        return t2;
+      }));
+      setFromToken((prev) => {
+        if (!prev) return prev;
+        if (prev.symbol === swappedFromToken.symbol || prev.mint === swappedFromToken.mint) {
+          return { ...prev, balance: Math.max(0, (prev.balance || 0) - swappedFromAmount) };
+        }
+        return prev;
+      });
+      setToToken((prev) => {
+        if (!prev) return prev;
+        if (prev.symbol === swappedToToken.symbol || prev.mint === swappedToToken.mint) {
+          return { ...prev, balance: (prev.balance || 0) + swappedToAmount };
+        }
+        return prev;
+      });
+      setTxHash(signature);
+      setSwapStatus("success");
+      setShowConfirm(false);
+      const updatedTokensForParent = userTokens.map((t2) => {
+        if (t2.symbol === swappedFromToken.symbol || t2.mint === swappedFromToken.mint) {
+          return { ...t2, balance: Math.max(0, (t2.balance || t2.uiAmount || 0) - swappedFromAmount), uiAmount: Math.max(0, (t2.uiAmount || t2.balance || 0) - swappedFromAmount) };
+        }
+        if (t2.symbol === swappedToToken.symbol || t2.mint === swappedToToken.mint) {
+          return { ...t2, balance: (t2.balance || t2.uiAmount || 0) + swappedToAmount, uiAmount: (t2.uiAmount || t2.balance || 0) + swappedToAmount };
+        }
+        return t2;
+      });
+      if (onSwapComplete) {
+        onSwapComplete(updatedTokensForParent);
+      }
+      if (wallet.refreshBalance) {
+        wallet.refreshBalance();
+      }
     } catch (err) {
       logger$1.error("[Swap] Error:", err);
       logger$1.error("[Swap] Error message:", err == null ? void 0 : err.message);
       logger$1.error("[Swap] Error details:", JSON.stringify(err, Object.getOwnPropertyNames(err)));
       let userMessage = (err == null ? void 0 : err.message) || getUserFriendlyError(err, ErrorMessages.swap.failed);
-      if (userMessage.includes("Failed to create fee token account")) {
+      if (userMessage.includes("429") || userMessage.includes("Too Many Requests") || userMessage.includes("rate limit")) {
+        userMessage = "Too many requests. Please wait a few seconds and try again.";
+      } else if (userMessage.includes("Failed to create fee token account")) {
         userMessage = "Swap service temporarily unavailable. The XDEX API is experiencing issues with fee account creation. Please try again later or contact XDEX support.";
       } else if (userMessage.includes("insufficient lamports")) {
         const match = userMessage.match(/insufficient lamports (\d+), need (\d+)/);
@@ -27929,7 +28409,12 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
           userMessage = "Swap route expired or liquidity changed. Please try again. If the issue persists, try a smaller amount or different slippage.";
         } else if (userMessage.includes("0x1786") || userMessage.includes("6022")) {
           userMessage = "Invalid market state. The liquidity pool may be temporarily unavailable. Please try again later.";
-        } else if (userMessage.includes("0x1") && !userMessage.includes("0x1786") && !userMessage.includes("0x1787")) {
+        } else if (userMessage.includes("0xbc4") || userMessage.includes("3012")) {
+          const suggestedSlippage = Math.min(slippage * 2, 10);
+          userMessage = `Price moved beyond ${slippage}% slippage tolerance. Try increasing slippage to ${suggestedSlippage}% or higher, or use a smaller amount.`;
+        } else if (userMessage.includes("0x1771") || userMessage.includes("6001")) {
+          userMessage = "Insufficient liquidity in the pool for this swap size. Try a smaller amount.";
+        } else if (userMessage.includes("0x1") && !userMessage.includes("0x1786") && !userMessage.includes("0x1787") && !userMessage.includes("0x1771")) {
           userMessage = "Slippage tolerance exceeded. Try increasing slippage or reducing the swap amount.";
         } else if (userMessage.includes("0x0")) {
           userMessage = "Transaction simulation failed. This may be a temporary API issue. Please try again in a few minutes.";
@@ -28552,7 +29037,7 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
     ] });
   }
   if (showConfirm) {
-    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen swap-screen", children: [
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen swap-screen", style: { display: "flex", flexDirection: "column", height: "100%" }, children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "page-header", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-left", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", onClick: () => setShowConfirm(false), children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }) }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("h2", { className: "header-title", children: [
@@ -28561,174 +29046,193 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-right" })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "slide-panel-content", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-step-content", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-summary-card", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-summary-row", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "send-summary-label", children: "From" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "send-summary-value", children: [
-              fromAmount,
-              " ",
-              fromToken == null ? void 0 : fromToken.symbol
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "slide-panel-content", style: { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", position: "relative" }, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-step-content", style: { flex: 1, overflowY: "auto", paddingBottom: 100 }, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-summary-card", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-summary-row", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "send-summary-label", children: "From" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "send-summary-value", children: [
+                fromAmount,
+                " ",
+                fromToken == null ? void 0 : fromToken.symbol
+              ] })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-summary-row", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "send-summary-label", children: "To" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "send-summary-value", children: [
+                toAmount,
+                " ",
+                toToken == null ? void 0 : toToken.symbol
+              ] })
+            ] }),
+            !isWrapOperation && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-summary-row", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "send-summary-label", children: "Rate" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "send-summary-value", children: [
+                "1 ",
+                fromToken == null ? void 0 : fromToken.symbol,
+                " ≈ ",
+                (parseFloat(toAmount) / parseFloat(fromAmount)).toFixed(6),
+                " ",
+                toToken == null ? void 0 : toToken.symbol
+              ] })
+            ] }),
+            isWrapOperation && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-summary-row", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "send-summary-label", children: "Type" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "send-summary-value", style: { color: "#34c759" }, children: [
+                "1:1 ",
+                wrapDirection === "wrap" ? "Wrap" : "Unwrap"
+              ] })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-summary-row", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "send-summary-label", children: "Network Fee" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "send-summary-value", children: [
+                "~",
+                (getBaseFee$1(currentNetwork2) + (swapPriority === "custom" ? parseFloat(customFee) || 0 : ((_d = getPriorityOptions$1(currentNetwork2).find((p2) => p2.id === swapPriority)) == null ? void 0 : _d.fee) || 0)).toFixed(6),
+                " ",
+                networkConfig.symbol
+              ] })
             ] })
           ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-summary-row", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "send-summary-label", children: "To" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "send-summary-value", children: [
-              toAmount,
-              " ",
-              toToken == null ? void 0 : toToken.symbol
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-priority-section", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "send-priority-label", children: "Transaction Priority" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-priority-selector", children: [
+              getPriorityOptions$1(currentNetwork2).filter((opt) => opt.id !== "custom").map((opt) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "button",
+                {
+                  className: `send-priority-btn ${swapPriority === opt.id ? "active" : ""}`,
+                  onClick: () => {
+                    setSwapPriority(opt.id);
+                    setCustomFee("");
+                  },
+                  type: "button",
+                  disabled: loading,
+                  children: opt.name
+                },
+                opt.id
+              )),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "button",
+                {
+                  className: `send-priority-btn ${swapPriority === "custom" ? "active" : ""}`,
+                  onClick: () => setSwapPriority("custom"),
+                  type: "button",
+                  disabled: loading,
+                  children: "⚙"
+                }
+              )
+            ] }),
+            swapPriority === "custom" && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { marginTop: 12, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }, children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "input",
+                {
+                  type: "number",
+                  min: "0",
+                  style: {
+                    width: 100,
+                    padding: "8px 12px",
+                    background: "var(--bg-tertiary)",
+                    border: "1px solid var(--border-color)",
+                    borderRadius: 8,
+                    color: "var(--text-primary)",
+                    fontSize: 13,
+                    textAlign: "right"
+                  },
+                  placeholder: "0.0001",
+                  value: customFee,
+                  onChange: (e) => {
+                    const value = e.target.value;
+                    if (value.startsWith("-") || parseFloat(value) < 0) return;
+                    setCustomFee(value);
+                  },
+                  step: "0.0001",
+                  disabled: loading
+                }
+              ),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { color: "var(--text-muted)", fontSize: 13 }, children: networkConfig.symbol })
             ] })
           ] }),
-          !isWrapOperation && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-summary-row", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "send-summary-label", children: "Rate" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "send-summary-value", children: [
-              "1 ",
-              fromToken == null ? void 0 : fromToken.symbol,
-              " ≈ ",
-              (parseFloat(toAmount) / parseFloat(fromAmount)).toFixed(6),
-              " ",
-              toToken == null ? void 0 : toToken.symbol
-            ] })
-          ] }),
-          isWrapOperation && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-summary-row", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "send-summary-label", children: "Type" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "send-summary-value", style: { color: "#34c759" }, children: [
-              "1:1 ",
-              wrapDirection === "wrap" ? "Wrap" : "Unwrap"
-            ] })
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-summary-row", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "send-summary-label", children: "Network Fee" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "send-summary-value", children: [
-              "~",
-              (5e-6 + (swapPriority === "custom" ? parseFloat(customFee) || 0 : ((_d = PRIORITY_OPTIONS$1.find((p2) => p2.id === swapPriority)) == null ? void 0 : _d.fee) || 0)).toFixed(6),
-              " ",
-              networkConfig.symbol
-            ] })
-          ] })
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-priority-section", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "send-priority-label", children: "Transaction Priority" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-priority-selector", children: [
-            PRIORITY_OPTIONS$1.filter((opt) => opt.id !== "custom").map((opt) => /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "button",
-              {
-                className: `send-priority-btn ${swapPriority === opt.id ? "active" : ""}`,
-                onClick: () => {
-                  setSwapPriority(opt.id);
-                  setCustomFee("");
+          !isWrapOperation && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-priority-section", style: { marginTop: 16 }, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "send-priority-label", children: "Slippage Tolerance" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-priority-selector", children: [
+              slippageOptions.map((opt) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                "button",
+                {
+                  className: `send-priority-btn ${slippage === opt && !customSlippage ? "active" : ""}`,
+                  onClick: () => {
+                    setSlippage(opt);
+                    setCustomSlippage("");
+                  },
+                  type: "button",
+                  children: [
+                    opt,
+                    "%"
+                  ]
                 },
-                type: "button",
-                disabled: loading,
-                children: opt.name
-              },
-              opt.id
-            )),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "button",
-              {
-                className: `send-priority-btn ${swapPriority === "custom" ? "active" : ""}`,
-                onClick: () => setSwapPriority("custom"),
-                type: "button",
-                disabled: loading,
-                children: "⚙"
-              }
-            )
-          ] }),
-          swapPriority === "custom" && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { marginTop: 12, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }, children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "input",
-              {
-                type: "number",
-                min: "0",
-                style: {
-                  width: 100,
-                  padding: "8px 12px",
-                  background: "var(--bg-tertiary)",
-                  border: "1px solid var(--border-color)",
-                  borderRadius: 8,
-                  color: "var(--text-primary)",
-                  fontSize: 13,
-                  textAlign: "right"
-                },
-                placeholder: "0.0001",
-                value: customFee,
-                onChange: (e) => {
-                  const value = e.target.value;
-                  if (value.startsWith("-") || parseFloat(value) < 0) return;
-                  setCustomFee(value);
-                },
-                step: "0.0001",
-                disabled: loading
-              }
-            ),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { color: "var(--text-muted)", fontSize: 13 }, children: networkConfig.symbol })
-          ] })
-        ] }),
-        !isWrapOperation && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-priority-section", style: { marginTop: 16 }, children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "send-priority-label", children: "Slippage Tolerance" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-priority-selector", children: [
-            slippageOptions.map((opt) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
-              "button",
-              {
-                className: `send-priority-btn ${slippage === opt && !customSlippage ? "active" : ""}`,
-                onClick: () => {
-                  setSlippage(opt);
-                  setCustomSlippage("");
-                },
-                type: "button",
-                children: [
-                  opt,
-                  "%"
-                ]
-              },
-              opt
-            )),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "button",
-              {
-                className: `send-priority-btn ${customSlippage ? "active" : ""}`,
-                onClick: () => {
-                  const input = document.getElementById("slippage-custom-input");
-                  if (input) input.focus();
-                },
-                type: "button",
-                style: { padding: 0, minWidth: 60 },
-                children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-                  "input",
-                  {
-                    id: "slippage-custom-input",
-                    type: "number",
-                    min: "0",
-                    value: customSlippage,
-                    onChange: (e) => {
-                      const val = e.target.value;
-                      if (val.startsWith("-") || parseFloat(val) < 0) return;
-                      setCustomSlippage(val);
-                      if (val && !isNaN(parseFloat(val))) {
-                        setSlippage(parseFloat(val));
+                opt
+              )),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "button",
+                {
+                  className: `send-priority-btn ${customSlippage ? "active" : ""}`,
+                  onClick: () => {
+                    const input = document.getElementById("slippage-custom-input");
+                    if (input) input.focus();
+                  },
+                  type: "button",
+                  style: { padding: 0, minWidth: 60 },
+                  children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    "input",
+                    {
+                      id: "slippage-custom-input",
+                      type: "number",
+                      min: "0",
+                      value: customSlippage,
+                      onChange: (e) => {
+                        const val = e.target.value;
+                        if (val.startsWith("-") || parseFloat(val) < 0) return;
+                        setCustomSlippage(val);
+                        if (val && !isNaN(parseFloat(val))) {
+                          setSlippage(parseFloat(val));
+                        }
+                      },
+                      placeholder: "Custom",
+                      style: {
+                        width: "100%",
+                        padding: "8px 4px",
+                        border: "none",
+                        background: "transparent",
+                        color: "var(--text-primary)",
+                        fontSize: 12,
+                        textAlign: "center",
+                        outline: "none"
                       }
-                    },
-                    placeholder: "Custom",
-                    style: {
-                      width: "100%",
-                      padding: "8px 4px",
-                      border: "none",
-                      background: "transparent",
-                      color: "var(--text-primary)",
-                      fontSize: 12,
-                      textAlign: "center",
-                      outline: "none"
                     }
-                  }
-                )
-              }
-            )
+                  )
+                }
+              )
+            ] }),
+            slippage > 5 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { marginTop: 8, fontSize: 11, color: "var(--warning)", textAlign: "center" }, children: "⚠️ High slippage may result in unfavorable trades" })
           ] }),
-          slippage > 5 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { marginTop: 8, fontSize: 11, color: "var(--warning)", textAlign: "center" }, children: "⚠️ High slippage may result in unfavorable trades" })
+          error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", style: {
+            marginTop: 16,
+            padding: "12px 16px",
+            background: "rgba(255, 59, 48, 0.1)",
+            border: "1px solid rgba(255, 59, 48, 0.3)",
+            borderRadius: 8,
+            fontSize: 12,
+            lineHeight: 1.4,
+            whiteSpace: "pre-line"
+          }, children: error })
         ] }),
-        error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", style: { marginTop: 16 }, children: error }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-confirm-actions", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-confirm-actions", style: {
+          position: "absolute",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          padding: "16px 20px",
+          background: "var(--bg-primary)",
+          borderTop: "1px solid var(--border-color)"
+        }, children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx(
             "button",
             {
@@ -28751,7 +29255,7 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
             }
           )
         ] })
-      ] }) })
+      ] })
     ] });
   }
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen swap-screen", children: [
@@ -28887,6 +29391,24 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
         ] })
       ] }),
       quote && fromAmount && toAmount && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "swap-details", style: { marginTop: 16 }, children: [
+        !isWrapOperation && quoteTimestamp && Date.now() - quoteTimestamp > 3e4 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: {
+          background: "rgba(255, 149, 0, 0.1)",
+          border: "1px solid rgba(255, 149, 0, 0.3)",
+          borderRadius: 8,
+          padding: "8px 12px",
+          marginBottom: 8,
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          fontSize: 11
+        }, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "#ff9500", strokeWidth: "2", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "10" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "12", y1: "8", x2: "12", y2: "12" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "12", y1: "16", x2: "12.01", y2: "16" })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { color: "#ff9500" }, children: "Quote may be outdated. Price will refresh when you confirm." })
+        ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: {
           display: "grid",
           gridTemplateColumns: "repeat(4, 1fr)",
@@ -28954,7 +29476,9 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { textAlign: "center", borderLeft: "1px solid var(--border-color)" }, children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { fontSize: 10, color: "var(--text-muted)", marginBottom: 4 }, children: "Est. Gas" }),
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { fontSize: 11, fontWeight: 500 }, children: [
-              "~0.0002 ",
+              "~",
+              getBaseFee$1(currentNetwork2),
+              " ",
               nativeSymbol
             ] })
           ] }),
@@ -29046,7 +29570,7 @@ const USDC_DECIMALS = 6;
 const USDC_LOGO = "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png";
 const TOKEN_PROGRAM_ID$1 = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const X1_LOGO_URL = "/icons/48-x1.png";
-const SOLANA_LOGO_URL = "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png";
+const SOLANA_LOGO_URL = "/icons/48-sol.png";
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 function decodeBase58Local(str) {
   const bytes = [];
@@ -29430,8 +29954,11 @@ function BridgeScreen({ wallet, onBack }) {
       setError("Minimum amount is 0.01 USDC");
       return;
     }
-    if (inputAmount > userUsdcBalance) {
-      setError("Insufficient USDC balance");
+    const multiplier = Math.pow(10, USDC_DECIMALS);
+    const requiredAmount = Math.round(inputAmount * multiplier);
+    const availableAmount = Math.round(userUsdcBalance * multiplier);
+    if (requiredAmount > availableAmount) {
+      setError(`Insufficient USDC balance. Required: ${inputAmount} USDC, Available: ${userUsdcBalance} USDC`);
       return;
     }
     if (inputAmount > dailyCapRemaining) {
@@ -30103,7 +30630,7 @@ function StakeScreen({ wallet, onBack, onRefreshBalance }) {
     };
   }, [isX1Mainnet, walletAddress]);
   const handleStake = async () => {
-    var _a3, _b3, _c2, _d2, _e, _f, _g, _h, _i;
+    var _a3, _b3, _c2, _d2, _e, _f, _g, _h, _i, _j;
     logger$1.log("[Stake] ===== handleStake START =====");
     logger$1.log("[Stake] amount:", amount);
     logger$1.log("[Stake] balance:", balance);
@@ -30119,7 +30646,11 @@ function StakeScreen({ wallet, onBack, onRefreshBalance }) {
     }
     const stakeAmount = parseFloat(amount);
     logger$1.log("[Stake] stakeAmount:", stakeAmount);
-    if (stakeAmount > balance - 0.01) {
+    const decimals = (networkConfig == null ? void 0 : networkConfig.decimals) || 9;
+    const multiplier = Math.pow(10, decimals);
+    const requiredAmount = Math.round(stakeAmount * multiplier);
+    const availableAmount = Math.round((balance - 0.01) * multiplier);
+    if (requiredAmount > availableAmount) {
       logger$1.log("[Stake] FAIL: Insufficient balance");
       setError("Insufficient balance (reserve 0.01 XNT for fees)");
       return;
@@ -30275,7 +30806,7 @@ function StakeScreen({ wallet, onBack, onRefreshBalance }) {
       if (isHardwareWallet) {
         logger$1.log("[Stake] Using hardware wallet for signing");
         setHwStatus("Connecting to Ledger...");
-        const derivationPath = (_c2 = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _c2.derivationPath;
+        const derivationPath = ((_c2 = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _c2.derivationPath) || (wallet == null ? void 0 : wallet.derivationPath) || ((_d2 = wallet == null ? void 0 : wallet.activeWallet) == null ? void 0 : _d2.derivationPath) || "44'/501'/0'/0'";
         logger$1.log("[Stake] Using derivation path:", derivationPath);
         try {
           if (!hardwareWallet.isReady()) {
@@ -30302,11 +30833,11 @@ function StakeScreen({ wallet, onBack, onRefreshBalance }) {
         } catch (hwErr) {
           setHwStatus("");
           logger$1.error("[Stake] Hardware wallet error:", hwErr);
-          if (((_d2 = hwErr.message) == null ? void 0 : _d2.includes("0x6a81")) || ((_e = hwErr.message) == null ? void 0 : _e.includes("Solana app"))) {
+          if (((_e = hwErr.message) == null ? void 0 : _e.includes("0x6a81")) || ((_f = hwErr.message) == null ? void 0 : _f.includes("Solana app"))) {
             throw new Error("Please open the Solana app on your Ledger");
-          } else if (((_f = hwErr.message) == null ? void 0 : _f.includes("denied")) || ((_g = hwErr.message) == null ? void 0 : _g.includes("rejected"))) {
+          } else if (((_g = hwErr.message) == null ? void 0 : _g.includes("denied")) || ((_h = hwErr.message) == null ? void 0 : _h.includes("rejected"))) {
             throw new Error("Transaction rejected on Ledger");
-          } else if (((_h = hwErr.message) == null ? void 0 : _h.includes("not connected")) || ((_i = hwErr.message) == null ? void 0 : _i.includes("Could not connect"))) {
+          } else if (((_i = hwErr.message) == null ? void 0 : _i.includes("not connected")) || ((_j = hwErr.message) == null ? void 0 : _j.includes("Could not connect"))) {
             throw new Error("Ledger not connected. Please connect and try again.");
           }
           throw hwErr;
@@ -30370,7 +30901,7 @@ function StakeScreen({ wallet, onBack, onRefreshBalance }) {
     }
   };
   const handleUnstake = async () => {
-    var _a3, _b3, _c2, _d2, _e, _f, _g, _h;
+    var _a3, _b3, _c2, _d2, _e, _f, _g, _h, _i;
     logger$1.log("[Unstake] ===== handleUnstake START =====");
     logger$1.log("[Unstake] isHardwareWallet:", isHardwareWallet);
     const unstakeAmount = parseFloat(amount);
@@ -30445,7 +30976,7 @@ function StakeScreen({ wallet, onBack, onRefreshBalance }) {
       if (isHardwareWallet) {
         logger$1.log("[Unstake] Using hardware wallet for signing");
         setHwStatus("Connecting to Ledger...");
-        const derivationPath = (_b3 = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _b3.derivationPath;
+        const derivationPath = ((_b3 = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _b3.derivationPath) || (wallet == null ? void 0 : wallet.derivationPath) || ((_c2 = wallet == null ? void 0 : wallet.activeWallet) == null ? void 0 : _c2.derivationPath) || "44'/501'/0'/0'";
         logger$1.log("[Unstake] Using derivation path:", derivationPath);
         try {
           if (!hardwareWallet.isReady()) {
@@ -30472,11 +31003,11 @@ function StakeScreen({ wallet, onBack, onRefreshBalance }) {
         } catch (hwErr) {
           setHwStatus("");
           logger$1.error("[Unstake] Hardware wallet error:", hwErr);
-          if (((_c2 = hwErr.message) == null ? void 0 : _c2.includes("0x6a81")) || ((_d2 = hwErr.message) == null ? void 0 : _d2.includes("Solana app"))) {
+          if (((_d2 = hwErr.message) == null ? void 0 : _d2.includes("0x6a81")) || ((_e = hwErr.message) == null ? void 0 : _e.includes("Solana app"))) {
             throw new Error("Please open the Solana app on your Ledger");
-          } else if (((_e = hwErr.message) == null ? void 0 : _e.includes("denied")) || ((_f = hwErr.message) == null ? void 0 : _f.includes("rejected"))) {
+          } else if (((_f = hwErr.message) == null ? void 0 : _f.includes("denied")) || ((_g = hwErr.message) == null ? void 0 : _g.includes("rejected"))) {
             throw new Error("Transaction rejected on Ledger");
-          } else if (((_g = hwErr.message) == null ? void 0 : _g.includes("not connected")) || ((_h = hwErr.message) == null ? void 0 : _h.includes("Could not connect"))) {
+          } else if (((_h = hwErr.message) == null ? void 0 : _h.includes("not connected")) || ((_i = hwErr.message) == null ? void 0 : _i.includes("Could not connect"))) {
             throw new Error("Ledger not connected. Please connect and try again.");
           }
           throw hwErr;
@@ -30668,8 +31199,12 @@ function StakeScreen({ wallet, onBack, onRefreshBalance }) {
                 setError("Enter an amount");
                 return;
               }
-              if (parseFloat(amount) > balance) {
-                setError("Insufficient balance");
+              const decimals = (networkConfig == null ? void 0 : networkConfig.decimals) || 9;
+              const multiplier = Math.pow(10, decimals);
+              const requiredAmount = Math.round(parseFloat(amount) * multiplier);
+              const availableAmount = Math.round(balance * multiplier);
+              if (requiredAmount > availableAmount) {
+                setError(`Insufficient balance. Required: ${amount} XNT, Available: ${balance} XNT`);
                 return;
               }
               setLoading(true);
@@ -30936,7 +31471,7 @@ function TokenDetail({
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "page-header", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-left", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", onClick: onBack, children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }) }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "token-detail-header-title", children: [
-        isNative ? isSolana ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png", alt: "SOL", className: "token-detail-header-icon" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(X1Logo, { size: 24 }) : logoURI ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: logoURI, alt: symbol, className: "token-detail-header-icon" }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "token-detail-header-initial", children: symbol == null ? void 0 : symbol.charAt(0) }),
+        isNative ? isSolana ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: "/icons/48-sol.png", alt: "SOL", className: "token-detail-header-icon" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(X1Logo, { size: 24 }) : logoURI ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: logoURI, alt: symbol, className: "token-detail-header-icon" }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "token-detail-header-initial", children: symbol == null ? void 0 : symbol.charAt(0) }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: name }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "token-detail-symbol", children: symbol })
       ] }),
@@ -30982,7 +31517,7 @@ function TokenDetail({
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "token-section-header", children: "Your Balance" }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "token-balance-card", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "token-balance-left", children: [
-            isNative ? isSolana ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png", alt: "SOL", className: "token-balance-icon" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(X1Logo, { size: 40 }) : logoURI ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: logoURI, alt: symbol, className: "token-balance-icon" }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "token-balance-initial", children: symbol == null ? void 0 : symbol.charAt(0) }),
+            isNative ? isSolana ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: "/icons/48-sol.png", alt: "SOL", className: "token-balance-icon" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(X1Logo, { size: 40 }) : logoURI ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: logoURI, alt: symbol, className: "token-balance-icon" }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "token-balance-initial", children: symbol == null ? void 0 : symbol.charAt(0) }),
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "token-balance-info", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "token-balance-name", children: name }),
               /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "token-balance-amount", children: [
@@ -31056,13 +31591,29 @@ function TokenDetail({
     ] })
   ] });
 }
-const PRIORITY_OPTIONS = [
-  { id: "auto", name: "Auto", fee: 0, description: "Standard speed" },
-  { id: "fast", name: "Fast", fee: 5e-6, description: "Higher priority" },
-  { id: "turbo", name: "Turbo", fee: 5e-5, description: "Very high priority" },
-  { id: "degen", name: "Degen", fee: 1e-3, description: "Maximum priority" },
-  { id: "custom", name: "Custom", fee: 0, description: "Set your own fee" }
-];
+function getPriorityOptions(network) {
+  const isX1 = network == null ? void 0 : network.includes("X1");
+  if (isX1) {
+    return [
+      { id: "auto", name: "Auto", fee: 0, description: "Standard speed" },
+      { id: "fast", name: "Fast", fee: 1e-3, description: "Higher priority" },
+      { id: "turbo", name: "Turbo", fee: 5e-3, description: "Very high priority" },
+      { id: "degen", name: "Degen", fee: 0.01, description: "Maximum priority" },
+      { id: "custom", name: "Custom", fee: 0, description: "Set your own fee" }
+    ];
+  }
+  return [
+    { id: "auto", name: "Auto", fee: 0, description: "Standard speed" },
+    { id: "fast", name: "Fast", fee: 5e-6, description: "Higher priority" },
+    { id: "turbo", name: "Turbo", fee: 5e-5, description: "Very high priority" },
+    { id: "degen", name: "Degen", fee: 1e-3, description: "Maximum priority" },
+    { id: "custom", name: "Custom", fee: 0, description: "Set your own fee" }
+  ];
+}
+function getBaseFee(network) {
+  const isX1 = network == null ? void 0 : network.includes("X1");
+  return isX1 ? 2e-3 : 5e-6;
+}
 const KNOWN_PROGRAMS = {
   "11111111111111111111111111111111": { name: "System Program", safe: true },
   "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA": { name: "Token Program", safe: true },
@@ -31259,7 +31810,8 @@ function decodeTransaction(txBytes) {
       instructions,
       hasUnknownPrograms: instructions.some((i) => !i.isKnownSafe),
       hasAddressLookupTables,
-      estimatedFee: 5e-6 * numSignatures
+      estimatedFee: null
+      // Will be calculated in display using getBaseFee(network) * numSignatures
     };
   } catch (e) {
     logger$1.error("[decodeTransaction] Error:", e);
@@ -31758,9 +32310,9 @@ function DAppApproval({ wallet, onComplete }) {
     }
     try {
       const txBytes = Uint8Array.from(atob(pendingRequest.transaction), (c) => c.charCodeAt(0));
-      const priorityFeeSOL = priority === "custom" ? parseFloat(customFee) || 0 : ((_a3 = PRIORITY_OPTIONS.find((p2) => p2.id === priority)) == null ? void 0 : _a3.fee) || 0;
-      if (priorityFeeSOL > 0) {
-        logger$1.log("[DAppApproval] User selected priority fee:", priorityFeeSOL, "SOL");
+      const priorityFeeNative = priority === "custom" ? parseFloat(customFee) || 0 : ((_a3 = getPriorityOptions(currentNetwork2).find((p2) => p2.id === priority)) == null ? void 0 : _a3.fee) || 0;
+      if (priorityFeeNative > 0) {
+        logger$1.log("[DAppApproval] User selected priority fee:", priorityFeeNative, (currentNetwork2 == null ? void 0 : currentNetwork2.includes("Solana")) ? "SOL" : "XNT");
       }
       let rpcUrl;
       if (currentNetwork2 === "X1 Mainnet") {
@@ -32273,7 +32825,7 @@ function DAppApproval({ wallet, onComplete }) {
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "dapp-tx-row", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "dapp-tx-row-label", children: "Estimated Fee" }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "dapp-tx-row-value", children: [
-          (decodedTx.estimatedFee || 5e-6).toFixed(6),
+          (getBaseFee(currentNetwork2) * (decodedTx.numSignatures || 1)).toFixed(6),
           " ",
           (currentNetwork2 == null ? void 0 : currentNetwork2.includes("Solana")) ? "SOL" : "XNT"
         ] })
@@ -32281,7 +32833,7 @@ function DAppApproval({ wallet, onComplete }) {
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "dapp-tx-row priority-section", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "dapp-tx-row-label", children: "Priority" }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "dapp-priority-chips", children: [
-          PRIORITY_OPTIONS.filter((opt) => opt.id !== "custom").map((opt) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+          getPriorityOptions(currentNetwork2).filter((opt) => opt.id !== "custom").map((opt) => /* @__PURE__ */ jsxRuntimeExports.jsx(
             "button",
             {
               className: `dapp-priority-chip ${priority === opt.id ? "active" : ""}`,
@@ -32333,7 +32885,7 @@ function DAppApproval({ wallet, onComplete }) {
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "dapp-tx-row total", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "dapp-tx-row-label", children: "Total Fee" }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "dapp-tx-row-value highlight", children: [
-          ((decodedTx.estimatedFee || 5e-6) + (priority === "custom" ? parseFloat(customFee) || 0 : ((_h = PRIORITY_OPTIONS.find((p2) => p2.id === priority)) == null ? void 0 : _h.fee) || 0)).toFixed(6),
+          (getBaseFee(currentNetwork2) * (decodedTx.numSignatures || 1) + (priority === "custom" ? parseFloat(customFee) || 0 : ((_h = getPriorityOptions(currentNetwork2).find((p2) => p2.id === priority)) == null ? void 0 : _h.fee) || 0)).toFixed(6),
           " ",
           (currentNetwork2 == null ? void 0 : currentNetwork2.includes("Solana")) ? "SOL" : "XNT"
         ] })
@@ -32641,7 +33193,7 @@ function LockScreen({ onUnlock, walletUnlock }) {
   ] });
 }
 function App() {
-  var _a2, _b2, _c, _d;
+  var _a2, _b2, _c, _d, _e;
   console.log("[App] Rendering...");
   const wallet = useWallet();
   console.log("[App] wallet.wallets:", (_a2 = wallet.wallets) == null ? void 0 : _a2.length, "wallet.loading:", wallet.loading, "wallet.isEncrypted:", wallet.isEncrypted);
@@ -32726,7 +33278,7 @@ function App() {
       }
     };
   }, []);
-  const fetchUserTokens = reactExports.useCallback(async () => {
+  reactExports.useCallback(async () => {
     var _a3;
     if (!((_a3 = wallet.wallet) == null ? void 0 : _a3.publicKey)) {
       logger$1.log("[App] Cannot fetch tokens - no publicKey");
@@ -32750,6 +33302,7 @@ function App() {
     return saved;
   });
   const [passwordCheckComplete, setPasswordCheckComplete] = reactExports.useState(false);
+  const [sessionPassword, setSessionPassword] = reactExports.useState(null);
   reactExports.useEffect(() => {
     const checkHasPassword = async () => {
       try {
@@ -32921,6 +33474,7 @@ function App() {
   }, [wallet.wallets.length, wallet.loading, initialCheckDone, screen]);
   const handleUnlock = async (password) => {
     setIsLocked(false);
+    setSessionPassword(password);
     const now = Date.now();
     lastActivityRef.current = now;
     storage.set("lastActivity", now);
@@ -32930,6 +33484,7 @@ function App() {
       if (!password) {
         throw new Error("Password is required to create a wallet");
       }
+      setUserTokens([]);
       logger$1.log("[handleCreateComplete] Creating encrypted wallet");
       const { setupPassword, hasPassword: checkHasPassword } = await __vitePreload(async () => {
         const { setupPassword: setupPassword2, hasPassword: checkHasPassword2 } = await import("./wallet.js");
@@ -32942,6 +33497,7 @@ function App() {
       if (!effectivePasswordExists) {
         await setupPassword(password);
       }
+      setSessionPassword(password);
       setHasPasswordAsync(true);
       localStorage.setItem("x1wallet_encrypted", "true");
       storage.set("passwordProtection", true);
@@ -32958,6 +33514,7 @@ function App() {
       if (!password) {
         throw new Error("Password is required");
       }
+      setUserTokens([]);
       const { setupPassword, hasPassword: checkHasPassword } = await __vitePreload(async () => {
         const { setupPassword: setupPassword2, hasPassword: checkHasPassword2 } = await import("./wallet.js");
         return { setupPassword: setupPassword2, hasPassword: checkHasPassword2 };
@@ -32969,6 +33526,7 @@ function App() {
       if (!effectivePasswordExists) {
         await setupPassword(password);
       }
+      setSessionPassword(password);
       storage.set("passwordProtection", true);
       setPasswordProtection(true);
       setHasPasswordAsync(true);
@@ -32999,6 +33557,7 @@ function App() {
         showAlert(`This wallet has already been imported as "${existingMatch.name}"`, "Wallet Already Exists", "warning");
         return;
       }
+      setUserTokens([]);
       const { setupPassword, hasPassword: checkHasPassword } = await __vitePreload(async () => {
         const { setupPassword: setupPassword2, hasPassword: checkHasPassword2 } = await import("./wallet.js");
         return { setupPassword: setupPassword2, hasPassword: checkHasPassword2 };
@@ -33027,6 +33586,7 @@ function App() {
       if (!effectivePasswordExists) {
         await setupPassword(password);
       }
+      setSessionPassword(password);
       storage.set("passwordProtection", true);
       setPasswordProtection(true);
       setHasPasswordAsync(true);
@@ -33040,6 +33600,7 @@ function App() {
   };
   const handleLock = () => {
     wallet.lockWallet();
+    setSessionPassword(null);
     setIsLocked(true);
   };
   const handleManagerCreate = () => {
@@ -33195,7 +33756,8 @@ function App() {
         {
           onComplete: handleCreateComplete,
           onBack: () => setScreen(returnScreen === "manage" ? "manage" : "welcome"),
-          passwordProtection
+          passwordProtection,
+          sessionPassword
         }
       )
     ] });
@@ -33216,7 +33778,8 @@ function App() {
         {
           onComplete: handleImportComplete,
           onCompletePrivateKey: handleImportPrivateKey,
-          onBack: () => setScreen(returnScreen === "manage" ? "manage" : "welcome")
+          onBack: () => setScreen(returnScreen === "manage" ? "manage" : "welcome"),
+          sessionPassword
         }
       )
     ] });
@@ -33408,7 +33971,10 @@ function App() {
             setScreen("send");
           },
           onReceive: () => setScreen("receive"),
-          onSwap: () => setScreen("swap"),
+          onSwap: (token) => {
+            setSelectedToken(token);
+            setScreen("swap");
+          },
           onBridge: () => setScreen("bridge"),
           onStake: () => setScreen("stake")
         }
@@ -33435,9 +34001,12 @@ function App() {
         {
           wallet,
           onBack: () => setScreen("main"),
-          onSwapComplete: () => {
+          onSwapComplete: (updatedTokens) => {
+            if (updatedTokens && updatedTokens.length > 0) {
+              setUserTokens(updatedTokens);
+            }
             triggerActivityRefresh();
-            fetchUserTokens();
+            triggerBalanceRefresh();
           },
           userTokens,
           initialFromToken: selectedToken
@@ -33628,7 +34197,8 @@ function App() {
           setSelectedToken(token);
           setScreen("tokenDetail");
         }
-      }
+      },
+      `${(_e = wallet.wallet) == null ? void 0 : _e.publicKey}-${wallet.network}`
     ),
     /* @__PURE__ */ jsxRuntimeExports.jsx(BottomNav, {})
   ] });

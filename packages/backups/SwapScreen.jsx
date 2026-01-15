@@ -1,5 +1,5 @@
 // Swap Screen - Uses XDEX for X1, Jupiter for Solana
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import X1Logo from './X1Logo';
 import { NETWORKS } from '@x1-wallet/core/services/networks';
 import { getQuote, prepareSwap, getSwapTokens, getSwapProvider, isSolanaNetwork, XDEX_LOGOS, searchXDEXTokens, fetchTokenMetadata } from '@x1-wallet/core/services/xdex';
@@ -9,57 +9,12 @@ import { logger, getUserFriendlyError, ErrorMessages } from '@x1-wallet/core';
 import { hardwareWallet } from '../services/hardware';
 
 // Priority fee options for transaction speed
-// Priority fee options - now using microLamports directly (not total fee)
-// These are the actual microlamports per compute unit values
-function getPriorityOptions(network) {
-  const isX1 = network?.includes('X1');
-  // X1 has higher base fees than Solana
-  if (isX1) {
-    return [
-      { id: 'auto', name: 'Auto', microLamports: 0, fee: 0, description: 'Use API default' },
-      { id: 'fast', name: 'Fast', microLamports: 1000, fee: 0.00015, description: '~0.00015 XNT extra' },
-      { id: 'turbo', name: 'Turbo', microLamports: 10000, fee: 0.0015, description: '~0.0015 XNT extra' },
-      { id: 'degen', name: 'Degen', microLamports: 100000, fee: 0.015, description: '~0.015 XNT extra' },
-      { id: 'custom', name: 'Custom', microLamports: 0, fee: 0, description: 'Custom fee' }
-    ];
-  }
-  // Solana fees
-  return [
-    { id: 'auto', name: 'Auto', microLamports: 0, fee: 0, description: 'Use API default' },
-    { id: 'fast', name: 'Fast', microLamports: 10000, fee: 0.0015, description: '~0.0015 SOL extra' },
-    { id: 'turbo', name: 'Turbo', microLamports: 100000, fee: 0.015, description: '~0.015 SOL extra' },
-    { id: 'degen', name: 'Degen', microLamports: 1000000, fee: 0.15, description: '~0.15 SOL extra' },
-    { id: 'custom', name: 'Custom', microLamports: 0, fee: 0, description: 'Custom fee' }
-  ];
-}
-
-// Convert custom fee input (in SOL/XNT) to microlamports per compute unit
-// Assumes ~150,000 compute units for typical swap transactions
-function customFeeToMicroLamports(feeInSol, computeUnits = 150000) {
-  if (!feeInSol || feeInSol <= 0) return 0;
-  const lamports = Math.floor(feeInSol * 1_000_000_000);
-  const microLamports = Math.floor((lamports * 1_000_000) / computeUnits);
-  return microLamports;
-}
-
-// Legacy function name for backwards compatibility
-function feeToMicroLamports(feeInSol, computeUnits = 150000) {
-  return customFeeToMicroLamports(feeInSol, computeUnits);
-}
-
-// Get base transaction fee for network
-function getBaseFee(network) {
-  const isX1 = network?.includes('X1');
-  return isX1 ? 0.002 : 0.000005; // X1: 0.002 XNT, Solana: 5000 lamports
-}
-
-// Legacy constant for backwards compatibility (will use network-aware version)
 const PRIORITY_OPTIONS = [
   { id: 'auto', name: 'Auto', fee: 0, description: 'Standard speed' },
   { id: 'fast', name: 'Fast', fee: 0.000005, description: 'Higher priority' },
   { id: 'turbo', name: 'Turbo', fee: 0.00005, description: 'Very high priority' },
   { id: 'degen', name: 'Degen', fee: 0.001, description: 'Maximum priority' },
-  { id: 'custom', name: 'Custom', fee: 0, description: 'Set your own fee' }
+  { id: 'custom', name: 'Custom', fee: 0, description: 'Custom fee' }
 ];
 
 // Global image cache to prevent re-fetching
@@ -201,17 +156,12 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
   const [toAmount, setToAmount] = useState('');
   const [inputMode, setInputMode] = useState('from'); // 'from' | 'to' - which field user is editing
   const [selectingToken, setSelectingToken] = useState(null); // 'from' | 'to' | null
-  const [slippage, setSlippage] = useState(() => {
-    // X1 tends to be more volatile, use higher default slippage
-    const savedNetwork = localStorage.getItem('x1wallet_network') || '';
-    return savedNetwork.includes('X1') ? 1.0 : 0.5;
-  });
+  const [slippage, setSlippage] = useState(0.5);
   const [customSlippage, setCustomSlippage] = useState('');
-  const slippageOptions = [0.5, 1.0, 2.0, 5.0]; // Increased options for volatile markets
+  const slippageOptions = [0.1, 0.5, 1.0, 3.0];
   const [loading, setLoading] = useState(false);
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [quote, setQuote] = useState(null);
-  const [quoteTimestamp, setQuoteTimestamp] = useState(null); // Track when quote was received
   const [error, setError] = useState('');
   const [swapStatus, setSwapStatus] = useState(''); // '' | 'confirming' | 'success' | 'error'
   const [hwStatus, setHwStatus] = useState(''); // Hardware wallet status message
@@ -241,16 +191,8 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
   const [poolTokens, setPoolTokens] = useState([]);
   const [poolTokensLoading, setPoolTokensLoading] = useState(false);
   
-  // Locally fetched token balances (when userTokens prop is empty)
-  const [localTokens, setLocalTokens] = useState([]);
-  const [fetchingLocalTokens, setFetchingLocalTokens] = useState(false);
-  const localTokensFetchedRef = useRef(false);
-  
   // Track if initial token has been set
   const [initialTokenSet, setInitialTokenSet] = useState(false);
-  
-  // Track when optimistic balance update was done (to skip external sync)
-  const lastOptimisticUpdate = useRef(0);
 
   // Safety check - compute safe values even if wallet is not ready
   const walletReady = !!(wallet && wallet.network);
@@ -340,79 +282,17 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
     setSearchResults([]);
     setError('');
     setInitialTokenSet(false);
-    // Reset local token fetch state so we fetch fresh for new network
-    setLocalTokens([]);
-    localTokensFetchedRef.current = false;
   }, [currentNetwork]);
 
   // Known Solana-only tokens that should NEVER appear on X1 networks
   const SOLANA_ONLY_SYMBOLS = ['SOL', 'WSOL', 'RAY', 'SRM', 'ORCA', 'MNGO', 'STEP', 'COPE', 'FIDA', 'MAPS', 'OXY', 'mSOL', 'stSOL', 'jitoSOL', 'bSOL'];
   const X1_ONLY_SYMBOLS = ['XNT', 'WXNT', 'pXNT'];
 
-  // Fetch token balances directly if userTokens prop is empty
-  // This handles the case when SwapScreen is opened before WalletMain has fetched tokens
-  useEffect(() => {
-    // Skip if we already have userTokens from parent
-    if (userTokens && userTokens.length > 0) {
-      logger.log('[SwapScreen] Using userTokens from parent:', userTokens.length);
-      localTokensFetchedRef.current = false; // Reset so we can fetch again if needed
-      return;
-    }
-    
-    // Skip if wallet not ready
-    if (!walletReady || !networkConfig?.rpcUrl || !wallet?.wallet?.publicKey) {
-      return;
-    }
-    
-    // Skip if already fetching or already fetched for this session
-    if (fetchingLocalTokens || localTokensFetchedRef.current) {
-      return;
-    }
-    
-    const fetchLocalTokens = async () => {
-      logger.log('[SwapScreen] Fetching token balances directly (userTokens empty)');
-      setFetchingLocalTokens(true);
-      
-      try {
-        const { fetchTokenAccounts } = await import('@x1-wallet/core/services/tokens');
-        const allTokens = await fetchTokenAccounts(
-          networkConfig.rpcUrl, 
-          wallet.wallet.publicKey, 
-          currentNetwork
-        );
-        
-        // Filter out NFTs
-        const tokenList = allTokens.filter(token => {
-          const isNFT = token.decimals === 0 && token.uiAmount === 1;
-          return !isNFT;
-        });
-        
-        logger.log('[SwapScreen] Directly fetched tokens:', tokenList.length, tokenList.map(t => `${t.symbol}:${t.balance || t.uiAmount}`));
-        setLocalTokens(tokenList);
-        localTokensFetchedRef.current = true;
-      } catch (err) {
-        logger.error('[SwapScreen] Failed to fetch tokens directly:', err);
-      } finally {
-        setFetchingLocalTokens(false);
-      }
-    };
-    
-    fetchLocalTokens();
-  }, [userTokens, walletReady, networkConfig?.rpcUrl, wallet?.wallet?.publicKey, currentNetwork, fetchingLocalTokens]);
-
-  // Combine userTokens with localTokens - prefer userTokens if available
-  const effectiveUserTokens = React.useMemo(() => {
-    if (userTokens && userTokens.length > 0) {
-      return userTokens;
-    }
-    return localTokens;
-  }, [userTokens, localTokens]);
-
-  // Filter effectiveUserTokens to only include tokens appropriate for current network
+  // Filter userTokens to only include tokens appropriate for current network
   const filteredUserTokens = React.useMemo(() => {
-    if (!effectiveUserTokens || effectiveUserTokens.length === 0) return [];
+    if (!userTokens || userTokens.length === 0) return [];
     
-    return effectiveUserTokens.filter(token => {
+    return userTokens.filter(token => {
       const symbol = token.symbol?.toUpperCase() || '';
       
       // On X1 networks, exclude Solana-only tokens
@@ -433,7 +313,9 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
       
       return true;
     });
-  }, [effectiveUserTokens, isSolana]);
+  }, [userTokens, isSolana]);
+
+  // Fetch pool tokens from API
   useEffect(() => {
     logger.log('[SwapScreen] Pool tokens useEffect triggered - network:', currentNetwork, 'isSolana:', isSolana, 'walletReady:', walletReady);
     
@@ -709,13 +591,7 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
   }, [currentNetwork, walletBalance, nativeSymbol, filteredUserTokens, walletReady]);
 
   // Sync selected token balances when tokens list updates
-  // Skip if we recently did an optimistic update (to prevent overwriting)
   useEffect(() => {
-    // Skip if optimistic update was done in the last 5 seconds
-    if (Date.now() - lastOptimisticUpdate.current < 5000) {
-      return;
-    }
-    
     if (fromToken && tokens.length > 0) {
       const updatedFrom = tokens.find(t => t.mint === fromToken.mint || t.symbol === fromToken.symbol);
       if (updatedFrom && updatedFrom.balance !== fromToken.balance) {
@@ -730,53 +606,8 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
     }
   }, [tokens]);
 
-  // Also sync balances directly from userTokens when they update
-  // Skip if we recently did an optimistic update (to prevent overwriting)
-  useEffect(() => {
-    // Skip if optimistic update was done in the last 5 seconds
-    if (Date.now() - lastOptimisticUpdate.current < 5000) {
-      return;
-    }
-    
-    if (!filteredUserTokens || filteredUserTokens.length === 0) return;
-    
-    // Update fromToken balance if it exists in userTokens
-    if (fromToken && fromToken.symbol !== nativeSymbol) {
-      const userToken = filteredUserTokens.find(ut => 
-        ut.mint === fromToken.mint || ut.symbol === fromToken.symbol
-      );
-      if (userToken) {
-        const newBalance = parseFloat(userToken.balance || userToken.uiAmount) || 0;
-        if (newBalance !== fromToken.balance) {
-          logger.log('[SwapScreen] Syncing fromToken balance from userTokens:', fromToken.symbol, newBalance);
-          setFromToken(prev => ({ ...prev, balance: newBalance }));
-        }
-      }
-    }
-    
-    // Update toToken balance if it exists in userTokens
-    if (toToken && toToken.symbol !== nativeSymbol) {
-      const userToken = filteredUserTokens.find(ut => 
-        ut.mint === toToken.mint || ut.symbol === toToken.symbol
-      );
-      if (userToken) {
-        const newBalance = parseFloat(userToken.balance || userToken.uiAmount) || 0;
-        if (newBalance !== toToken.balance) {
-          logger.log('[SwapScreen] Syncing toToken balance from userTokens:', toToken.symbol, newBalance);
-          setToToken(prev => ({ ...prev, balance: newBalance }));
-        }
-      }
-    }
-  }, [filteredUserTokens, nativeSymbol]);
-
   // Sync native token balance with walletBalance
-  // Skip if we recently did an optimistic update (to prevent overwriting)
   useEffect(() => {
-    // Skip if optimistic update was done in the last 5 seconds
-    if (Date.now() - lastOptimisticUpdate.current < 5000) {
-      return;
-    }
-    
     if (fromToken && (fromToken.mint === 'native' || fromToken.isNative || fromToken.symbol === nativeSymbol)) {
       if (fromToken.balance !== walletBalance) {
         setFromToken(prev => ({ ...prev, balance: walletBalance }));
@@ -944,7 +775,6 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
   useEffect(() => {
     if (!activeAmount || !fromToken || !toToken || parseFloat(activeAmount) <= 0) {
       setQuote(null);
-      setQuoteTimestamp(null);
       return;
     }
 
@@ -957,7 +787,6 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
         rate: 1,
         data: { rate: 1, outputAmount: parseFloat(activeAmount) }
       });
-      setQuoteTimestamp(Date.now());
       if (inputMode === 'from') setToAmount(activeAmount);
       else setFromAmount(activeAmount);
       setQuoteLoading(false);
@@ -985,7 +814,6 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
         
         logger.log('[Swap] Quote data received:', quoteData);
         setQuote(quoteData);
-        setQuoteTimestamp(Date.now()); // Track when this quote was received
         
         // Extract output amount from quote
         const outputAmount = quoteData?.data?.outputAmount || 
@@ -1019,13 +847,7 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
         }
       } catch (err) {
         logger.error('[Swap] Quote error:', err);
-        // Check for rate limit error
-        const errMsg = err?.message || '';
-        if (errMsg.includes('429') || errMsg.includes('Too Many Requests')) {
-          setError('Rate limited. Please wait a moment...');
-        } else {
-          setError(getUserFriendlyError(err, ErrorMessages.swap.quoteFailed));
-        }
+        setError(getUserFriendlyError(err, ErrorMessages.swap.quoteFailed));
         if (inputMode === 'from') setToAmount('');
         else setFromAmount('');
       } finally {
@@ -1033,8 +855,8 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
       }
     };
 
-    // Debounce the quote fetch (150ms for near-instant response)
-    const timeoutId = setTimeout(fetchQuote, 150);
+    // Debounce the quote fetch
+    const timeoutId = setTimeout(fetchQuote, 500);
     return () => clearTimeout(timeoutId);
   }, [activeAmount, inputMode, fromToken, toToken, currentNetwork]);
 
@@ -1068,34 +890,9 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
   };
 
   const handleSwapTokens = () => {
-    // Helper to get latest balance for a token
-    const getLatestBalance = (t) => {
-      if (!t) return 0;
-      // For native token, use wallet balance
-      if (t.symbol === nativeSymbol || t.mint === 'native' || t.isNative) {
-        return walletBalance;
-      }
-      // Check userTokens for the most current balance
-      const userToken = filteredUserTokens?.find(ut => 
-        ut.mint === t.mint || ut.symbol === t.symbol
-      );
-      if (userToken) {
-        return parseFloat(userToken.balance || userToken.uiAmount) || 0;
-      }
-      // Check tokens list
-      const tokenInList = tokens.find(lt => lt.mint === t.mint || lt.symbol === t.symbol);
-      if (tokenInList?.balance) {
-        return tokenInList.balance;
-      }
-      return t.balance || 0;
-    };
-    
-    // Swap with updated balances
-    const newFromToken = toToken ? { ...toToken, balance: getLatestBalance(toToken) } : null;
-    const newToToken = fromToken ? { ...fromToken, balance: getLatestBalance(fromToken) } : null;
-    
-    setFromToken(newFromToken);
-    setToToken(newToToken);
+    const temp = fromToken;
+    setFromToken(toToken);
+    setToToken(temp);
     setFromAmount('');
     setToAmount('');
     setQuote(null);
@@ -1258,22 +1055,9 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
       setError('Please wait for quote');
       return;
     }
-    
-    // Warn if quote is older than 30 seconds (but don't block)
-    const quoteAge = quoteTimestamp ? (Date.now() - quoteTimestamp) / 1000 : 0;
-    if (!isWrapOperation && quoteAge > 30) {
-      logger.log('[Swap] Quote is stale:', quoteAge, 'seconds old');
-      // Don't block, just log - the prepareSwap will get a fresh transaction anyway
-    }
 
-    // Use integer comparison to avoid floating-point precision issues
-    const decimals = fromToken?.decimals || 9;
-    const multiplier = Math.pow(10, decimals);
-    const requiredAmount = Math.round(parseFloat(fromAmount) * multiplier);
-    const availableAmount = Math.round((fromToken?.balance || 0) * multiplier);
-    
-    if (requiredAmount > availableAmount) {
-      setError(`Insufficient balance. Required: ${fromAmount} tokens, Available: ${fromToken?.balance || 0} tokens`);
+    if (parseFloat(fromAmount) > (fromToken?.balance || 0)) {
+      setError('Insufficient balance');
       return;
     }
 
@@ -1284,12 +1068,6 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
 
   // Execute the actual swap after user confirms
   const handleSwap = async () => {
-    // Prevent double-click / multiple submissions
-    if (loading) {
-      logger.log('[Swap] Already processing, ignoring duplicate call');
-      return;
-    }
-    
     logger.log('[Swap] Executing swap...');
     logger.log('[Swap] isHardwareWallet:', isHardwareWallet);
     logger.log('[Swap] wallet?.wallet?.isHardware:', wallet?.wallet?.isHardware);
@@ -1361,35 +1139,19 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
             
             setHwStatus('Please confirm on your Ledger...');
             
-            // Get derivation path from wallet - check multiple possible locations
-            const derivationPath = wallet?.wallet?.derivationPath || 
-                                   wallet?.derivationPath || 
-                                   wallet?.activeWallet?.derivationPath ||
-                                   wallet?.wallet?.activeAddress?.derivationPath ||
-                                   "44'/501'/0'/0'"; // Default fallback
-            logger.log('[Swap Wrap/Unwrap] Using derivation path:', derivationPath);
-            logger.log('[Swap Wrap/Unwrap] Wallet structure:', {
-              hasWalletWallet: !!wallet?.wallet,
-              walletDerivPath: wallet?.wallet?.derivationPath,
-              directDerivPath: wallet?.derivationPath,
-              activeWalletDerivPath: wallet?.activeWallet?.derivationPath
-            });
-            
             if (wrapDirection === 'wrap') {
               signature = await createWrapTransactionHardware({
                 owner: walletPublicKey,
                 amount: parseFloat(fromAmount),
                 rpcUrl: networkConfig.rpcUrl,
-                hardwareWallet,
-                derivationPath
+                hardwareWallet
               });
             } else {
               signature = await createUnwrapTransactionHardware({
                 owner: walletPublicKey,
                 amount: parseFloat(fromAmount),
                 rpcUrl: networkConfig.rpcUrl,
-                hardwareWallet,
-                derivationPath
+                hardwareWallet
               });
             }
             setHwStatus('');
@@ -1443,62 +1205,36 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
           setTxHash(signature);
           setSwapStatus('success');
           setShowConfirm(false);
-          setLoading(false);
           
-          // Capture amounts for optimistic update
+          // Refresh balance immediately
+          if (wallet.refreshBalance) {
+            wallet.refreshBalance();
+          }
+          
+          // Capture amounts before reset
           const swappedFromAmount = parseFloat(fromAmount);
           const swappedToAmount = parseFloat(toAmount);
           const swappedFromToken = { ...fromToken };
           const swappedToToken = { ...toToken };
           
-          // Mark that we're doing an optimistic update (prevents external sync from overwriting)
-          lastOptimisticUpdate.current = Date.now();
+          setLoading(false);
           
-          // Update local token balances IMMEDIATELY (optimistic update)
-          setTokens(prev => prev.map(t => {
-            if (t.symbol === swappedFromToken.symbol || t.mint === swappedFromToken.mint) {
-              return { ...t, balance: Math.max(0, (t.balance || 0) - swappedFromAmount) };
-            }
-            if (t.symbol === swappedToToken.symbol || t.mint === swappedToToken.mint) {
-              return { ...t, balance: (t.balance || 0) + swappedToAmount };
-            }
-            return t;
-          }));
-          
-          // Update fromToken and toToken balances immediately
-          setFromToken(prev => {
-            if (!prev) return prev;
-            if (prev.symbol === swappedFromToken.symbol || prev.mint === swappedFromToken.mint) {
-              return { ...prev, balance: Math.max(0, (prev.balance || 0) - swappedFromAmount) };
-            }
-            return prev;
-          });
-          setToToken(prev => {
-            if (!prev) return prev;
-            if (prev.symbol === swappedToToken.symbol || prev.mint === swappedToToken.mint) {
-              return { ...prev, balance: (prev.balance || 0) + swappedToAmount };
-            }
-            return prev;
-          });
-          
-          // Compute optimistic token updates for parent
-          const updatedTokensForParent = userTokens.map(t => {
-            if (t.symbol === swappedFromToken.symbol || t.mint === swappedFromToken.mint) {
-              return { ...t, balance: Math.max(0, (t.balance || t.uiAmount || 0) - swappedFromAmount), uiAmount: Math.max(0, (t.uiAmount || t.balance || 0) - swappedFromAmount) };
-            }
-            if (t.symbol === swappedToToken.symbol || t.mint === swappedToToken.mint) {
-              return { ...t, balance: (t.balance || t.uiAmount || 0) + swappedToAmount, uiAmount: (t.uiAmount || t.balance || 0) + swappedToAmount };
-            }
-            return t;
-          });
-          
-          // Trigger parent refresh IMMEDIATELY with optimistic updates
-          if (onSwapComplete) onSwapComplete(updatedTokensForParent);
-          
-          // Refresh balance from chain
-          if (wallet.refreshBalance) {
-            wallet.refreshBalance();
-          }
+          // Trigger parent refresh and update balances after a short delay
+          setTimeout(() => {
+            // Trigger parent refresh
+            if (onSwapComplete) onSwapComplete();
+            
+            // Update local token balances
+            setTokens(prev => prev.map(t => {
+              if (t.symbol === swappedFromToken.symbol || t.mint === swappedFromToken.mint) {
+                return { ...t, balance: Math.max(0, (t.balance || 0) - swappedFromAmount) };
+              }
+              if (t.symbol === swappedToToken.symbol || t.mint === swappedToToken.mint) {
+                return { ...t, balance: (t.balance || 0) + swappedToAmount };
+              }
+              return t;
+            }));
+          }, 2000);
           
           return;
         } catch (wrapErr) {
@@ -1553,10 +1289,7 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
         tokenOutParam = toToken.mint;
       }
       
-      logger.log('[Swap] Preparing with tokens:', { tokenIn: tokenInParam, tokenOut: tokenOutParam, slippage });
-      
-      // Convert slippage percentage to basis points (0.5% = 50 bps)
-      const slippageBps = Math.round(slippage * 100);
+      logger.log('[Swap] Preparing with tokens:', { tokenIn: tokenInParam, tokenOut: tokenOutParam });
       
       // Prepare the swap transaction
       const txData = await prepareSwap(
@@ -1564,8 +1297,7 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
         tokenInParam,
         tokenOutParam,
         parseFloat(fromAmount),
-        currentNetwork,
-        slippageBps
+        currentNetwork
       );
 
       logger.log('[Swap] Transaction prepared:', txData);
@@ -1627,31 +1359,6 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
         // Hardware wallet signing
         setHwStatus('Connecting to Ledger...');
         
-        // Get derivation path from wallet - check multiple possible locations
-        const derivationPath = wallet?.wallet?.derivationPath || 
-                               wallet?.derivationPath || 
-                               wallet?.activeWallet?.derivationPath ||
-                               wallet?.wallet?.activeAddress?.derivationPath ||
-                               "44'/501'/0'/0'"; // Default fallback
-        logger.log('[Swap] Using derivation path:', derivationPath);
-        logger.log('[Swap] Wallet structure:', {
-          hasWalletWallet: !!wallet?.wallet,
-          walletDerivPath: wallet?.wallet?.derivationPath,
-          directDerivPath: wallet?.derivationPath,
-          activeWalletDerivPath: wallet?.activeWallet?.derivationPath
-        });
-        
-        // Calculate priority fee in microlamports
-        // For custom, convert the fee amount; for presets, use microLamports directly
-        const priorityOption = getPriorityOptions(currentNetwork).find(p => p.id === swapPriority);
-        const priorityMicroLamports = swapPriority === 'custom' 
-          ? customFeeToMicroLamports(parseFloat(customFee) || 0)
-          : (priorityOption?.microLamports || 0);
-        
-        if (priorityMicroLamports > 0) {
-          logger.log(`[Swap] Using priority fee: ${priorityMicroLamports} microlamports/CU (${swapPriority})`);
-        }
-        
         if (!hardwareWallet.isReady()) {
           await hardwareWallet.connect('hid');
           await hardwareWallet.openApp();
@@ -1667,9 +1374,7 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
             const signature = await signAndSendExternalTransactionHardware(
               tx,
               hardwareWallet,
-              networkConfig.rpcUrl,
-              derivationPath,
-              priorityMicroLamports
+              networkConfig.rpcUrl
             );
             
             logger.log(`[Swap] Transaction ${i + 1} sent! Signature:`, signature);
@@ -1677,7 +1382,7 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
             
             if (i < transactions.length - 1) {
               setHwStatus('Waiting for confirmation...');
-              await new Promise(resolve => setTimeout(resolve, 200));
+              await new Promise(resolve => setTimeout(resolve, 2000));
             }
           } catch (txErr) {
             logger.error(`[Swap] Transaction ${i + 1} failed:`, txErr);
@@ -1691,17 +1396,6 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
         setHwStatus('');
       } else {
         // Software wallet signing
-        // Calculate priority fee in microlamports
-        // For custom, convert the fee amount; for presets, use microLamports directly
-        const priorityOption = getPriorityOptions(currentNetwork).find(p => p.id === swapPriority);
-        const priorityMicroLamports = swapPriority === 'custom' 
-          ? customFeeToMicroLamports(parseFloat(customFee) || 0)
-          : (priorityOption?.microLamports || 0);
-        
-        if (priorityMicroLamports > 0) {
-          logger.log(`[Swap] Using priority fee: ${priorityMicroLamports} microlamports/CU (${swapPriority})`);
-        }
-        
         for (let i = 0; i < transactions.length; i++) {
           const tx = transactions[i];
           logger.log(`[Swap] Signing transaction ${i + 1}/${transactions.length}, length:`, tx.length);
@@ -1711,17 +1405,16 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
             const signature = await signAndSendExternalTransaction(
               tx,
               privateKey,
-              networkConfig.rpcUrl,
-              priorityMicroLamports
+              networkConfig.rpcUrl
             );
             
             logger.log(`[Swap] Transaction ${i + 1} sent! Signature:`, signature);
             lastSignature = signature;
             
-            // If there are more transactions, wait briefly for the first one to be processed
+            // If there are more transactions, wait a bit for the first one to be confirmed
             if (i < transactions.length - 1) {
               logger.log('[Swap] Waiting for transaction to be processed before next...');
-              await new Promise(resolve => setTimeout(resolve, 200));
+              await new Promise(resolve => setTimeout(resolve, 2000));
             }
           } catch (txErr) {
             logger.error(`[Swap] Transaction ${i + 1} failed:`, txErr);
@@ -1776,67 +1469,56 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
         logger.warn('[Swap] XP tracking failed:', err);
       });
       
-      // Capture amounts for optimistic update FIRST
+      setTxHash(signature);
+      setSwapStatus('success');
+      setShowConfirm(false);
+      
+      // Refresh balance immediately
+      if (wallet.refreshBalance) {
+        wallet.refreshBalance();
+      }
+      
+      // Capture amounts before reset
       const swappedFromAmount = parseFloat(fromAmount);
       const swappedToAmount = parseFloat(toAmount);
       const swappedFromToken = { ...fromToken };
       const swappedToToken = { ...toToken };
       
-      // Mark that we're doing an optimistic update (prevents external sync from overwriting)
-      lastOptimisticUpdate.current = Date.now();
-      
-      // Update local token balances IMMEDIATELY (optimistic update) - BEFORE showing success
-      setTokens(prev => prev.map(t => {
-        if (t.symbol === swappedFromToken.symbol || t.mint === swappedFromToken.mint) {
-          return { ...t, balance: Math.max(0, (t.balance || 0) - swappedFromAmount) };
+      // Reset form after success and trigger refresh
+      setTimeout(() => {
+        // Trigger parent refresh (fetches new token balances)
+        if (onSwapComplete) {
+          onSwapComplete();
         }
-        if (t.symbol === swappedToToken.symbol || t.mint === swappedToToken.mint) {
-          return { ...t, balance: (t.balance || 0) + swappedToAmount };
-        }
-        return t;
-      }));
-      
-      // Update fromToken and toToken balances immediately
-      setFromToken(prev => {
-        if (!prev) return prev;
-        if (prev.symbol === swappedFromToken.symbol || prev.mint === swappedFromToken.mint) {
-          return { ...prev, balance: Math.max(0, (prev.balance || 0) - swappedFromAmount) };
-        }
-        return prev;
-      });
-      setToToken(prev => {
-        if (!prev) return prev;
-        if (prev.symbol === swappedToToken.symbol || prev.mint === swappedToToken.mint) {
-          return { ...prev, balance: (prev.balance || 0) + swappedToAmount };
-        }
-        return prev;
-      });
-      
-      // NOW show success UI after balances are updated
-      setTxHash(signature);
-      setSwapStatus('success');
-      setShowConfirm(false);
-      
-      // Compute optimistic token updates for parent
-      const updatedTokensForParent = userTokens.map(t => {
-        if (t.symbol === swappedFromToken.symbol || t.mint === swappedFromToken.mint) {
-          return { ...t, balance: Math.max(0, (t.balance || t.uiAmount || 0) - swappedFromAmount), uiAmount: Math.max(0, (t.uiAmount || t.balance || 0) - swappedFromAmount) };
-        }
-        if (t.symbol === swappedToToken.symbol || t.mint === swappedToToken.mint) {
-          return { ...t, balance: (t.balance || t.uiAmount || 0) + swappedToAmount, uiAmount: (t.uiAmount || t.balance || 0) + swappedToAmount };
-        }
-        return t;
-      });
-      
-      // Trigger parent refresh IMMEDIATELY with optimistic updates
-      if (onSwapComplete) {
-        onSwapComplete(updatedTokensForParent);
-      }
-      
-      // Refresh balance from chain
-      if (wallet.refreshBalance) {
-        wallet.refreshBalance();
-      }
+        
+        // Update local token balances using captured values
+        setTokens(prev => prev.map(t => {
+          if (t.symbol === swappedFromToken.symbol || t.mint === swappedFromToken.mint) {
+            return { ...t, balance: Math.max(0, (t.balance || 0) - swappedFromAmount) };
+          }
+          if (t.symbol === swappedToToken.symbol || t.mint === swappedToToken.mint) {
+            return { ...t, balance: (t.balance || 0) + swappedToAmount };
+          }
+          return t;
+        }));
+        
+        // Update fromToken and toToken balances using captured values
+        setFromToken(prev => {
+          if (!prev) return prev;
+          if (prev.symbol === swappedFromToken.symbol || prev.mint === swappedFromToken.mint) {
+            return { ...prev, balance: Math.max(0, (prev.balance || 0) - swappedFromAmount) };
+          }
+          return prev;
+        });
+        setToToken(prev => {
+          if (!prev) return prev;
+          if (prev.symbol === swappedToToken.symbol || prev.mint === swappedToToken.mint) {
+            return { ...prev, balance: (prev.balance || 0) + swappedToAmount };
+          }
+          return prev;
+        });
+        
+      }, 2000);
 
     } catch (err) {
       logger.error('[Swap] Error:', err);
@@ -1846,12 +1528,8 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
       // Parse specific error types for better user messaging
       let userMessage = err?.message || getUserFriendlyError(err, ErrorMessages.swap.failed);
       
-      // Check for 429 rate limit error
-      if (userMessage.includes('429') || userMessage.includes('Too Many Requests') || userMessage.includes('rate limit')) {
-        userMessage = 'Too many requests. Please wait a few seconds and try again.';
-      }
       // Check for XDEX fee account creation error (backend issue)
-      else if (userMessage.includes('Failed to create fee token account')) {
+      if (userMessage.includes('Failed to create fee token account')) {
         userMessage = 'Swap service temporarily unavailable. The XDEX API is experiencing issues with fee account creation. Please try again later or contact XDEX support.';
       }
       // Check for insufficient lamports error (user's account)
@@ -1868,34 +1546,11 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
       }
       // Check for simulation failure
       else if (userMessage.includes('Simulation failed') || userMessage.includes('custom program error')) {
-        // Check for specific error codes
-        if (userMessage.includes('0x1787') || userMessage.includes('6023')) {
-          // Jupiter/Raydium error - usually route or liquidity issue
-          userMessage = 'Swap route expired or liquidity changed. Please try again. If the issue persists, try a smaller amount or different slippage.';
-        } else if (userMessage.includes('0x1786') || userMessage.includes('6022')) {
-          userMessage = 'Invalid market state. The liquidity pool may be temporarily unavailable. Please try again later.';
-        } else if (userMessage.includes('0xbc4') || userMessage.includes('3012')) {
-          // 0xbc4 (3012) - Common slippage/AMM error from Raydium/Jupiter routing
-          // Suggest increasing slippage
-          const suggestedSlippage = Math.min(slippage * 2, 10);
-          userMessage = `Price moved beyond ${slippage}% slippage tolerance. Try increasing slippage to ${suggestedSlippage}% or higher, or use a smaller amount.`;
-        } else if (userMessage.includes('0x1771') || userMessage.includes('6001')) {
-          // Insufficient funds in pool
-          userMessage = 'Insufficient liquidity in the pool for this swap size. Try a smaller amount.';
-        } else if (userMessage.includes('0x1') && !userMessage.includes('0x1786') && !userMessage.includes('0x1787') && !userMessage.includes('0x1771')) {
-          userMessage = 'Slippage tolerance exceeded. Try increasing slippage or reducing the swap amount.';
-        } else if (userMessage.includes('0x0')) {
+        if (userMessage.includes('0x1')) {
           userMessage = 'Transaction simulation failed. This may be a temporary API issue. Please try again in a few minutes.';
         } else {
-          // Extract error code if present for debugging
-          const errorCodeMatch = userMessage.match(/0x[0-9a-fA-F]+/);
-          const errorCode = errorCodeMatch ? ` (Error: ${errorCodeMatch[0]})` : '';
-          userMessage = `Swap failed${errorCode}. This may be due to network congestion, expired quote, or liquidity changes. Please try again.`;
+          userMessage = 'Transaction simulation failed. This may be due to network congestion or temporary API issues. Please try again.';
         }
-      }
-      // Check for blockhash errors (quote expired)
-      else if (userMessage.includes('blockhash') || userMessage.includes('Blockhash')) {
-        userMessage = 'Transaction expired. Please try again - quotes are time-sensitive.';
       }
       
       setError(userMessage);
@@ -2260,34 +1915,10 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
         setTokens(prev => [...prev, { ...token, balance: 0, isCustom: true }]);
       }
       
-      // Always look up the most current balance from userTokens or tokens list
-      const getLatestBalance = (t) => {
-        // For native token, use wallet balance
-        if (t.symbol === nativeSymbol || t.mint === 'native' || t.isNative) {
-          return walletBalance;
-        }
-        // Check userTokens for the most current balance
-        const userToken = filteredUserTokens?.find(ut => 
-          ut.mint === t.mint || ut.symbol === t.symbol
-        );
-        if (userToken) {
-          return parseFloat(userToken.balance || userToken.uiAmount) || 0;
-        }
-        // Check tokens list
-        const tokenInList = tokens.find(lt => lt.mint === t.mint || lt.symbol === t.symbol);
-        if (tokenInList?.balance) {
-          return tokenInList.balance;
-        }
-        // Fall back to token's own balance or 0
-        return t.balance || 0;
-      };
-      
-      const latestBalance = getLatestBalance(token);
-      
       if (selectingToken === 'from') {
-        setFromToken({ ...token, balance: latestBalance });
+        setFromToken({ ...token, balance: token.balance || 0 });
       } else {
-        setToToken({ ...token, balance: latestBalance });
+        setToToken({ ...token, balance: token.balance || 0 });
       }
       setSelectingToken(null);
       setTokenSearchQuery('');
@@ -2626,7 +2257,7 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
   // Confirmation screen
   if (showConfirm) {
     return (
-      <div className="screen swap-screen" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div className="screen swap-screen">
         <div className="page-header">
           <div className="header-left">
             <button className="back-btn" onClick={() => setShowConfirm(false)}>
@@ -2638,8 +2269,8 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
           <h2 className="header-title">Confirm {isWrapOperation ? (wrapDirection === 'wrap' ? 'Wrap' : 'Unwrap') : 'Swap'}</h2>
           <div className="header-right" />
         </div>
-        <div className="slide-panel-content" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
-          <div className="send-step-content" style={{ flex: 1, overflowY: 'auto', paddingBottom: 100 }}>
+        <div className="slide-panel-content">
+          <div className="send-step-content">
             {/* Transaction Summary */}
             <div className="send-summary-card">
               <div className="send-summary-row">
@@ -2669,7 +2300,7 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
               <div className="send-summary-row">
                 <span className="send-summary-label">Network Fee</span>
                 <span className="send-summary-value">
-                  ~{(getBaseFee(currentNetwork) + (swapPriority === 'custom' ? parseFloat(customFee) || 0 : getPriorityOptions(currentNetwork).find(p => p.id === swapPriority)?.fee || 0)).toFixed(6)} {networkConfig.symbol}
+                  ~{(0.000005 + (swapPriority === 'custom' ? parseFloat(customFee) || 0 : PRIORITY_OPTIONS.find(p => p.id === swapPriority)?.fee || 0)).toFixed(6)} {networkConfig.symbol}
                 </span>
               </div>
             </div>
@@ -2678,7 +2309,7 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
             <div className="send-priority-section">
               <div className="send-priority-label">Transaction Priority</div>
               <div className="send-priority-selector">
-                {getPriorityOptions(currentNetwork).filter(opt => opt.id !== 'custom').map(opt => (
+                {PRIORITY_OPTIONS.filter(opt => opt.id !== 'custom').map(opt => (
                   <button
                     key={opt.id}
                     className={`send-priority-btn ${swapPriority === opt.id ? 'active' : ''}`}
@@ -2792,49 +2423,28 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
               </div>
             )}
 
-            {error && (
-              <div className="error-message" style={{ 
-                marginTop: 16, 
-                padding: '12px 16px',
-                background: 'rgba(255, 59, 48, 0.1)',
-                border: '1px solid rgba(255, 59, 48, 0.3)',
-                borderRadius: 8,
-                fontSize: 12,
-                lineHeight: 1.4,
-                whiteSpace: 'pre-line'
-              }}>
-                {error}
-              </div>
-            )}
-          </div>
+            {error && <div className="error-message" style={{ marginTop: 16 }}>{error}</div>}
 
-          {/* Action Buttons - Fixed at bottom */}
-          <div className="send-confirm-actions" style={{
-            position: 'absolute',
-            bottom: 0,
-            left: 0,
-            right: 0,
-            padding: '16px 20px',
-            background: 'var(--bg-primary)',
-            borderTop: '1px solid var(--border-color)'
-          }}>
-            <button 
-              className="btn-secondary send-deny-btn"
-              onClick={() => {
-                setShowConfirm(false);
-                setError('');
-              }}
-              disabled={loading}
-            >
-              Deny
-            </button>
-            <button 
-              className="btn-primary send-approve-btn"
-              onClick={handleSwap}
-              disabled={loading}
-            >
-              {loading ? 'Processing...' : 'Approve'}
-            </button>
+            {/* Action Buttons */}
+            <div className="send-confirm-actions">
+              <button 
+                className="btn-secondary send-deny-btn"
+                onClick={() => {
+                  setShowConfirm(false);
+                  setError('');
+                }}
+                disabled={loading}
+              >
+                Deny
+              </button>
+              <button 
+                className="btn-primary send-approve-btn"
+                onClick={handleSwap}
+                disabled={loading}
+              >
+                {loading ? 'Processing...' : 'Approve'}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -3010,29 +2620,6 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
         {/* Swap Details - Above button */}
         {quote && fromAmount && toAmount && (
           <div className="swap-details" style={{ marginTop: 16 }}>
-            {/* Stale quote warning */}
-            {!isWrapOperation && quoteTimestamp && (Date.now() - quoteTimestamp) > 30000 && (
-              <div style={{
-                background: 'rgba(255, 149, 0, 0.1)',
-                border: '1px solid rgba(255, 149, 0, 0.3)',
-                borderRadius: 8,
-                padding: '8px 12px',
-                marginBottom: 8,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                fontSize: 11
-              }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ff9500" strokeWidth="2">
-                  <circle cx="12" cy="12" r="10"/>
-                  <line x1="12" y1="8" x2="12" y2="12"/>
-                  <line x1="12" y1="16" x2="12.01" y2="16"/>
-                </svg>
-                <span style={{ color: '#ff9500' }}>
-                  Quote may be outdated. Price will refresh when you confirm.
-                </span>
-              </div>
-            )}
             {/* Stats Row */}
             <div style={{
               display: 'grid',
@@ -3120,7 +2707,7 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
               </div>
               <div style={{ textAlign: 'center', borderLeft: '1px solid var(--border-color)' }}>
                 <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>Est. Gas</div>
-                <div style={{ fontSize: 11, fontWeight: 500 }}>~{getBaseFee(currentNetwork)} {nativeSymbol}</div>
+                <div style={{ fontSize: 11, fontWeight: 500 }}>~0.0002 {nativeSymbol}</div>
               </div>
               <div 
                 style={{ 

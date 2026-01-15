@@ -438,7 +438,13 @@ export default function StakeScreen({ wallet, onBack, onRefreshBalance }) {
     const stakeAmount = parseFloat(amount);
     logger.log('[Stake] stakeAmount:', stakeAmount);
     
-    if (stakeAmount > balance - 0.01) {
+    // Use integer comparison to avoid floating-point precision issues
+    const decimals = networkConfig?.decimals || 9;
+    const multiplier = Math.pow(10, decimals);
+    const requiredAmount = Math.round(stakeAmount * multiplier);
+    const availableAmount = Math.round((balance - 0.01) * multiplier);
+    
+    if (requiredAmount > availableAmount) {
       logger.log('[Stake] FAIL: Insufficient balance');
       setError('Insufficient balance (reserve 0.01 XNT for fees)');
       return;
@@ -636,8 +642,11 @@ export default function StakeScreen({ wallet, onBack, onRefreshBalance }) {
         logger.log('[Stake] Using hardware wallet for signing');
         setHwStatus('Connecting to Ledger...');
         
-        // Get derivation path from wallet
-        const derivationPath = wallet?.wallet?.derivationPath;
+        // Get derivation path from wallet - check multiple possible locations
+        const derivationPath = wallet?.wallet?.derivationPath || 
+                               wallet?.derivationPath || 
+                               wallet?.activeWallet?.derivationPath ||
+                               "44'/501'/0'/0'"; // Default fallback
         logger.log('[Stake] Using derivation path:', derivationPath);
         
         try {
@@ -869,8 +878,11 @@ export default function StakeScreen({ wallet, onBack, onRefreshBalance }) {
         logger.log('[Unstake] Using hardware wallet for signing');
         setHwStatus('Connecting to Ledger...');
         
-        // Get derivation path from wallet
-        const derivationPath = wallet?.wallet?.derivationPath;
+        // Get derivation path from wallet - check multiple possible locations
+        const derivationPath = wallet?.wallet?.derivationPath || 
+                               wallet?.derivationPath || 
+                               wallet?.activeWallet?.derivationPath ||
+                               "44'/501'/0'/0'"; // Default fallback
         logger.log('[Unstake] Using derivation path:', derivationPath);
         
         try {
@@ -1139,8 +1151,14 @@ export default function StakeScreen({ wallet, onBack, onRefreshBalance }) {
                   setError('Enter an amount');
                   return;
                 }
-                if (parseFloat(amount) > balance) {
-                  setError('Insufficient balance');
+                // Use integer comparison to avoid floating-point precision issues
+                const decimals = networkConfig?.decimals || 9;
+                const multiplier = Math.pow(10, decimals);
+                const requiredAmount = Math.round(parseFloat(amount) * multiplier);
+                const availableAmount = Math.round(balance * multiplier);
+                
+                if (requiredAmount > availableAmount) {
+                  setError(`Insufficient balance. Required: ${amount} XNT, Available: ${balance} XNT`);
                   return;
                 }
                 setLoading(true);
