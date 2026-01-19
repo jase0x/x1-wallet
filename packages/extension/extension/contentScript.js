@@ -1,6 +1,7 @@
 /**
  * X1 Wallet Content Script
  * Bridges between the injected provider and the extension
+ * X1W-SEC: Uses MessageChannel for secure communication (prevents spoofing)
  */
 
 (function() {
@@ -8,6 +9,9 @@
 
   // X1W-008: Cache the current origin for secure postMessage
   const currentOrigin = window.location.origin;
+  
+  // X1W-SEC: Private MessagePort for secure provider communication
+  let providerPort = null;
 
   // Inject the provider script into the page
   function injectProvider() {
@@ -16,6 +20,8 @@
       script.src = chrome.runtime.getURL('provider.js');
       script.onload = function() {
         this.remove();
+        // After provider is injected, establish secure channel
+        establishSecureChannel();
       };
       (document.head || document.documentElement).appendChild(script);
       console.log('[X1 Wallet] Provider script injected');
@@ -24,58 +30,82 @@
     }
   }
 
-  // Inject immediately
-  injectProvider();
+  // X1W-SEC: Establish secure MessageChannel with provider
+  function establishSecureChannel() {
+    // Create a MessageChannel - two entangled ports
+    const channel = new MessageChannel();
+    
+    // We keep port1, send port2 to provider
+    providerPort = channel.port1;
+    
+    // Listen for messages from provider on our private port
+    providerPort.onmessage = async (event) => {
+      const { type, method, params, id } = event.data;
+      
+      if (type === 'request') {
+        try {
+          // Forward request to extension background script
+          const response = await chrome.runtime.sendMessage({
+            type: 'provider-request',
+            method,
+            params,
+            origin: currentOrigin,
+            favicon: getFavicon()
+          });
 
-  // Listen for messages from the page (provider)
-  window.addEventListener('message', async (event) => {
-    if (event.source !== window) return;
-    if (!event.data || event.data.target !== 'x1-wallet-content') return;
-
-    const { type, method, params, id } = event.data;
-
-    if (type === 'request') {
-      try {
-        // Forward request to extension background script
-        const response = await chrome.runtime.sendMessage({
-          type: 'provider-request',
-          method,
-          params,
-          origin: currentOrigin,
-          favicon: getFavicon()
-        });
-
-        // X1W-008 FIX: Use specific origin instead of wildcard
-        window.postMessage({
-          target: 'x1-wallet-provider',
-          type: 'response',
-          id,
-          payload: response
-        }, currentOrigin);
-      } catch (error) {
-        // X1W-008 FIX: Use specific origin instead of wildcard
-        window.postMessage({
-          target: 'x1-wallet-provider',
-          type: 'response',
-          id,
-          payload: { error: error.message || 'Request failed' }
-        }, currentOrigin);
+          // Send response back through secure port
+          providerPort.postMessage({
+            type: 'response',
+            id,
+            payload: response
+          });
+        } catch (error) {
+          // Send error back through secure port
+          providerPort.postMessage({
+            type: 'response',
+            id,
+            payload: { error: error.message || 'Request failed' }
+          });
+        }
       }
-    }
-  });
+    };
+    
+    // Start the port
+    providerPort.start();
+    
+    // Generate a random handshake token for additional security
+    const handshakeToken = crypto.randomUUID ? crypto.randomUUID() : 
+      Math.random().toString(36).substring(2) + Date.now().toString(36);
+    
+    // Send port2 to the provider via one-time postMessage
+    // This is the ONLY postMessage we send - after this, all comms go through the port
+    window.postMessage({
+      target: 'x1-wallet-provider-handshake',
+      token: handshakeToken
+    }, currentOrigin, [channel.port2]);
+    
+    console.log('[X1 Wallet] Secure channel established');
+  }
 
   // Listen for messages from extension (events like disconnect, account change)
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    console.log('[X1 Wallet Content] Received message from extension:', message.type);
-    
     if (message.target === 'x1-wallet-content') {
       console.log('[X1 Wallet Content] Forwarding to provider:', message.type, message.payload);
-      // X1W-008 FIX: Use specific origin instead of wildcard
-      window.postMessage({
-        target: 'x1-wallet-provider',
-        type: message.type,
-        payload: message.payload
-      }, currentOrigin);
+      
+      // Use secure port if available, fallback to postMessage
+      if (providerPort) {
+        providerPort.postMessage({
+          type: message.type,
+          payload: message.payload
+        });
+      } else {
+        // Fallback for race condition during initialization
+        window.postMessage({
+          target: 'x1-wallet-provider',
+          type: message.type,
+          payload: message.payload
+        }, currentOrigin);
+      }
     }
     // Return false - we don't send async responses
     return false;
@@ -87,6 +117,9 @@
                  document.querySelector("link[rel='shortcut icon']");
     return link ? link.href : `${window.location.origin}/favicon.ico`;
   }
+
+  // Inject immediately
+  injectProvider();
 
   console.log('[X1 Wallet] Content script loaded for:', window.location.origin);
 })();

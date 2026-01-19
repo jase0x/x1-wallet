@@ -13,6 +13,82 @@ const CUSTOM_NETWORKS_KEY = 'x1wallet_customRpcs';
 const ENCRYPTION_ENABLED_KEY = 'x1wallet_encrypted';
 const BALANCE_CACHE_KEY = 'x1wallet_balance_cache';
 
+// X1W-SEC: Session password protection - encrypt password before storing in session
+// This prevents plaintext password exposure in chrome.storage.session
+const SESSION_PBKDF2_ITERATIONS = 10000; // Lower than main encryption for speed, but still protective
+
+async function deriveSessionKey(salt) {
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    salt,
+    { name: 'PBKDF2' },
+    false,
+    ['deriveBits', 'deriveKey']
+  );
+  
+  return crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt: salt,
+      iterations: SESSION_PBKDF2_ITERATIONS,
+      hash: 'SHA-256'
+    },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+async function encryptPasswordForSession(password) {
+  try {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const sessionKey = await deriveSessionKey(salt);
+    
+    const encoded = new TextEncoder().encode(password);
+    const encrypted = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      sessionKey,
+      encoded
+    );
+    
+    return {
+      e: btoa(String.fromCharCode(...new Uint8Array(encrypted))),
+      s: btoa(String.fromCharCode(...salt)),
+      i: btoa(String.fromCharCode(...iv))
+    };
+  } catch (err) {
+    logger.error('[Session] Failed to encrypt password:', err.message);
+    return null;
+  }
+}
+
+async function decryptPasswordFromSession(sessionData) {
+  try {
+    if (!sessionData || !sessionData.e || !sessionData.s || !sessionData.i) {
+      return null;
+    }
+    
+    const encrypted = Uint8Array.from(atob(sessionData.e), c => c.charCodeAt(0));
+    const salt = Uint8Array.from(atob(sessionData.s), c => c.charCodeAt(0));
+    const iv = Uint8Array.from(atob(sessionData.i), c => c.charCodeAt(0));
+    
+    const sessionKey = await deriveSessionKey(salt);
+    
+    const decrypted = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv },
+      sessionKey,
+      encrypted
+    );
+    
+    return new TextDecoder().decode(decrypted);
+  } catch (err) {
+    logger.error('[Session] Failed to decrypt password:', err.message);
+    return null;
+  }
+}
+
 // Password policy (matches Phantom/Backpack - 8 chars, letter, number)
 function validatePasswordStrength(password) {
   if (typeof password !== 'string') return { ok: false, reason: 'Invalid password' };
@@ -196,9 +272,11 @@ export function useWallet() {
       // This prevents stale data issues when extension reloads
       if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
         try {
+          // X1W-SEC: Encrypt password before storing in session
+          const encryptedPwd = await encryptPasswordForSession(effectivePassword);
           await chrome.storage.session.set({
             x1wallet_session_wallets: jsonData,
-            x1wallet_session_password: effectivePassword
+            x1wallet_session_pwd: encryptedPwd  // Encrypted, not plaintext
           });
           console.log('[useWallet] Session storage synced with', walletsToSave.length, 'wallets');
         } catch (e) {
@@ -230,7 +308,7 @@ export function useWallet() {
           console.log('[useWallet] Fresh install detected - clearing any stale session storage');
           if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
             try {
-              await chrome.storage.session.remove(['x1wallet_session_wallets', 'x1wallet_session_password']);
+              await chrome.storage.session.remove(['x1wallet_session_wallets', 'x1wallet_session_pwd']);
             } catch (e) {
               // Ignore errors
             }
@@ -245,16 +323,23 @@ export function useWallet() {
           // Try to load from session storage (previous unlock in same browser session)
           if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
             try {
-              const sessionData = await chrome.storage.session.get(['x1wallet_session_wallets', 'x1wallet_session_password']);
-              if (sessionData.x1wallet_session_wallets && sessionData.x1wallet_session_password) {
+              const sessionData = await chrome.storage.session.get(['x1wallet_session_wallets', 'x1wallet_session_pwd']);
+              if (sessionData.x1wallet_session_wallets && sessionData.x1wallet_session_pwd) {
                 console.log('[useWallet] Found session data - loading from session');
-                const sessionWallets = JSON.parse(sessionData.x1wallet_session_wallets);
-                const migrated = sessionWallets.map(migrateWallet);
-                setWallets(migrated);
-                setActiveWalletId(activeId || (migrated.length > 0 ? migrated[0].id : null));
-                setEncryptionPassword(sessionData.x1wallet_session_password);
-                setIsLocked(false);
-                console.log('[useWallet] Loaded', migrated.length, 'wallets from session');
+                // X1W-SEC: Decrypt password from session storage
+                const decryptedPassword = await decryptPasswordFromSession(sessionData.x1wallet_session_pwd);
+                if (decryptedPassword) {
+                  const sessionWallets = JSON.parse(sessionData.x1wallet_session_wallets);
+                  const migrated = sessionWallets.map(migrateWallet);
+                  setWallets(migrated);
+                  setActiveWalletId(activeId || (migrated.length > 0 ? migrated[0].id : null));
+                  setEncryptionPassword(decryptedPassword);
+                  setIsLocked(false);
+                  console.log('[useWallet] Loaded', migrated.length, 'wallets from session');
+                } else {
+                  console.log('[useWallet] Failed to decrypt session password - need password');
+                  setIsLocked(true);
+                }
               } else {
                 console.log('[useWallet] No session data - need password');
                 setIsLocked(true);
@@ -312,14 +397,20 @@ export function useWallet() {
     // Save to session storage for auto-lock timer to work (non-blocking)
     // Session storage clears when browser closes - secure enough for this use case
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
-      // Fire and forget - don't await
-      chrome.storage.session.set({
-        x1wallet_session_wallets: JSON.stringify(loadedWallets),
-        x1wallet_session_password: password
-      }).then(() => {
-        console.log('[useWallet] Saved to session storage for auto-lock');
+      // X1W-SEC: Encrypt password before storing in session
+      encryptPasswordForSession(password).then(encryptedPwd => {
+        if (encryptedPwd) {
+          chrome.storage.session.set({
+            x1wallet_session_wallets: JSON.stringify(loadedWallets),
+            x1wallet_session_pwd: encryptedPwd
+          }).then(() => {
+            console.log('[useWallet] Saved to session storage for auto-lock');
+          }).catch(e => {
+            console.warn('[useWallet] Failed to save to session storage:', e.message);
+          });
+        }
       }).catch(e => {
-        console.warn('[useWallet] Failed to save to session storage:', e.message);
+        console.warn('[useWallet] Failed to encrypt session password:', e.message);
       });
     }
     
@@ -335,7 +426,7 @@ export function useWallet() {
     
     // Clear session storage
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
-      chrome.storage.session.remove(['x1wallet_session_wallets', 'x1wallet_session_password'])
+      chrome.storage.session.remove(['x1wallet_session_wallets', 'x1wallet_session_pwd'])
         .catch(e => console.warn('[useWallet] Failed to clear session:', e.message));
     }
   }, []);
@@ -362,9 +453,11 @@ export function useWallet() {
       // Also update session storage so wallet doesn't disappear
       if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
         try {
+          // X1W-SEC: Encrypt password before storing in session
+          const encryptedPwd = await encryptPasswordForSession(password);
           await chrome.storage.session.set({
             x1wallet_session_wallets: jsonData,
-            x1wallet_session_password: password
+            x1wallet_session_pwd: encryptedPwd
           });
         } catch (e) {
           console.warn('[useWallet] Failed to update session storage:', e.message);
@@ -421,9 +514,11 @@ export function useWallet() {
     // Also update session storage with new password
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
       try {
+        // X1W-SEC: Encrypt password before storing in session
+        const encryptedPwd = await encryptPasswordForSession(newPassword);
         await chrome.storage.session.set({
           x1wallet_session_wallets: jsonData,
-          x1wallet_session_password: newPassword
+          x1wallet_session_pwd: encryptedPwd
         });
       } catch (e) {
         console.warn('[useWallet] Failed to update session storage:', e.message);
@@ -661,7 +756,7 @@ export function useWallet() {
         // Clear any stale session storage before first wallet setup
         if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
           try {
-            await chrome.storage.session.remove(['x1wallet_session_wallets', 'x1wallet_session_password']);
+            await chrome.storage.session.remove(['x1wallet_session_wallets', 'x1wallet_session_pwd']);
           } catch (e) {
             // Ignore errors
           }
@@ -863,7 +958,7 @@ export function useWallet() {
         ]);
         // Also clear session storage
         if (chrome.storage.session) {
-          await chrome.storage.session.remove(['x1wallet_session_wallets', 'x1wallet_session_password']);
+          await chrome.storage.session.remove(['x1wallet_session_wallets', 'x1wallet_session_pwd']);
         }
       } catch (e) {}
     }

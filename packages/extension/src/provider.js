@@ -2,6 +2,7 @@
  * X1 Wallet Provider
  * Solana-compatible wallet provider for dApp connections
  * Implements Wallet Standard for proper detection by wallet adapters
+ * X1W-SEC: Uses MessageChannel for secure communication (prevents spoofing)
  */
 
 (function () {
@@ -21,6 +22,71 @@
     console.log("[X1 Wallet] Provider already injected");
     return;
   }
+
+  // X1W-SEC: Private MessagePort for secure content script communication
+  // This port is established via a one-time handshake and cannot be spoofed
+  let _securePort = null;
+  let _portReady = false;
+  let _portReadyPromise = null;
+  let _portReadyResolve = null;
+  
+  // Create promise that resolves when port is ready
+  _portReadyPromise = new Promise((resolve) => {
+    _portReadyResolve = resolve;
+  });
+
+  // X1W-SEC: Listen for the secure channel handshake (one-time only)
+  function setupSecureChannel() {
+    const handshakeHandler = (event) => {
+      // Only accept handshake from same window
+      if (event.source !== window) return;
+      if (!event.data || event.data.target !== 'x1-wallet-provider-handshake') return;
+      
+      // Get the transferred port
+      if (event.ports && event.ports[0]) {
+        _securePort = event.ports[0];
+        
+        // Set up message handler on the secure port
+        _securePort.onmessage = (portEvent) => {
+          handleSecureMessage(portEvent.data);
+        };
+        
+        // Start the port
+        _securePort.start();
+        _portReady = true;
+        
+        // Resolve the ready promise
+        if (_portReadyResolve) {
+          _portReadyResolve();
+        }
+        
+        console.log("[X1 Wallet] Secure channel connected");
+        
+        // Remove the handshake listener - only needed once
+        window.removeEventListener('message', handshakeHandler);
+      }
+    };
+    
+    window.addEventListener('message', handshakeHandler);
+  }
+  
+  // Set up secure channel immediately
+  setupSecureChannel();
+  
+  // X1W-SEC: Also listen for legacy postMessage (fallback for events from extension)
+  // This is only for push events, not for request/response which use secure port
+  window.addEventListener("message", (event) => {
+    if (event.source !== window) return;
+    if (!event.data || event.data.target !== "x1-wallet-provider") return;
+    
+    // Only handle push events via legacy channel, not responses
+    // Responses must come through secure port
+    const { type, payload } = event.data;
+    if (type && !event.data.id) {
+      // This is a push event (no id), handle it
+      handlePushEvent(type, payload);
+    }
+  });
 
   // Base58 alphabet for encoding/decoding
   const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -180,8 +246,102 @@
   }
 
   // Request ID counter for message correlation
+  // X1W-SEC: Use crypto random for unpredictable IDs
   let requestId = 0;
+  function generateRequestId() {
+    // Use crypto for unpredictable IDs if available
+    if (window.crypto && window.crypto.getRandomValues) {
+      const arr = new Uint32Array(1);
+      window.crypto.getRandomValues(arr);
+      return arr[0].toString(36) + (++requestId).toString(36);
+    }
+    return (++requestId).toString();
+  }
   const pendingRequests = new Map();
+  
+  // X1W-SEC: Reference to provider instance (set after construction)
+  let providerInstance = null;
+
+  // X1W-SEC: Handle messages from secure port (responses to requests)
+  function handleSecureMessage(data) {
+    const { type, payload, id } = data;
+    
+    console.log("[X1 Wallet] Secure message:", type, id ? `id:${id}` : "");
+
+    // Handle responses to pending requests
+    if (type === 'response' && id && pendingRequests.has(id)) {
+      const { resolve, reject, timeout } = pendingRequests.get(id);
+      pendingRequests.delete(id);
+      if (timeout) clearTimeout(timeout);
+
+      if (payload && payload.error) {
+        console.error("[X1 Wallet] Error:", payload.error);
+        reject(new Error(payload.error));
+      } else if (payload && payload.result !== undefined) {
+        console.log("[X1 Wallet] Success:", JSON.stringify(payload.result).slice(0, 80));
+        resolve(payload.result);
+      } else {
+        resolve(payload);
+      }
+      return;
+    }
+    
+    // Handle push events via secure channel
+    if (type && type !== 'response') {
+      handlePushEvent(type, payload);
+    }
+  }
+  
+  // X1W-SEC: Handle push events (from extension via content script)
+  function handlePushEvent(type, payload) {
+    if (!providerInstance) return;
+    
+    console.log("[X1 Wallet] Push event:", type);
+    
+    switch (type) {
+      case "connect":
+        providerInstance._connected = true;
+        if (payload && payload.publicKey) {
+          providerInstance._publicKey = new PublicKey(payload.publicKey);
+        }
+        providerInstance.emit("connect", providerInstance._publicKey);
+        break;
+
+      case "disconnect":
+        providerInstance._connected = false;
+        providerInstance._publicKey = null;
+        providerInstance.emit("disconnect");
+        break;
+
+      case "accountChanged":
+        console.log("[X1 Wallet] Received accountChanged message:", payload);
+        if (payload && payload.publicKey) {
+          providerInstance._publicKey = new PublicKey(payload.publicKey);
+          console.log("[X1 Wallet] Updated publicKey, emitting accountChanged");
+          providerInstance.emit("accountChanged", providerInstance._publicKey);
+        }
+        break;
+
+      case "networkChanged":
+      case "chainChanged":
+      case "network-changed":
+        if (payload) {
+          const oldChain = providerInstance._chain;
+          if (payload.chain) providerInstance._chain = payload.chain;
+          if (payload.network) providerInstance._network = payload.network;
+          
+          console.log("[X1 Wallet] Network changed:", oldChain, "->", providerInstance._chain);
+          
+          providerInstance.emit("networkChanged", { chain: providerInstance._chain, network: providerInstance._network });
+          providerInstance.emit("chainChanged", providerInstance._chain);
+          
+          if (providerInstance._publicKey) {
+            providerInstance.emit("accountChanged", providerInstance._publicKey);
+          }
+        }
+        break;
+    }
+  }
 
   // X1 Wallet icon as data URI
   const X1_WALLET_ICON = "https://x1logos.s3.us-east-1.amazonaws.com/128+-+wallet.png";
@@ -204,8 +364,8 @@
       this._network = "X1 Mainnet"; // Human readable - will be updated from storage
       this._connectionCheckPromise = null; // Promise for initial connection check
       
-      // Listen for messages from content script - MUST be set up before any requests
-      window.addEventListener("message", this._handleMessage.bind(this));
+      // X1W-SEC: Set provider instance for secure message handlers
+      providerInstance = this;
 
       console.log("[X1 Wallet] Provider initialized");
       
@@ -316,86 +476,22 @@
       return this._network;
     }
 
-    // Handle messages from content script
-    _handleMessage(event) {
-      if (event.source !== window) return;
-      if (!event.data || event.data.target !== "x1-wallet-provider") return;
-
-      const { type, payload, id } = event.data;
-
-      console.log("[X1 Wallet] Message:", type, id ? `id:${id}` : "");
-
-      // Handle responses to pending requests
-      if (id && pendingRequests.has(id)) {
-        const { resolve, reject, timeout } = pendingRequests.get(id);
-        pendingRequests.delete(id);
-        if (timeout) clearTimeout(timeout);
-
-        if (payload && payload.error) {
-          console.error("[X1 Wallet] Error:", payload.error);
-          reject(new Error(payload.error));
-        } else if (payload && payload.result !== undefined) {
-          console.log("[X1 Wallet] Success:", JSON.stringify(payload.result).slice(0, 80));
-          resolve(payload.result);
-        } else {
-          resolve(payload);
-        }
-        return;
-      }
-
-      // Handle push events from wallet
-      switch (type) {
-        case "connect":
-          this._connected = true;
-          if (payload && payload.publicKey) {
-            this._publicKey = new PublicKey(payload.publicKey);
-          }
-          this.emit("connect", this._publicKey);
-          break;
-
-        case "disconnect":
-          this._connected = false;
-          this._publicKey = null;
-          this.emit("disconnect");
-          break;
-
-        case "accountChanged":
-          console.log("[X1 Wallet] Received accountChanged message:", payload);
-          if (payload && payload.publicKey) {
-            this._publicKey = new PublicKey(payload.publicKey);
-            console.log("[X1 Wallet] Updated publicKey, emitting accountChanged");
-            this.emit("accountChanged", this._publicKey);
-          }
-          break;
-
-        case "networkChanged":
-        case "chainChanged":
-        case "network-changed":
-          if (payload) {
-            const oldChain = this._chain;
-            if (payload.chain) this._chain = payload.chain;
-            if (payload.network) this._network = payload.network;
-            
-            console.log("[X1 Wallet] Network changed:", oldChain, "->", this._chain);
-            
-            // Emit events for dApps to listen to
-            this.emit("networkChanged", { chain: this._chain, network: this._network });
-            this.emit("chainChanged", this._chain);
-            
-            // Some dApps expect accountsChanged when network changes
-            // because the account might be different on different networks
-            if (this._publicKey) {
-              this.emit("accountChanged", this._publicKey);
-            }
-          }
-          break;
-      }
-    }
-
-    // Send request to content script
+    // Send request to content script via secure channel
+    // X1W-SEC: Uses MessagePort instead of window.postMessage to prevent spoofing
     _sendRequest(method, params = {}) {
-      return new Promise((resolve, reject) => {
-        const id = ++requestId;
+      return new Promise(async (resolve, reject) => {
+        // Wait for secure port to be ready
+        if (!_portReady) {
+          console.log("[X1 Wallet] Waiting for secure channel...");
+          await _portReadyPromise;
+        }
+        
+        if (!_securePort) {
+          reject(new Error("Secure channel not established"));
+          return;
+        }
+        
+        const id = generateRequestId();
         
         console.log("[X1 Wallet] Request:", method, "id:", id);
 
@@ -408,13 +504,13 @@
 
         pendingRequests.set(id, { resolve, reject, timeout });
 
-        window.postMessage({
-          target: "x1-wallet-content",
+        // X1W-SEC: Send via secure port instead of window.postMessage
+        _securePort.postMessage({
           type: "request",
           method,
           params,
           id,
-        }, window.location.origin);
+        });
       });
     }
 

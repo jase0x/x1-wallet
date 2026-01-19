@@ -431,8 +431,9 @@ function formatAddr(addr) {
   return `${addr.slice(0, 4)}...${addr.slice(-4)}`;
 }
 
-export default function DAppApproval({ wallet, onComplete }) {
+export default function DAppApproval({ wallet, requestId, onComplete }) {
   const [pendingRequest, setPendingRequest] = useState(null);
+  const [currentRequestId, setCurrentRequestId] = useState(requestId); // X1W-SEC: Track request ID
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState(null);
@@ -471,12 +472,17 @@ export default function DAppApproval({ wallet, onComplete }) {
     const checkPendingRequest = async () => {
       try {
         const response = await chrome.runtime.sendMessage({ type: 'get-pending-request' });
-        // Handle new response format: { request, approvalWindowId }
+        // Handle new response format: { request, requestId }
         const request = response?.request || response;
-        logger.log('[DAppApproval] Pending request type:', request?.type);
+        const reqId = response?.requestId || request?.requestId;
+        logger.log('[DAppApproval] Pending request type:', request?.type, 'id:', reqId);
         
         if (request && request.type) {
           setPendingRequest(request);
+          // X1W-SEC: Track request ID for proper routing
+          if (reqId) {
+            setCurrentRequestId(reqId);
+          }
           
           // X1W-003: Decode transaction for display
           if (request.transaction) {
@@ -653,7 +659,8 @@ export default function DAppApproval({ wallet, onComplete }) {
     setProcessing(true);
     try {
       await chrome.runtime.sendMessage({
-        type: 'approve-sign',
+        type: 'approve-sign', requestId: currentRequestId,
+        requestId: currentRequestId,  // X1W-SEC: Include request ID
         error: 'User rejected the request'
       });
     } catch (e) {}
@@ -689,6 +696,7 @@ export default function DAppApproval({ wallet, onComplete }) {
       // Send via provider-response with network and chain info
       await chrome.runtime.sendMessage({
         type: 'provider-response',
+        requestId: currentRequestId,  // X1W-SEC: Include request ID
         payload: { result: { publicKey, network, chain } }
       });
       
@@ -807,7 +815,7 @@ export default function DAppApproval({ wallet, onComplete }) {
       
       // Send the signed transaction to background
       await chrome.runtime.sendMessage({
-        type: 'approve-sign',
+        type: 'approve-sign', requestId: currentRequestId,
         signedTransaction: signedTxBase64
       });
       
@@ -826,7 +834,7 @@ export default function DAppApproval({ wallet, onComplete }) {
       // Send error back to background so it can clear queue and stop retries
       try {
         await chrome.runtime.sendMessage({
-          type: 'approve-sign',
+          type: 'approve-sign', requestId: currentRequestId,
           error: err?.message || 'Transaction signing failed'
         });
       } catch (e) {
@@ -921,7 +929,7 @@ export default function DAppApproval({ wallet, onComplete }) {
       setHwStatus('');
       
       await chrome.runtime.sendMessage({
-        type: 'approve-sign',
+        type: 'approve-sign', requestId: currentRequestId,
         signedTransactions: signedTxs
       });
       
@@ -940,7 +948,7 @@ export default function DAppApproval({ wallet, onComplete }) {
       // Send error back to background so it can clear queue and stop retries
       try {
         await chrome.runtime.sendMessage({
-          type: 'approve-sign',
+          type: 'approve-sign', requestId: currentRequestId,
           error: err?.message || 'Transaction signing failed'
         });
       } catch (e) {
@@ -1200,7 +1208,7 @@ export default function DAppApproval({ wallet, onComplete }) {
       logger.log('[DAppApproval] Sending signature to background:', txSignature);
       
       await chrome.runtime.sendMessage({
-        type: 'approve-sign',
+        type: 'approve-sign', requestId: currentRequestId,
         signature: txSignature
       });
       
@@ -1221,7 +1229,7 @@ export default function DAppApproval({ wallet, onComplete }) {
       // Send error back to background so it can clear queue and stop retries
       try {
         await chrome.runtime.sendMessage({
-          type: 'approve-sign',
+          type: 'approve-sign', requestId: currentRequestId,
           error: err?.message || 'Transaction failed'
         });
       } catch (e) {
@@ -1296,7 +1304,7 @@ export default function DAppApproval({ wallet, onComplete }) {
       const signatureBase64 = btoa(String.fromCharCode(...signature));
       
       await chrome.runtime.sendMessage({
-        type: 'approve-sign-message',
+        type: 'approve-sign-message', requestId: currentRequestId,
         signature: signatureBase64
       });
       
@@ -1343,7 +1351,7 @@ export default function DAppApproval({ wallet, onComplete }) {
       // For non-recoverable errors (like user rejection), send to background and close
       try {
         await chrome.runtime.sendMessage({
-          type: 'approve-sign-message',
+          type: 'approve-sign-message', requestId: currentRequestId,
           error: err?.message || 'Signing failed'
         });
       } catch (e) {

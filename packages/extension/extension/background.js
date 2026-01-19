@@ -29,9 +29,14 @@ chrome.runtime.onConnect.addListener((port) => {
     // Clear badge - user has seen the notification by clicking the icon
     clearBadge();
     
-    // Send current pending request if any
-    if (pendingRequest) {
-      port.postMessage({ type: 'pending-request', request: pendingRequest });
+    // Send oldest pending request if any (FIFO - first in, first out)
+    const oldest = getOldestPendingRequest();
+    if (oldest) {
+      port.postMessage({ 
+        type: 'pending-request', 
+        request: oldest.request,
+        requestId: oldest.id 
+      });
     }
     
     port.onDisconnect.addListener(() => {
@@ -41,24 +46,30 @@ chrome.runtime.onConnect.addListener((port) => {
       // Always clear badge when popup closes
       clearBadge();
       
-      // If popup closed and there's still a pending request, reject it
-      // This handles the case where user closes popup without approving/rejecting
-      if (pendingRequest && pendingRequestCallback) {
-        console.log('[Background] Popup closed without response, rejecting request');
-        pendingRequestCallback({ error: 'User rejected the request.' });
-        pendingRequestCallback = null;
-        pendingRequest = null;
+      // If popup closed and there are pending requests, reject the oldest one
+      // (the one that was being displayed)
+      const oldest = getOldestPendingRequest();
+      if (oldest) {
+        console.log('[Background] Popup closed without response, rejecting request:', oldest.id);
+        oldest.callback({ error: 'User rejected the request.' });
+        removePendingRequest(oldest.id);
+        
+        // If there are more pending requests, show badge
+        if (pendingRequests.size > 0) {
+          chrome.action.setBadgeText({ text: pendingRequests.size.toString() });
+          chrome.action.setBadgeBackgroundColor({ color: '#FF6B00' });
+        }
       }
     });
   }
 });
 
 // Notify all connected ports about a new pending request
-function notifyPendingRequest(request) {
-  console.log('[Background] Notifying', connectedPorts.size, 'connected ports about pending request');
+function notifyPendingRequest(requestId, request) {
+  console.log('[Background] Notifying', connectedPorts.size, 'connected ports about pending request:', requestId);
   for (const port of connectedPorts) {
     try {
-      port.postMessage({ type: 'pending-request', request });
+      port.postMessage({ type: 'pending-request', request, requestId });
     } catch (e) {
       console.log('[Background] Failed to notify port:', e.message);
       connectedPorts.delete(port);
@@ -215,9 +226,46 @@ async function getCurrentNetwork() {
   return result.x1wallet_network || 'X1 Testnet';
 }
 
-// Store pending request for popup to handle
-let pendingRequest = null;
-let pendingRequestCallback = null;
+// Store pending requests in a Map for handling multiple concurrent requests
+// X1W-SEC: Fixes race condition where multiple tabs requesting signatures could lose callbacks
+const pendingRequests = new Map(); // key: requestId → { request, callback, timeoutId }
+
+// Generate unique request ID
+function generateRequestId() {
+  return Date.now().toString(36) + Math.random().toString(36).substring(2, 9);
+}
+
+// Get the oldest pending request (first in, first served)
+function getOldestPendingRequest() {
+  if (pendingRequests.size === 0) return null;
+  
+  let oldest = null;
+  let oldestTime = Infinity;
+  
+  for (const [id, entry] of pendingRequests) {
+    if (entry.request.timestamp < oldestTime) {
+      oldestTime = entry.request.timestamp;
+      oldest = { id, ...entry };
+    }
+  }
+  
+  return oldest;
+}
+
+// Get pending request by ID
+function getPendingRequestById(id) {
+  return pendingRequests.get(id);
+}
+
+// Remove pending request and clear its timeout
+function removePendingRequest(id) {
+  const entry = pendingRequests.get(id);
+  if (entry) {
+    if (entry.timeoutId) clearTimeout(entry.timeoutId);
+    pendingRequests.delete(id);
+    console.log('[Background] Removed pending request:', id, 'Remaining:', pendingRequests.size);
+  }
+}
 
 // Listen for messages
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -251,9 +299,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   
   // Handle responses from popup
   if (message.type === 'provider-response') {
-    if (pendingRequestCallback) {
+    const requestId = message.requestId;
+    const entry = requestId ? getPendingRequestById(requestId) : getOldestPendingRequest();
+    
+    if (entry) {
+      const id = requestId || entry.id;
       const payload = message.payload;
-      const currentRequest = pendingRequest; // Save reference before clearing
+      const currentRequest = entry.request;
+      const callback = entry.callback;
       
       // Clear badge since request is being handled
       clearBadge();
@@ -273,14 +326,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }).then(() => {
           console.log('[Background] Saved connected site:', currentRequest.origin);
           // Now resolve the promise
-          pendingRequestCallback(payload);
-          pendingRequestCallback = null;
-          pendingRequest = null;
+          callback(payload);
+          removePendingRequest(id);
         }).catch(err => {
           console.error('[Background] Error saving site:', err);
-          pendingRequestCallback(payload);
-          pendingRequestCallback = null;
-          pendingRequest = null;
+          callback(payload);
+          removePendingRequest(id);
         });
         return; // Don't fall through
       }
@@ -292,16 +343,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
       }
       
-      pendingRequestCallback(payload);
-      pendingRequestCallback = null;
-      pendingRequest = null;
+      callback(payload);
+      removePendingRequest(id);
     }
     return;
   }
   
   // Handle get pending request from popup
   if (message.type === 'get-pending-request') {
-    sendResponse(pendingRequest);
+    const oldest = getOldestPendingRequest();
+    if (oldest) {
+      sendResponse({ request: oldest.request, requestId: oldest.id });
+    } else {
+      sendResponse(null);
+    }
     return;
   }
   
@@ -493,36 +548,41 @@ async function handleConnect(origin, favicon, sender, params = {}) {
   
   // Need user approval - open popup
   return new Promise((resolve) => {
-    pendingRequest = {
+    const requestId = generateRequestId();
+    const request = {
       type: 'connect',
       origin,
       favicon,
       chain: params.chain, // Pass requested chain to popup
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      requestId
     };
     
-    pendingRequestCallback = resolve;
+    const timeoutId = setTimeout(() => {
+      const entry = getPendingRequestById(requestId);
+      if (entry) {
+        entry.callback({ error: 'Request timeout' });
+        removePendingRequest(requestId);
+        if (pendingRequests.size > 0) {
+          chrome.action.setBadgeText({ text: pendingRequests.size.toString() });
+        } else {
+          clearBadge();
+        }
+      }
+    }, 60000);
+    
+    pendingRequests.set(requestId, { request, callback: resolve, timeoutId });
     
     // Notify connected popups about the pending request
-    notifyPendingRequest(pendingRequest);
+    notifyPendingRequest(requestId, request);
     
     // Open the extension popup dropdown for approval
     console.log('[Background] Opening extension popup for connect');
     chrome.action.openPopup().catch(err => {
       console.log('[Background] openPopup requires user gesture, showing badge');
-      chrome.action.setBadgeText({ text: '!' });
+      chrome.action.setBadgeText({ text: pendingRequests.size.toString() });
       chrome.action.setBadgeBackgroundColor({ color: '#FF6B00' });
     });
-    
-    // Timeout after 60 seconds
-    setTimeout(() => {
-      if (pendingRequestCallback === resolve) {
-        pendingRequestCallback = null;
-        pendingRequest = null;
-        clearBadge();
-        resolve({ error: 'Request timeout' });
-      }
-    }, 60000);
   });
 }
 
@@ -589,35 +649,51 @@ async function handleSignTransaction(params, origin, sender) {
     throw new Error('Site not connected');
   }
   
+  // X1W-SEC: Check if reauth is required for sensitive operations
+  const needsReauth = await requiresReauth(origin);
+  console.log('[Background] Requires reauth:', needsReauth);
+  
   return new Promise((resolve) => {
-    pendingRequest = {
+    const requestId = generateRequestId();
+    const request = {
       type: 'signTransaction',
       origin,
       transaction: params.transaction,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      requiresReauth: needsReauth,
+      requestId  // Include ID in request for popup to use
     };
     
-    pendingRequestCallback = resolve;
+    // Set timeout for this specific request
+    const timeoutId = setTimeout(() => {
+      const entry = getPendingRequestById(requestId);
+      if (entry) {
+        console.log('[Background] Request timeout:', requestId);
+        entry.callback({ error: 'Request timeout' });
+        removePendingRequest(requestId);
+        // Update badge to show remaining count
+        if (pendingRequests.size > 0) {
+          chrome.action.setBadgeText({ text: pendingRequests.size.toString() });
+        } else {
+          clearBadge();
+        }
+      }
+    }, 60000);
+    
+    // Store in Map
+    pendingRequests.set(requestId, { request, callback: resolve, timeoutId });
+    console.log('[Background] Added pending request:', requestId, 'Total:', pendingRequests.size);
     
     // Notify connected popups about the pending request
-    notifyPendingRequest(pendingRequest);
+    notifyPendingRequest(requestId, request);
     
     // Open the extension popup dropdown for approval
     console.log('[Background] Opening extension popup for signTransaction');
     chrome.action.openPopup().catch(err => {
       console.log('[Background] openPopup requires user gesture, showing badge');
-      chrome.action.setBadgeText({ text: '!' });
+      chrome.action.setBadgeText({ text: pendingRequests.size.toString() });
       chrome.action.setBadgeBackgroundColor({ color: '#FF6B00' });
     });
-    
-    setTimeout(() => {
-      if (pendingRequestCallback === resolve) {
-        pendingRequestCallback = null;
-        pendingRequest = null;
-        clearBadge();
-        resolve({ error: 'Request timeout' });
-      }
-    }, 60000);
   });
 }
 
@@ -628,35 +704,45 @@ async function handleSignAllTransactions(params, origin, sender) {
     throw new Error('Site not connected');
   }
   
+  // X1W-SEC: Check if reauth is required for sensitive operations
+  const needsReauth = await requiresReauth(origin);
+  
   return new Promise((resolve) => {
-    pendingRequest = {
+    const requestId = generateRequestId();
+    const request = {
       type: 'signAllTransactions',
       origin,
       transactions: params.transactions,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      requiresReauth: needsReauth,
+      requestId
     };
     
-    pendingRequestCallback = resolve;
+    const timeoutId = setTimeout(() => {
+      const entry = getPendingRequestById(requestId);
+      if (entry) {
+        entry.callback({ error: 'Request timeout' });
+        removePendingRequest(requestId);
+        if (pendingRequests.size > 0) {
+          chrome.action.setBadgeText({ text: pendingRequests.size.toString() });
+        } else {
+          clearBadge();
+        }
+      }
+    }, 60000);
+    
+    pendingRequests.set(requestId, { request, callback: resolve, timeoutId });
     
     // Notify connected popups about the pending request
-    notifyPendingRequest(pendingRequest);
+    notifyPendingRequest(requestId, request);
     
     // Open the extension popup dropdown for approval
     console.log('[Background] Opening extension popup for signAllTransactions');
     chrome.action.openPopup().catch(err => {
       console.log('[Background] openPopup requires user gesture, showing badge');
-      chrome.action.setBadgeText({ text: '!' });
+      chrome.action.setBadgeText({ text: pendingRequests.size.toString() });
       chrome.action.setBadgeBackgroundColor({ color: '#FF6B00' });
     });
-    
-    setTimeout(() => {
-      if (pendingRequestCallback === resolve) {
-        pendingRequestCallback = null;
-        pendingRequest = null;
-        clearBadge();
-        resolve({ error: 'Request timeout' });
-      }
-    }, 60000);
   });
 }
 
@@ -667,36 +753,46 @@ async function handleSignAndSendTransaction(params, origin, sender) {
     throw new Error('Site not connected');
   }
   
+  // X1W-SEC: Check if reauth is required for sensitive operations
+  const needsReauth = await requiresReauth(origin);
+  
   return new Promise((resolve) => {
-    pendingRequest = {
+    const requestId = generateRequestId();
+    const request = {
       type: 'signAndSendTransaction',
       origin,
       transaction: params.transaction,
       options: params.options,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      requiresReauth: needsReauth,
+      requestId
     };
     
-    pendingRequestCallback = resolve;
+    const timeoutId = setTimeout(() => {
+      const entry = getPendingRequestById(requestId);
+      if (entry) {
+        entry.callback({ error: 'Request timeout' });
+        removePendingRequest(requestId);
+        if (pendingRequests.size > 0) {
+          chrome.action.setBadgeText({ text: pendingRequests.size.toString() });
+        } else {
+          clearBadge();
+        }
+      }
+    }, 60000);
+    
+    pendingRequests.set(requestId, { request, callback: resolve, timeoutId });
     
     // Notify connected popups about the pending request
-    notifyPendingRequest(pendingRequest);
+    notifyPendingRequest(requestId, request);
     
     // Open the extension popup dropdown for approval
     console.log('[Background] Opening extension popup for signAndSendTransaction');
     chrome.action.openPopup().catch(err => {
       console.log('[Background] openPopup requires user gesture, showing badge');
-      chrome.action.setBadgeText({ text: '!' });
+      chrome.action.setBadgeText({ text: pendingRequests.size.toString() });
       chrome.action.setBadgeBackgroundColor({ color: '#FF6B00' });
     });
-    
-    setTimeout(() => {
-      if (pendingRequestCallback === resolve) {
-        pendingRequestCallback = null;
-        pendingRequest = null;
-        clearBadge();
-        resolve({ error: 'Request timeout' });
-      }
-    }, 60000);
   });
 }
 
@@ -707,35 +803,45 @@ async function handleSignMessage(params, origin, sender) {
     throw new Error('Site not connected');
   }
   
+  // X1W-SEC: Check if reauth is required for sensitive operations
+  const needsReauth = await requiresReauth(origin);
+  
   return new Promise((resolve) => {
-    pendingRequest = {
+    const requestId = generateRequestId();
+    const request = {
       type: 'signMessage',
       origin,
       message: params.message,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      requiresReauth: needsReauth,
+      requestId
     };
     
-    pendingRequestCallback = resolve;
+    const timeoutId = setTimeout(() => {
+      const entry = getPendingRequestById(requestId);
+      if (entry) {
+        entry.callback({ error: 'Request timeout' });
+        removePendingRequest(requestId);
+        if (pendingRequests.size > 0) {
+          chrome.action.setBadgeText({ text: pendingRequests.size.toString() });
+        } else {
+          clearBadge();
+        }
+      }
+    }, 60000);
+    
+    pendingRequests.set(requestId, { request, callback: resolve, timeoutId });
     
     // Notify connected popups about the pending request
-    notifyPendingRequest(pendingRequest);
+    notifyPendingRequest(requestId, request);
     
     // Open the extension popup dropdown for approval
     console.log('[Background] Opening extension popup for signMessage');
     chrome.action.openPopup().catch(err => {
       console.log('[Background] openPopup requires user gesture, showing badge');
-      chrome.action.setBadgeText({ text: '!' });
+      chrome.action.setBadgeText({ text: pendingRequests.size.toString() });
       chrome.action.setBadgeBackgroundColor({ color: '#FF6B00' });
     });
-    
-    setTimeout(() => {
-      if (pendingRequestCallback === resolve) {
-        pendingRequestCallback = null;
-        pendingRequest = null;
-        clearBadge();
-        resolve({ error: 'Request timeout' });
-      }
-    }, 60000);
   });
 }
 
@@ -786,27 +892,36 @@ async function handleGetConnectionStatus(origin) {
 async function handleApproveSign(message) {
   console.log('[Background] handleApproveSign received:', JSON.stringify(message));
   
-  if (message.signedTransaction && pendingRequestCallback) {
+  // Get the pending request (by ID if provided, otherwise oldest)
+  const requestId = message.requestId;
+  const entry = requestId ? getPendingRequestById(requestId) : getOldestPendingRequest();
+  
+  if (!entry) {
+    console.log('[Background] No pending request found for:', requestId);
+    return { error: 'No pending request' };
+  }
+  
+  const id = requestId || entry.id;
+  const callback = entry.callback;
+  
+  if (message.signedTransaction) {
     console.log('[Background] Sending signedTransaction back to DApp');
-    pendingRequestCallback({ result: { signedTransaction: message.signedTransaction } });
-    pendingRequestCallback = null;
-    pendingRequest = null;
+    callback({ result: { signedTransaction: message.signedTransaction } });
+    removePendingRequest(id);
     return { success: true };
   }
   
-  if (message.signedTransactions && pendingRequestCallback) {
+  if (message.signedTransactions) {
     console.log('[Background] Sending signedTransactions back to DApp');
-    pendingRequestCallback({ result: { signedTransactions: message.signedTransactions } });
-    pendingRequestCallback = null;
-    pendingRequest = null;
+    callback({ result: { signedTransactions: message.signedTransactions } });
+    removePendingRequest(id);
     return { success: true };
   }
   
-  if (message.signature && pendingRequestCallback) {
+  if (message.signature) {
     console.log('[Background] Sending signature back to DApp:', message.signature);
-    pendingRequestCallback({ result: { signature: message.signature } });
-    pendingRequestCallback = null;
-    pendingRequest = null;
+    callback({ result: { signature: message.signature } });
+    removePendingRequest(id);
     
     // Trigger balance refresh in wallet UI
     broadcastBalanceRefresh();
@@ -816,15 +931,12 @@ async function handleApproveSign(message) {
   
   if (message.error) {
     console.log('[Background] Sending error back to DApp:', message.error);
-    if (pendingRequestCallback) {
-      pendingRequestCallback({ error: message.error });
-      pendingRequestCallback = null;
-      pendingRequest = null;
-    }
+    callback({ error: message.error });
+    removePendingRequest(id);
     return { success: false };
   }
   
-  console.log('[Background] Invalid approve-sign message, pendingRequestCallback:', !!pendingRequestCallback);
+  console.log('[Background] Invalid approve-sign message');
   return { error: 'Invalid approve-sign message' };
 }
 
@@ -832,19 +944,27 @@ async function handleApproveSign(message) {
 async function handleApproveSignMessage(message) {
   console.log('[Background] handleApproveSignMessage received');
   
-  if (message.signature && pendingRequestCallback) {
-    pendingRequestCallback({ result: { signature: message.signature } });
-    pendingRequestCallback = null;
-    pendingRequest = null;
+  // Get the pending request (by ID if provided, otherwise oldest)
+  const requestId = message.requestId;
+  const entry = requestId ? getPendingRequestById(requestId) : getOldestPendingRequest();
+  
+  if (!entry) {
+    console.log('[Background] No pending request found for sign message');
+    return { error: 'No pending request' };
+  }
+  
+  const id = requestId || entry.id;
+  const callback = entry.callback;
+  
+  if (message.signature) {
+    callback({ result: { signature: message.signature } });
+    removePendingRequest(id);
     return { success: true };
   }
   
   if (message.error) {
-    if (pendingRequestCallback) {
-      pendingRequestCallback({ error: message.error });
-      pendingRequestCallback = null;
-      pendingRequest = null;
-    }
+    callback({ error: message.error });
+    removePendingRequest(id);
     return { success: false };
   }
   

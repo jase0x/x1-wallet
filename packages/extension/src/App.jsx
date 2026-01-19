@@ -253,7 +253,7 @@ const applySavedTheme = () => {
 applySavedTheme();
 
 // Lock Screen Component - Integrates with useWallet encryption
-function LockScreen({ onUnlock, walletUnlock }) {
+function LockScreen({ onUnlock, walletUnlock, title, subtitle }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [attempts, setAttempts] = useState(0);
@@ -304,8 +304,8 @@ function LockScreen({ onUnlock, walletUnlock }) {
           <path d="M7 11V7a5 5 0 0 1 10 0v4" />
         </svg>
       </div>
-      <h2>Wallet Locked</h2>
-      <p className="lock-subtitle">Enter your password to unlock</p>
+      <h2>{title || 'Wallet Locked'}</h2>
+      <p className="lock-subtitle">{subtitle || 'Enter your password to unlock'}</p>
       
       <div className="form-group" style={{ marginTop: 24, width: '100%' }}>
         <input
@@ -347,6 +347,8 @@ function App() {
   const [balanceRefreshKey, setBalanceRefreshKey] = useState(0);
   const [userTokens, setUserTokens] = useState([]);
   const [hasDAppRequest, setHasDAppRequest] = useState(false);
+  const [dappRequiresReauth, setDappRequiresReauth] = useState(false);  // X1W-SEC: Track if signing needs password re-entry
+  const [currentRequestId, setCurrentRequestId] = useState(null);  // X1W-SEC: Track which request is being handled
   const [alertModal, setAlertModal] = useState({ show: false, title: '', message: '', type: 'error' });
   const lastActivityRef = useRef(Date.now());
   const lockTimerRef = useRef(null);
@@ -393,8 +395,15 @@ function App() {
         const response = await safeSendMessage({ type: 'get-pending-request' });
         if (response) {
           const pendingReq = response?.request || response;
+          const reqId = response?.requestId || pendingReq?.requestId;
           if (pendingReq && pendingReq.type) {
             setHasDAppRequest(true);
+            setCurrentRequestId(reqId);  // X1W-SEC: Track which request we're handling
+            // X1W-SEC: Check if this request requires password re-authentication
+            if (pendingReq.requiresReauth) {
+              logger.log('[App] Pending request requires reauth');
+              setDappRequiresReauth(true);
+            }
             return;
           }
         }
@@ -421,6 +430,12 @@ function App() {
           if (message.type === 'pending-request' && message.request) {
             logger.log('[App] Received pending request via port:', message.request.type);
             setHasDAppRequest(true);
+            setCurrentRequestId(message.requestId || message.request.requestId);  // X1W-SEC: Track request ID
+            // X1W-SEC: Check if this request requires password re-authentication
+            if (message.request.requiresReauth) {
+              logger.log('[App] Request requires reauth');
+              setDappRequiresReauth(true);
+            }
           }
         });
         
@@ -1537,12 +1552,35 @@ function App() {
 
   // Main wallet screen
   // If this is an approval window with a pending request, ONLY show DAppApproval (not the main wallet)
+  // X1W-SEC: If reauth is required, show password screen first
   if (hasDAppRequest && wallet.wallet) {
+    if (dappRequiresReauth) {
+      // Show lock screen to verify password before allowing signing
+      return (
+        <div className="app">
+          <LockScreen 
+            onUnlock={(password) => {
+              // Password verified, clear reauth requirement and proceed to approval
+              setDappRequiresReauth(false);
+              handleUnlock(password);
+            }} 
+            walletUnlock={wallet.isEncrypted ? wallet.unlockWallet : null}
+            title="Re-authentication Required"
+            subtitle="Enter your password to approve this transaction"
+          />
+        </div>
+      );
+    }
+    
     return (
       <div className="app">
         <DAppApproval 
           wallet={wallet} 
-          onComplete={() => setHasDAppRequest(false)} 
+          requestId={currentRequestId}  // X1W-SEC: Pass request ID for proper routing
+          onComplete={() => {
+            setHasDAppRequest(false);
+            setCurrentRequestId(null);
+          }} 
         />
       </div>
     );

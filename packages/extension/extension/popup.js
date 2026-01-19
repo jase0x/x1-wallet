@@ -15926,6 +15926,69 @@ const NETWORK_KEY = "x1wallet_network";
 const CUSTOM_NETWORKS_KEY = "x1wallet_customRpcs";
 const ENCRYPTION_ENABLED_KEY = "x1wallet_encrypted";
 const BALANCE_CACHE_KEY$1 = "x1wallet_balance_cache";
+const SESSION_PBKDF2_ITERATIONS = 1e4;
+async function deriveSessionKey(salt) {
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    salt,
+    { name: "PBKDF2" },
+    false,
+    ["deriveBits", "deriveKey"]
+  );
+  return crypto.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      salt,
+      iterations: SESSION_PBKDF2_ITERATIONS,
+      hash: "SHA-256"
+    },
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+async function encryptPasswordForSession(password) {
+  try {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const sessionKey = await deriveSessionKey(salt);
+    const encoded = new TextEncoder().encode(password);
+    const encrypted = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv },
+      sessionKey,
+      encoded
+    );
+    return {
+      e: btoa(String.fromCharCode(...new Uint8Array(encrypted))),
+      s: btoa(String.fromCharCode(...salt)),
+      i: btoa(String.fromCharCode(...iv))
+    };
+  } catch (err) {
+    logger$1.error("[Session] Failed to encrypt password:", err.message);
+    return null;
+  }
+}
+async function decryptPasswordFromSession(sessionData) {
+  try {
+    if (!sessionData || !sessionData.e || !sessionData.s || !sessionData.i) {
+      return null;
+    }
+    const encrypted = Uint8Array.from(atob(sessionData.e), (c) => c.charCodeAt(0));
+    const salt = Uint8Array.from(atob(sessionData.s), (c) => c.charCodeAt(0));
+    const iv = Uint8Array.from(atob(sessionData.i), (c) => c.charCodeAt(0));
+    const sessionKey = await deriveSessionKey(salt);
+    const decrypted = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv },
+      sessionKey,
+      encrypted
+    );
+    return new TextDecoder().decode(decrypted);
+  } catch (err) {
+    logger$1.error("[Session] Failed to decrypt password:", err.message);
+    return null;
+  }
+}
 function validatePasswordStrength(password) {
   if (typeof password !== "string") return { ok: false, reason: "Invalid password" };
   if (password.length < 8) return { ok: false, reason: "Password must be at least 8 characters" };
@@ -16070,9 +16133,11 @@ function useWallet() {
       localStorage.setItem(ENCRYPTION_ENABLED_KEY, "true");
       if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.session) {
         try {
+          const encryptedPwd = await encryptPasswordForSession(effectivePassword);
           await chrome.storage.session.set({
             x1wallet_session_wallets: jsonData,
-            x1wallet_session_password: effectivePassword
+            x1wallet_session_pwd: encryptedPwd
+            // Encrypted, not plaintext
           });
           console.log("[useWallet] Session storage synced with", walletsToSave.length, "wallets");
         } catch (e) {
@@ -16095,7 +16160,7 @@ function useWallet() {
           console.log("[useWallet] Fresh install detected - clearing any stale session storage");
           if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.session) {
             try {
-              await chrome.storage.session.remove(["x1wallet_session_wallets", "x1wallet_session_password"]);
+              await chrome.storage.session.remove(["x1wallet_session_wallets", "x1wallet_session_pwd"]);
             } catch (e) {
             }
           }
@@ -16106,16 +16171,22 @@ function useWallet() {
           console.log("[useWallet] Data is encrypted - checking session storage...");
           if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.session) {
             try {
-              const sessionData = await chrome.storage.session.get(["x1wallet_session_wallets", "x1wallet_session_password"]);
-              if (sessionData.x1wallet_session_wallets && sessionData.x1wallet_session_password) {
+              const sessionData = await chrome.storage.session.get(["x1wallet_session_wallets", "x1wallet_session_pwd"]);
+              if (sessionData.x1wallet_session_wallets && sessionData.x1wallet_session_pwd) {
                 console.log("[useWallet] Found session data - loading from session");
-                const sessionWallets = JSON.parse(sessionData.x1wallet_session_wallets);
-                const migrated = sessionWallets.map(migrateWallet);
-                setWallets(migrated);
-                setActiveWalletId(activeId || (migrated.length > 0 ? migrated[0].id : null));
-                setEncryptionPassword(sessionData.x1wallet_session_password);
-                setIsLocked(false);
-                console.log("[useWallet] Loaded", migrated.length, "wallets from session");
+                const decryptedPassword = await decryptPasswordFromSession(sessionData.x1wallet_session_pwd);
+                if (decryptedPassword) {
+                  const sessionWallets = JSON.parse(sessionData.x1wallet_session_wallets);
+                  const migrated = sessionWallets.map(migrateWallet);
+                  setWallets(migrated);
+                  setActiveWalletId(activeId || (migrated.length > 0 ? migrated[0].id : null));
+                  setEncryptionPassword(decryptedPassword);
+                  setIsLocked(false);
+                  console.log("[useWallet] Loaded", migrated.length, "wallets from session");
+                } else {
+                  console.log("[useWallet] Failed to decrypt session password - need password");
+                  setIsLocked(true);
+                }
               } else {
                 console.log("[useWallet] No session data - need password");
                 setIsLocked(true);
@@ -16163,13 +16234,19 @@ function useWallet() {
     const activeId = localStorage.getItem(ACTIVE_KEY);
     setActiveWalletId(activeId || (loadedWallets.length > 0 ? loadedWallets[0].id : null));
     if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.session) {
-      chrome.storage.session.set({
-        x1wallet_session_wallets: JSON.stringify(loadedWallets),
-        x1wallet_session_password: password
-      }).then(() => {
-        console.log("[useWallet] Saved to session storage for auto-lock");
+      encryptPasswordForSession(password).then((encryptedPwd) => {
+        if (encryptedPwd) {
+          chrome.storage.session.set({
+            x1wallet_session_wallets: JSON.stringify(loadedWallets),
+            x1wallet_session_pwd: encryptedPwd
+          }).then(() => {
+            console.log("[useWallet] Saved to session storage for auto-lock");
+          }).catch((e) => {
+            console.warn("[useWallet] Failed to save to session storage:", e.message);
+          });
+        }
       }).catch((e) => {
-        console.warn("[useWallet] Failed to save to session storage:", e.message);
+        console.warn("[useWallet] Failed to encrypt session password:", e.message);
       });
     }
     return true;
@@ -16180,7 +16257,7 @@ function useWallet() {
     setIsLocked(true);
     setBalance(0);
     if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.session) {
-      chrome.storage.session.remove(["x1wallet_session_wallets", "x1wallet_session_password"]).catch((e) => console.warn("[useWallet] Failed to clear session:", e.message));
+      chrome.storage.session.remove(["x1wallet_session_wallets", "x1wallet_session_pwd"]).catch((e) => console.warn("[useWallet] Failed to clear session:", e.message));
     }
   }, []);
   const enableEncryption = reactExports.useCallback(async (password) => {
@@ -16196,9 +16273,10 @@ function useWallet() {
       localStorage.setItem(STORAGE_KEY, encrypted);
       if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.session) {
         try {
+          const encryptedPwd = await encryptPasswordForSession(password);
           await chrome.storage.session.set({
             x1wallet_session_wallets: jsonData,
-            x1wallet_session_password: password
+            x1wallet_session_pwd: encryptedPwd
           });
         } catch (e) {
           console.warn("[useWallet] Failed to update session storage:", e.message);
@@ -16237,9 +16315,10 @@ function useWallet() {
     localStorage.setItem(STORAGE_KEY, encrypted);
     if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.session) {
       try {
+        const encryptedPwd = await encryptPasswordForSession(newPassword);
         await chrome.storage.session.set({
           x1wallet_session_wallets: jsonData,
-          x1wallet_session_password: newPassword
+          x1wallet_session_pwd: encryptedPwd
         });
       } catch (e) {
         console.warn("[useWallet] Failed to update session storage:", e.message);
@@ -16421,7 +16500,7 @@ function useWallet() {
       if (password && wallets.length === 0) {
         if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.session) {
           try {
-            await chrome.storage.session.remove(["x1wallet_session_wallets", "x1wallet_session_password"]);
+            await chrome.storage.session.remove(["x1wallet_session_wallets", "x1wallet_session_pwd"]);
           } catch (e) {
           }
         }
@@ -16578,7 +16657,7 @@ function useWallet() {
           "x1wallet_encrypted"
         ]);
         if (chrome.storage.session) {
-          await chrome.storage.session.remove(["x1wallet_session_wallets", "x1wallet_session_password"]);
+          await chrome.storage.session.remove(["x1wallet_session_wallets", "x1wallet_session_pwd"]);
         }
       } catch (e) {
       }
@@ -33498,9 +33577,10 @@ function decodeInstruction(programId, accountIndices, data, accountKeys) {
   }
   return instruction;
 }
-function DAppApproval({ wallet, onComplete }) {
+function DAppApproval({ wallet, requestId, onComplete }) {
   var _a2, _b2, _c, _d, _e, _f, _g, _h;
   const [pendingRequest, setPendingRequest] = reactExports.useState(null);
+  const [currentRequestId, setCurrentRequestId] = reactExports.useState(requestId);
   const [loading, setLoading] = reactExports.useState(true);
   const [processing, setProcessing] = reactExports.useState(false);
   const [error, setError] = reactExports.useState(null);
@@ -33533,9 +33613,13 @@ function DAppApproval({ wallet, onComplete }) {
       try {
         const response = await chrome.runtime.sendMessage({ type: "get-pending-request" });
         const request = (response == null ? void 0 : response.request) || response;
-        logger$1.log("[DAppApproval] Pending request type:", request == null ? void 0 : request.type);
+        const reqId = (response == null ? void 0 : response.requestId) || (request == null ? void 0 : request.requestId);
+        logger$1.log("[DAppApproval] Pending request type:", request == null ? void 0 : request.type, "id:", reqId);
         if (request && request.type) {
           setPendingRequest(request);
+          if (reqId) {
+            setCurrentRequestId(reqId);
+          }
           if (request.transaction) {
             try {
               const txBytes = Uint8Array.from(atob(request.transaction), (c) => c.charCodeAt(0));
@@ -33659,6 +33743,9 @@ function DAppApproval({ wallet, onComplete }) {
     try {
       await chrome.runtime.sendMessage({
         type: "approve-sign",
+        requestId: currentRequestId,
+        requestId: currentRequestId,
+        // X1W-SEC: Include request ID
         error: "User rejected the request"
       });
     } catch (e) {
@@ -33685,6 +33772,8 @@ function DAppApproval({ wallet, onComplete }) {
       }
       await chrome.runtime.sendMessage({
         type: "provider-response",
+        requestId: currentRequestId,
+        // X1W-SEC: Include request ID
         payload: { result: { publicKey, network, chain } }
       });
       try {
@@ -33778,6 +33867,7 @@ function DAppApproval({ wallet, onComplete }) {
       logger$1.log("[DAppApproval] Transaction signed successfully");
       await chrome.runtime.sendMessage({
         type: "approve-sign",
+        requestId: currentRequestId,
         signedTransaction: signedTxBase64
       });
       if (onComplete) onComplete();
@@ -33792,6 +33882,7 @@ function DAppApproval({ wallet, onComplete }) {
       try {
         await chrome.runtime.sendMessage({
           type: "approve-sign",
+          requestId: currentRequestId,
           error: (err == null ? void 0 : err.message) || "Transaction signing failed"
         });
       } catch (e) {
@@ -33867,6 +33958,7 @@ function DAppApproval({ wallet, onComplete }) {
       setHwStatus("");
       await chrome.runtime.sendMessage({
         type: "approve-sign",
+        requestId: currentRequestId,
         signedTransactions: signedTxs
       });
       if (onComplete) onComplete();
@@ -33881,6 +33973,7 @@ function DAppApproval({ wallet, onComplete }) {
       try {
         await chrome.runtime.sendMessage({
           type: "approve-sign",
+          requestId: currentRequestId,
           error: (err == null ? void 0 : err.message) || "Transaction signing failed"
         });
       } catch (e) {
@@ -34090,6 +34183,7 @@ function DAppApproval({ wallet, onComplete }) {
       logger$1.log("[DAppApproval] Sending signature to background:", txSignature);
       await chrome.runtime.sendMessage({
         type: "approve-sign",
+        requestId: currentRequestId,
         signature: txSignature
       });
       logger$1.log("[DAppApproval] Response sent, closing popup");
@@ -34105,6 +34199,7 @@ function DAppApproval({ wallet, onComplete }) {
       try {
         await chrome.runtime.sendMessage({
           type: "approve-sign",
+          requestId: currentRequestId,
           error: (err == null ? void 0 : err.message) || "Transaction failed"
         });
       } catch (e) {
@@ -34163,6 +34258,7 @@ function DAppApproval({ wallet, onComplete }) {
       const signatureBase64 = btoa(String.fromCharCode(...signature));
       await chrome.runtime.sendMessage({
         type: "approve-sign-message",
+        requestId: currentRequestId,
         signature: signatureBase64
       });
       if (onComplete) onComplete();
@@ -34189,6 +34285,7 @@ function DAppApproval({ wallet, onComplete }) {
       try {
         await chrome.runtime.sendMessage({
           type: "approve-sign-message",
+          requestId: currentRequestId,
           error: (err == null ? void 0 : err.message) || "Signing failed"
         });
       } catch (e) {
@@ -34830,7 +34927,7 @@ const applySavedTheme = () => {
   }
 };
 applySavedTheme();
-function LockScreen({ onUnlock, walletUnlock }) {
+function LockScreen({ onUnlock, walletUnlock, title, subtitle }) {
   const [password, setPassword] = reactExports.useState("");
   const [error, setError] = reactExports.useState("");
   const [attempts, setAttempts] = reactExports.useState(0);
@@ -34873,8 +34970,8 @@ function LockScreen({ onUnlock, walletUnlock }) {
       /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "3", y: "11", width: "18", height: "11", rx: "2", ry: "2" }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7 11V7a5 5 0 0 1 10 0v4" })
     ] }) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "Wallet Locked" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "lock-subtitle", children: "Enter your password to unlock" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: title || "Wallet Locked" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "lock-subtitle", children: subtitle || "Enter your password to unlock" }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "form-group", style: { marginTop: 24, width: "100%" }, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
       "input",
       {
@@ -34915,6 +35012,8 @@ function App() {
   const [balanceRefreshKey, setBalanceRefreshKey] = reactExports.useState(0);
   const [userTokens, setUserTokens] = reactExports.useState([]);
   const [hasDAppRequest, setHasDAppRequest] = reactExports.useState(false);
+  const [dappRequiresReauth, setDappRequiresReauth] = reactExports.useState(false);
+  const [currentRequestId, setCurrentRequestId] = reactExports.useState(null);
   const [alertModal, setAlertModal] = reactExports.useState({ show: false, title: "", message: "", type: "error" });
   const lastActivityRef = reactExports.useRef(Date.now());
   const lockTimerRef = reactExports.useRef(null);
@@ -34945,8 +35044,14 @@ function App() {
         const response = await safeSendMessage({ type: "get-pending-request" });
         if (response) {
           const pendingReq = (response == null ? void 0 : response.request) || response;
+          const reqId = (response == null ? void 0 : response.requestId) || (pendingReq == null ? void 0 : pendingReq.requestId);
           if (pendingReq && pendingReq.type) {
             setHasDAppRequest(true);
+            setCurrentRequestId(reqId);
+            if (pendingReq.requiresReauth) {
+              logger$1.log("[App] Pending request requires reauth");
+              setDappRequiresReauth(true);
+            }
             return;
           }
         }
@@ -34968,6 +35073,11 @@ function App() {
           if (message.type === "pending-request" && message.request) {
             logger$1.log("[App] Received pending request via port:", message.request.type);
             setHasDAppRequest(true);
+            setCurrentRequestId(message.requestId || message.request.requestId);
+            if (message.request.requiresReauth) {
+              logger$1.log("[App] Request requires reauth");
+              setDappRequiresReauth(true);
+            }
           }
         });
         port.onDisconnect.addListener(() => {
@@ -35869,11 +35979,29 @@ function App() {
     ] });
   }
   if (hasDAppRequest && wallet.wallet) {
+    if (dappRequiresReauth) {
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+        LockScreen,
+        {
+          onUnlock: (password) => {
+            setDappRequiresReauth(false);
+            handleUnlock(password);
+          },
+          walletUnlock: wallet.isEncrypted ? wallet.unlockWallet : null,
+          title: "Re-authentication Required",
+          subtitle: "Enter your password to approve this transaction"
+        }
+      ) });
+    }
     return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
       DAppApproval,
       {
         wallet,
-        onComplete: () => setHasDAppRequest(false)
+        requestId: currentRequestId,
+        onComplete: () => {
+          setHasDAppRequest(false);
+          setCurrentRequestId(null);
+        }
       }
     ) });
   }
