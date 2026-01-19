@@ -5050,6 +5050,7 @@ body {
   flex-direction: column;
   min-height: calc(100vh - 180px);
   overflow-x: hidden;
+  overflow-y: auto;
 }
 
 /* Swap confirm screen - consistent width for all elements */
@@ -5067,6 +5068,7 @@ body {
 .swap-screen .send-confirm-actions {
   width: 100%;
   box-sizing: border-box;
+  flex-shrink: 0;
 }
 
 .swap-screen .send-summary-card {
@@ -5081,6 +5083,8 @@ body {
 .swap-screen .send-priority-section {
   padding: 10px 14px;
   margin-top: 10px;
+  overflow: visible !important;
+  flex-shrink: 0 !important;
 }
 
 .swap-screen .send-priority-label {
@@ -5113,6 +5117,8 @@ body {
   position: relative;
   z-index: 2;
   margin-bottom: 8px;
+  overflow: visible !important;
+  flex-shrink: 0 !important;
 }
 
 /* Slippage buttons container - ensure proper layout */
@@ -5135,6 +5141,55 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0;
+  position: relative;
+  z-index: 5;
+  overflow-y: auto;
+  overflow-x: visible;
+}
+
+/* Ensure children don't shrink */
+.swap-screen .send-step-content > * {
+  flex-shrink: 0;
+}
+
+/* CRITICAL FIX: Prevent absolutely positioned confirm actions from blocking clicks */
+.swap-screen .send-confirm-actions {
+  height: auto !important;
+  max-height: 80px;
+  z-index: 1 !important;
+}
+
+/* Ensure the scrollable content stays above the fixed buttons */
+.swap-screen .slide-panel-content {
+  position: relative;
+}
+
+.swap-screen .slide-panel-content > .send-step-content {
+  position: relative;
+  z-index: 10;
+  pointer-events: auto;
+}
+
+/* Make sure priority and slippage sections are fully clickable */
+.swap-screen .send-priority-section {
+  position: relative;
+  z-index: 15 !important;
+  pointer-events: auto !important;
+  overflow: visible !important;
+  flex-shrink: 0 !important;
+  min-height: fit-content;
+}
+
+.swap-screen .send-priority-selector {
+  position: relative;
+  z-index: 15 !important;
+  pointer-events: auto !important;
+}
+
+.swap-screen .send-priority-btn {
+  position: relative;
+  z-index: 16 !important;
+  pointer-events: auto !important;
 }
 
 /* Stake Screen Styles */
@@ -9819,8 +9874,9 @@ details[open] .dapp-tx-details-summary svg {
   padding: 16px;
   background: var(--bg-secondary);
   border-radius: 12px;
-  overflow: hidden;
+  overflow: visible;
   box-sizing: border-box;
+  flex-shrink: 0;
 }
 
 .send-priority-label {

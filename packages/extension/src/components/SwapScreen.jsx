@@ -2638,8 +2638,8 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
           <h2 className="header-title">Confirm {isWrapOperation ? (wrapDirection === 'wrap' ? 'Wrap' : 'Unwrap') : 'Swap'}</h2>
           <div className="header-right" />
         </div>
-        <div className="slide-panel-content" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
-          <div className="send-step-content" style={{ flex: 1, overflowY: 'auto', paddingBottom: 100 }}>
+        <div className="slide-panel-content" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div className="send-step-content" style={{ flex: 1, overflowY: 'auto', paddingBottom: 20 }}>
             {/* Transaction Summary */}
             <div className="send-summary-card">
               <div className="send-summary-row">
@@ -2808,12 +2808,9 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
             )}
           </div>
 
-          {/* Action Buttons - Fixed at bottom */}
+          {/* Action Buttons - At bottom of flex container */}
           <div className="send-confirm-actions" style={{
-            position: 'absolute',
-            bottom: 0,
-            left: 0,
-            right: 0,
+            flexShrink: 0,
             padding: '16px 20px',
             background: 'var(--bg-primary)',
             borderTop: '1px solid var(--border-color)'

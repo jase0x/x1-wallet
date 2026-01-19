@@ -30629,8 +30629,8 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-right" })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "slide-panel-content", style: { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", position: "relative" }, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-step-content", style: { flex: 1, overflowY: "auto", paddingBottom: 100 }, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "slide-panel-content", style: { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-step-content", style: { flex: 1, overflowY: "auto", paddingBottom: 20 }, children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-summary-card", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-summary-row", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "send-summary-label", children: "From" }),
@@ -30808,10 +30808,7 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
           }, children: error })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-confirm-actions", style: {
-          position: "absolute",
-          bottom: 0,
-          left: 0,
-          right: 0,
+          flexShrink: 0,
           padding: "16px 20px",
           background: "var(--bg-primary)",
           borderTop: "1px solid var(--border-color)"
