@@ -388,19 +388,20 @@ function App() {
         const urlParams = new URLSearchParams(window.location.search);
         isApprovalWindow = urlParams.has('request');
         
-        // For approval windows, check for pending request
-        if (isApprovalWindow) {
-          const response = await safeSendMessage({ type: 'get-pending-request' });
-          if (response) {
-            const pendingReq = response?.request || response;
-            setHasDAppRequest(pendingReq && pendingReq.type ? true : false);
+        // For approval windows OR side panel, check for pending request
+        // Side panel won't have URL params but should still show approval if there's one pending
+        const response = await safeSendMessage({ type: 'get-pending-request' });
+        if (response) {
+          const pendingReq = response?.request || response;
+          if (pendingReq && pendingReq.type) {
+            setHasDAppRequest(true);
+            return;
           }
-          return;
         }
         
-        // For regular popup/side panel (no URL params), check if there's a pending request
-        // But DON'T continuously poll - only check once on mount
-        // This prevents the side panel from being affected by other window's transactions
+        if (isApprovalWindow) {
+          return; // Don't proceed with normal loading for dedicated approval windows
+        }
       } catch (err) {
         // Only log if it's not a context invalidation
         if (!err.message?.includes('Extension context invalidated')) {

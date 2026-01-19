@@ -4757,10 +4757,12 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
+  overflow: hidden;
 }
 
 .swap-box-main .swap-input-area {
   margin-left: auto;
+  flex-shrink: 0;
 }
 
 .swap-token-icon {
@@ -4795,10 +4797,13 @@ body {
 
 .swap-token-info {
   flex: 1;
+  min-width: 0;
+  max-width: 120px;
   display: flex;
   flex-direction: column;
   gap: 2px;
   cursor: pointer;
+  overflow: hidden;
 }
 
 .swap-token-symbol {
@@ -4813,12 +4818,15 @@ body {
   font-size: 12px;
   color: var(--text-muted);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .swap-input-area {
-  flex: 1;
+  flex: 0 0 auto;
   display: flex;
   justify-content: flex-end;
+  min-width: 100px;
 }
 
 .swap-input-area input {
@@ -4830,10 +4838,11 @@ body {
   font-weight: 600;
   color: var(--text-primary);
   outline: none;
-  width: 140px;
-  min-width: 100px;
-  max-width: 160px;
+  width: 120px;
+  min-width: 80px;
+  max-width: 140px;
   caret-color: var(--x1-blue);
+  overflow: hidden;
   text-overflow: ellipsis;
 }
 

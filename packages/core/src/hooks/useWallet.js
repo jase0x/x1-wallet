@@ -13,14 +13,12 @@ const CUSTOM_NETWORKS_KEY = 'x1wallet_customRpcs';
 const ENCRYPTION_ENABLED_KEY = 'x1wallet_encrypted';
 const BALANCE_CACHE_KEY = 'x1wallet_balance_cache';
 
-// Password policy (wallet-grade + usable)
+// Password policy (matches Phantom/Backpack - 8 chars, letter, number)
 function validatePasswordStrength(password) {
   if (typeof password !== 'string') return { ok: false, reason: 'Invalid password' };
   if (password.length < 8) return { ok: false, reason: 'Password must be at least 8 characters' };
   if (!/[a-zA-Z]/.test(password)) return { ok: false, reason: 'Password must contain at least one letter' };
   if (!/[0-9]/.test(password)) return { ok: false, reason: 'Password must contain at least one number' };
-  const banned = ['password', '123456', 'qwerty', 'letmein'];
-  if (banned.includes(password.toLowerCase())) return { ok: false, reason: 'Password too weak' };
   return { ok: true };
 }
 

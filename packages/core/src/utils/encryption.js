@@ -155,7 +155,13 @@ export async function verifyPassword(password, storedHash, storedSalt) {
   try {
     const salt = Uint8Array.from(atob(storedSalt), c => c.charCodeAt(0));
     const { hash } = await hashPassword(password, salt);
-    return hash === storedHash;
+    // X1W-SEC: Constant-time comparison to prevent timing attacks
+    if (hash.length !== storedHash.length) return false;
+    let result = 0;
+    for (let i = 0; i < hash.length; i++) {
+      result |= hash.charCodeAt(i) ^ storedHash.charCodeAt(i);
+    }
+    return result === 0;
   } catch {
     return false;
   }

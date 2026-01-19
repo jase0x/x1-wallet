@@ -414,7 +414,7 @@
           method,
           params,
           id,
-        }, "*");
+        }, window.location.origin);
       });
     }
 

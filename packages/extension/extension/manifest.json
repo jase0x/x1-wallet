@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "X1 Wallet",
-  "version": "0.10.70",
+  "version": "0.10.71",
   "description": "X1 Blockchain Native Wallet",
   "action": {
     "default_popup": "index.html",
@@ -46,8 +46,6 @@
     "https://rpc.mainnet.x1.xyz/*",
     "https://rpc.testnet.x1.xyz/*",
     "https://api.xdex.xyz/*",
-    "https://api.xdex.xyz/*",
-    "https://devapi.xdex.xyz/*",
     "https://devapi.xdex.xyz/*",
     "https://mobile-api.x1.xyz/*",
     "https://core.x1.xyz/*",

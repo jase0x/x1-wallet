@@ -2,8 +2,8 @@ import { l as logger, v as verifyPassword, h as hashPassword } from "./popup.js"
 const AUTH_KEY = "x1wallet_auth";
 const RATE_LIMIT_KEY = "x1wallet_rate_limit";
 const MAX_ATTEMPTS_BEFORE_DELAY = 3;
-const MAX_ATTEMPTS_BEFORE_LOCKOUT = 20;
-const LOCKOUT_DURATION_MS = 24 * 60 * 60 * 1e3;
+const MAX_ATTEMPTS_BEFORE_LOCKOUT = 10;
+const LOCKOUT_DURATION_MS = 60 * 60 * 1e3;
 async function hasPassword() {
   try {
     let authData = null;
@@ -58,10 +58,6 @@ function validatePasswordStrength(password) {
   }
   if (!/[0-9]/.test(password)) {
     return { valid: false, error: "Password must contain at least one number" };
-  }
-  const banned = ["password", "123456", "qwerty", "letmein"];
-  if (banned.includes(password.toLowerCase())) {
-    return { valid: false, error: "Password too weak" };
   }
   return { valid: true };
 }

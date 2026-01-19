@@ -7,7 +7,7 @@ import { hardwareWallet } from '../services/hardware';
 
 // Bridge API Configuration
 const BRIDGE_API_URL = 'https://bridge-alpha.x1.xyz';
-const SOLANA_RPC_URL = 'https://mainnet.helius-rpc.com/?api-key=0d4a8095-4e0c-4895-a4d3-a336c2057db3';
+const SOLANA_RPC_URL = 'https://jessamine-463apc-fast-mainnet.helius-rpc.com';
 
 // Bridge Deposit Address - the USDC token account guardians monitor on Solana
 const BRIDGE_DEPOSIT_ADDRESS = '6ob9XW6f6mweGu5sGh3JwW2Vp6UNQApjuPvrubXMQXyi';

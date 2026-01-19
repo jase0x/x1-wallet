@@ -410,9 +410,9 @@ function ActivityList({ walletAddress, network, networkConfig, refreshKey }) {
       
       // Build a map of local transaction types by signature for preservation
       const localTypeMap = new Map();
-      const preserveTypes = ['stake', 'unstake', 'wrap', 'unwrap'];
+      const preserveTypes = ['stake', 'unstake', 'wrap', 'unwrap', 'swap'];
       for (const tx of localHistory) {
-        if (tx.signature && preserveTypes.includes(tx.type)) {
+        if (tx.signature && (preserveTypes.includes(tx.type) || tx.isSwap)) {
           localTypeMap.set(tx.signature, {
             type: tx.type,
             description: tx.description,

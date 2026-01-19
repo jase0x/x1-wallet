@@ -13349,7 +13349,12 @@ async function verifyPassword(password, storedHash, storedSalt) {
   try {
     const salt = Uint8Array.from(atob(storedSalt), (c) => c.charCodeAt(0));
     const { hash } = await hashPassword(password, salt);
-    return hash === storedHash;
+    if (hash.length !== storedHash.length) return false;
+    let result = 0;
+    for (let i = 0; i < hash.length; i++) {
+      result |= hash.charCodeAt(i) ^ storedHash.charCodeAt(i);
+    }
+    return result === 0;
   } catch {
     return false;
   }
@@ -15926,8 +15931,6 @@ function validatePasswordStrength(password) {
   if (password.length < 8) return { ok: false, reason: "Password must be at least 8 characters" };
   if (!/[a-zA-Z]/.test(password)) return { ok: false, reason: "Password must contain at least one letter" };
   if (!/[0-9]/.test(password)) return { ok: false, reason: "Password must contain at least one number" };
-  const banned = ["password", "123456", "qwerty", "letmein"];
-  if (banned.includes(password.toLowerCase())) return { ok: false, reason: "Password too weak" };
   return { ok: true };
 }
 function getCachedBalance$1(publicKey, network) {
@@ -22258,9 +22261,9 @@ function ActivityList({ walletAddress, network, networkConfig, refreshKey }) {
       const allTxs = [];
       const seen2 = /* @__PURE__ */ new Set();
       const localTypeMap = /* @__PURE__ */ new Map();
-      const preserveTypes = ["stake", "unstake", "wrap", "unwrap"];
+      const preserveTypes = ["stake", "unstake", "wrap", "unwrap", "swap"];
       for (const tx of localHistory) {
-        if (tx.signature && preserveTypes.includes(tx.type)) {
+        if (tx.signature && (preserveTypes.includes(tx.type) || tx.isSwap)) {
           localTypeMap.set(tx.signature, {
             type: tx.type,
             description: tx.description,
@@ -26557,7 +26560,7 @@ Address: ${publicKeyBase58.slice(0, 20)}...`);
               {
                 type: showNewPassword ? "text" : "password",
                 className: "form-input",
-                placeholder: "Enter new password (min 12 chars)",
+                placeholder: "Enter new password (min 8 chars)",
                 value: newPassword,
                 onChange: (e) => setNewPassword(e.target.value)
               }
@@ -26587,7 +26590,7 @@ Address: ${publicKeyBase58.slice(0, 20)}...`);
               }
             )
           ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "password-requirements", style: { fontSize: 11, color: "var(--text-muted)", marginTop: 6 }, children: "Requirements: 12+ chars, uppercase, lowercase, number, special character" })
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "password-requirements", style: { fontSize: 11, color: "var(--text-muted)", marginTop: 6 }, children: "Requirements: 8+ chars, at least one letter, at least one number" })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "form-group", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("label", { children: "Confirm New Password" }),
@@ -31143,7 +31146,7 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
   ] });
 }
 const BRIDGE_API_URL = "https://bridge-alpha.x1.xyz";
-const SOLANA_RPC_URL = "https://mainnet.helius-rpc.com/?api-key=0d4a8095-4e0c-4895-a4d3-a336c2057db3";
+const SOLANA_RPC_URL = "https://jessamine-463apc-fast-mainnet.helius-rpc.com";
 const BRIDGE_DEPOSIT_ADDRESS = "6ob9XW6f6mweGu5sGh3JwW2Vp6UNQApjuPvrubXMQXyi";
 const USDC_SOLANA_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const USDC_DECIMALS = 6;
@@ -34939,12 +34942,15 @@ function App() {
         }
         const urlParams2 = new URLSearchParams(window.location.search);
         isApprovalWindow = urlParams2.has("request");
-        if (isApprovalWindow) {
-          const response = await safeSendMessage({ type: "get-pending-request" });
-          if (response) {
-            const pendingReq = (response == null ? void 0 : response.request) || response;
-            setHasDAppRequest(pendingReq && pendingReq.type ? true : false);
+        const response = await safeSendMessage({ type: "get-pending-request" });
+        if (response) {
+          const pendingReq = (response == null ? void 0 : response.request) || response;
+          if (pendingReq && pendingReq.type) {
+            setHasDAppRequest(true);
+            return;
           }
+        }
+        if (isApprovalWindow) {
           return;
         }
       } catch (err) {

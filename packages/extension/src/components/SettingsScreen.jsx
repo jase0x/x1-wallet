@@ -1127,7 +1127,7 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
               <input 
                 type={showNewPassword ? 'text' : 'password'} 
                 className="form-input" 
-                placeholder="Enter new password (min 12 chars)"
+                placeholder="Enter new password (min 8 chars)"
                 value={newPassword}
                 onChange={e => setNewPassword(e.target.value)}
               />
@@ -1155,7 +1155,7 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
               </button>
             </div>
             <div className="password-requirements" style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>
-              Requirements: 12+ chars, uppercase, lowercase, number, special character
+              Requirements: 8+ chars, at least one letter, at least one number
             </div>
           </div>
           <div className="form-group">

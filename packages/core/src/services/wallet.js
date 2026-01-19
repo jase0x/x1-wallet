@@ -13,8 +13,8 @@ const RATE_LIMIT_KEY = 'x1wallet_rate_limit';
 
 // Rate limiting constants for password attempts (X1W-002)
 const MAX_ATTEMPTS_BEFORE_DELAY = 3;
-const MAX_ATTEMPTS_BEFORE_LOCKOUT = 20;
-const LOCKOUT_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours
+const MAX_ATTEMPTS_BEFORE_LOCKOUT = 10;  // X1W-SEC: Reduced from 20
+const LOCKOUT_DURATION_MS = 60 * 60 * 1000; // X1W-SEC: 1 hour (reduced from 24h)
 
 // Internal storage for legacy data during migration (X1W-001)
 // This is never exposed externally - only used internally for secure migration
@@ -108,8 +108,8 @@ export async function setupPassword(password) {
 }
 
 /**
- * Validate password strength (X1W-005)
- * Requirements: minimum 12 characters, mixed case, numbers, special characters
+ * Validate password strength (matches Phantom/Backpack requirements)
+ * Requirements: minimum 8 characters, at least one letter, at least one number
  */
 export function validatePasswordStrength(password) {
   if (typeof password !== 'string' || !password) {
@@ -126,12 +126,6 @@ export function validatePasswordStrength(password) {
 
   if (!/[0-9]/.test(password)) {
     return { valid: false, error: 'Password must contain at least one number' };
-  }
-
-  // Block very common weak passwords
-  const banned = ['password', '123456', 'qwerty', 'letmein'];
-  if (banned.includes(password.toLowerCase())) {
-    return { valid: false, error: 'Password too weak' };
   }
 
   return { valid: true };

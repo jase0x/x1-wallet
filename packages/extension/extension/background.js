@@ -8,9 +8,63 @@ chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() =>
 const CONNECTED_SITES_KEY = 'x1wallet_connected_sites';
 const PENDING_REQUESTS_KEY = 'x1wallet_pending_requests';
 
-// X1W-006: Session timeout constants
-const SESSION_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 hours
-const SENSITIVE_OPS_REAUTH_MS = 60 * 60 * 1000; // 1 hour for sensitive operations
+// X1W-006: Session timeout constants (reduced for security)
+const SESSION_TIMEOUT_MS = 4 * 60 * 60 * 1000; // 4 hours
+const SENSITIVE_OPS_REAUTH_MS = 30 * 60 * 1000; // 30 minutes for sensitive operations
+
+// Track connected popup/side panel ports for approval notifications
+const connectedPorts = new Set();
+
+// Clear the badge helper
+function clearBadge() {
+  chrome.action.setBadgeText({ text: '' }).catch(() => {});
+}
+
+// Listen for port connections from popup/side panel
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name === 'x1-wallet-popup') {
+    console.log('[Background] Popup/side panel connected');
+    connectedPorts.add(port);
+    
+    // Clear badge - user has seen the notification by clicking the icon
+    clearBadge();
+    
+    // Send current pending request if any
+    if (pendingRequest) {
+      port.postMessage({ type: 'pending-request', request: pendingRequest });
+    }
+    
+    port.onDisconnect.addListener(() => {
+      console.log('[Background] Popup/side panel disconnected');
+      connectedPorts.delete(port);
+      
+      // Always clear badge when popup closes
+      clearBadge();
+      
+      // If popup closed and there's still a pending request, reject it
+      // This handles the case where user closes popup without approving/rejecting
+      if (pendingRequest && pendingRequestCallback) {
+        console.log('[Background] Popup closed without response, rejecting request');
+        pendingRequestCallback({ error: 'User rejected the request.' });
+        pendingRequestCallback = null;
+        pendingRequest = null;
+      }
+    });
+  }
+});
+
+// Notify all connected ports about a new pending request
+function notifyPendingRequest(request) {
+  console.log('[Background] Notifying', connectedPorts.size, 'connected ports about pending request');
+  for (const port of connectedPorts) {
+    try {
+      port.postMessage({ type: 'pending-request', request });
+    } catch (e) {
+      console.log('[Background] Failed to notify port:', e.message);
+      connectedPorts.delete(port);
+    }
+  }
+}
 
 // Track last active wallet to detect changes
 let lastActiveWalletId = null;
@@ -201,6 +255,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const payload = message.payload;
       const currentRequest = pendingRequest; // Save reference before clearing
       
+      // Clear badge since request is being handled
+      clearBadge();
+      
       // If this is a successful connection, save the connected site BEFORE resolving
       if (currentRequest && currentRequest.type === 'connect' && payload.result && !payload.error) {
         console.log('[Background] Saving connection for origin:', currentRequest.origin);
@@ -209,6 +266,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           console.log('[Background] Current sites before save:', Object.keys(sites));
           sites[currentRequest.origin] = {
             connectedAt: Date.now(),
+            lastSensitiveOp: Date.now(),
             publicKey: payload.result.publicKey
           };
           return saveConnectedSites(sites);
@@ -225,6 +283,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           pendingRequest = null;
         });
         return; // Don't fall through
+      }
+      
+      // X1W-SEC: Update lastSensitiveOp for successful signing operations
+      if (currentRequest && ['signTransaction', 'signAllTransactions', 'signAndSendTransaction', 'signMessage'].includes(currentRequest.type)) {
+        if (payload.result && !payload.error) {
+          updateLastSensitiveOp(currentRequest.origin).catch(console.error);
+        }
       }
       
       pendingRequestCallback(payload);
@@ -438,18 +503,15 @@ async function handleConnect(origin, favicon, sender, params = {}) {
     
     pendingRequestCallback = resolve;
     
-    // Use windows.create directly - more reliable than openPopup
-    console.log('[Background] Opening approval window for connect');
-    chrome.windows.create({
-      url: 'index.html?request=connect',
-      type: 'popup',
-      width: 400,
-      height: 620,
-      focused: true
-    }).then(win => {
-      console.log('[Background] Approval window opened:', win?.id);
-    }).catch(err => {
-      console.error('[Background] Failed to open approval window:', err);
+    // Notify connected popups about the pending request
+    notifyPendingRequest(pendingRequest);
+    
+    // Open the extension popup dropdown for approval
+    console.log('[Background] Opening extension popup for connect');
+    chrome.action.openPopup().catch(err => {
+      console.log('[Background] openPopup requires user gesture, showing badge');
+      chrome.action.setBadgeText({ text: '!' });
+      chrome.action.setBadgeBackgroundColor({ color: '#FF6B00' });
     });
     
     // Timeout after 60 seconds
@@ -457,6 +519,7 @@ async function handleConnect(origin, favicon, sender, params = {}) {
       if (pendingRequestCallback === resolve) {
         pendingRequestCallback = null;
         pendingRequest = null;
+        clearBadge();
         resolve({ error: 'Request timeout' });
       }
     }, 60000);
@@ -536,25 +599,22 @@ async function handleSignTransaction(params, origin, sender) {
     
     pendingRequestCallback = resolve;
     
-    // Use windows.create directly - more reliable than openPopup
-    // openPopup requires user gesture context which may not exist
-    console.log('[Background] Opening approval window for signTransaction');
-    chrome.windows.create({
-      url: 'index.html?request=sign',
-      type: 'popup',
-      width: 400,
-      height: 620,
-      focused: true
-    }).then(win => {
-      console.log('[Background] Approval window opened:', win?.id);
-    }).catch(err => {
-      console.error('[Background] Failed to open approval window:', err);
+    // Notify connected popups about the pending request
+    notifyPendingRequest(pendingRequest);
+    
+    // Open the extension popup dropdown for approval
+    console.log('[Background] Opening extension popup for signTransaction');
+    chrome.action.openPopup().catch(err => {
+      console.log('[Background] openPopup requires user gesture, showing badge');
+      chrome.action.setBadgeText({ text: '!' });
+      chrome.action.setBadgeBackgroundColor({ color: '#FF6B00' });
     });
     
     setTimeout(() => {
       if (pendingRequestCallback === resolve) {
         pendingRequestCallback = null;
         pendingRequest = null;
+        clearBadge();
         resolve({ error: 'Request timeout' });
       }
     }, 60000);
@@ -578,24 +638,22 @@ async function handleSignAllTransactions(params, origin, sender) {
     
     pendingRequestCallback = resolve;
     
-    // Use windows.create directly - more reliable than openPopup
-    console.log('[Background] Opening approval window for signAllTransactions');
-    chrome.windows.create({
-      url: 'index.html?request=signAll',
-      type: 'popup',
-      width: 400,
-      height: 620,
-      focused: true
-    }).then(win => {
-      console.log('[Background] Approval window opened:', win?.id);
-    }).catch(err => {
-      console.error('[Background] Failed to open approval window:', err);
+    // Notify connected popups about the pending request
+    notifyPendingRequest(pendingRequest);
+    
+    // Open the extension popup dropdown for approval
+    console.log('[Background] Opening extension popup for signAllTransactions');
+    chrome.action.openPopup().catch(err => {
+      console.log('[Background] openPopup requires user gesture, showing badge');
+      chrome.action.setBadgeText({ text: '!' });
+      chrome.action.setBadgeBackgroundColor({ color: '#FF6B00' });
     });
     
     setTimeout(() => {
       if (pendingRequestCallback === resolve) {
         pendingRequestCallback = null;
         pendingRequest = null;
+        clearBadge();
         resolve({ error: 'Request timeout' });
       }
     }, 60000);
@@ -620,24 +678,22 @@ async function handleSignAndSendTransaction(params, origin, sender) {
     
     pendingRequestCallback = resolve;
     
-    // Use windows.create directly - more reliable than openPopup
-    console.log('[Background] Opening approval window for signAndSendTransaction');
-    chrome.windows.create({
-      url: 'index.html?request=signAndSend',
-      type: 'popup',
-      width: 400,
-      height: 620,
-      focused: true
-    }).then(win => {
-      console.log('[Background] Approval window opened:', win?.id);
-    }).catch(err => {
-      console.error('[Background] Failed to open approval window:', err);
+    // Notify connected popups about the pending request
+    notifyPendingRequest(pendingRequest);
+    
+    // Open the extension popup dropdown for approval
+    console.log('[Background] Opening extension popup for signAndSendTransaction');
+    chrome.action.openPopup().catch(err => {
+      console.log('[Background] openPopup requires user gesture, showing badge');
+      chrome.action.setBadgeText({ text: '!' });
+      chrome.action.setBadgeBackgroundColor({ color: '#FF6B00' });
     });
     
     setTimeout(() => {
       if (pendingRequestCallback === resolve) {
         pendingRequestCallback = null;
         pendingRequest = null;
+        clearBadge();
         resolve({ error: 'Request timeout' });
       }
     }, 60000);
@@ -661,24 +717,22 @@ async function handleSignMessage(params, origin, sender) {
     
     pendingRequestCallback = resolve;
     
-    // Use windows.create directly - more reliable than openPopup
-    console.log('[Background] Opening approval window for signMessage');
-    chrome.windows.create({
-      url: 'index.html?request=signMessage',
-      type: 'popup',
-      width: 400,
-      height: 620,
-      focused: true
-    }).then(win => {
-      console.log('[Background] Approval window opened:', win?.id);
-    }).catch(err => {
-      console.error('[Background] Failed to open approval window:', err);
+    // Notify connected popups about the pending request
+    notifyPendingRequest(pendingRequest);
+    
+    // Open the extension popup dropdown for approval
+    console.log('[Background] Opening extension popup for signMessage');
+    chrome.action.openPopup().catch(err => {
+      console.log('[Background] openPopup requires user gesture, showing badge');
+      chrome.action.setBadgeText({ text: '!' });
+      chrome.action.setBadgeBackgroundColor({ color: '#FF6B00' });
     });
     
     setTimeout(() => {
       if (pendingRequestCallback === resolve) {
         pendingRequestCallback = null;
         pendingRequest = null;
+        clearBadge();
         resolve({ error: 'Request timeout' });
       }
     }, 60000);
