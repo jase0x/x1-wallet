@@ -1,6 +1,6 @@
 // X1 Wallet - Main App Component
 import { logger, getUserFriendlyError, ErrorMessages, useWallet } from '@x1-wallet/core';
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, Component } from 'react';
 import './styles.css';
 
 // Components
@@ -20,6 +20,118 @@ import TokenDetail from './components/TokenDetail';
 import X1Logo from './components/X1Logo';
 import DAppApproval from './components/DAppApproval';
 
+// ============================================
+// ERROR BOUNDARY - Prevents black screen on errors
+// ============================================
+class ErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('[ErrorBoundary] Caught error:', error);
+    console.error('[ErrorBoundary] Error info:', errorInfo);
+  }
+
+  handleReload = () => {
+    window.location.reload();
+  };
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="app" style={{ 
+          display: 'flex', 
+          flexDirection: 'column', 
+          alignItems: 'center', 
+          justifyContent: 'center',
+          padding: 24,
+          textAlign: 'center',
+          minHeight: '100vh',
+          background: 'var(--bg-primary)'
+        }}>
+          <div style={{ 
+            width: 64, 
+            height: 64, 
+            borderRadius: '50%', 
+            background: 'rgba(255, 107, 107, 0.1)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginBottom: 16
+          }}>
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#ff6b6b" strokeWidth="2">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+          </div>
+          <h2 style={{ color: 'var(--text-primary)', marginBottom: 8 }}>Something went wrong</h2>
+          <p style={{ color: 'var(--text-muted)', marginBottom: 24, fontSize: 14 }}>
+            The wallet encountered an error. Please reload to continue.
+          </p>
+          <button 
+            onClick={this.handleReload}
+            style={{
+              background: 'var(--x1-blue)',
+              color: 'white',
+              border: 'none',
+              padding: '12px 32px',
+              borderRadius: 12,
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontSize: 14
+            }}
+          >
+            Reload Wallet
+          </button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+// ============================================
+// CHROME RUNTIME HELPER - Checks if extension context is valid
+// ============================================
+function isExtensionContextValid() {
+  try {
+    // Check if chrome.runtime is available and not invalidated
+    if (typeof chrome === 'undefined' || !chrome.runtime) {
+      return false;
+    }
+    // Accessing id will throw if context is invalidated
+    const id = chrome.runtime.id;
+    return !!id;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Safe message sender that handles invalidated context
+async function safeSendMessage(message) {
+  if (!isExtensionContextValid()) {
+    console.warn('[App] Extension context invalid, cannot send message');
+    return null;
+  }
+  try {
+    return await chrome.runtime.sendMessage(message);
+  } catch (e) {
+    if (e.message?.includes('Extension context invalidated')) {
+      console.warn('[App] Extension context invalidated');
+      return null;
+    }
+    throw e;
+  }
+}
+
 // Storage helper
 const storage = {
   get: (key, defaultValue) => {
@@ -29,7 +141,7 @@ const storage = {
   set: (key, value) => {
     localStorage.setItem(`x1wallet_${key}`, JSON.stringify(value));
     // Also sync to chrome.storage.local for persistence across sessions
-    if (typeof chrome !== 'undefined' && chrome.storage) {
+    if (isExtensionContextValid() && chrome.storage) {
       chrome.storage.local.set({ [`x1wallet_${key}`]: value }).catch(() => {});
     }
   }
@@ -262,71 +374,83 @@ function App() {
   // Supports both: 1) Approval window (URL params) and 2) In-popup approvals (port messages)
   useEffect(() => {
     let port = null;
+    let isApprovalWindow = false;
     
     const checkDAppRequest = async () => {
       try {
+        // Check if extension context is valid
+        if (!isExtensionContextValid()) {
+          logger.log('[App] Extension context invalid, skipping dApp request check');
+          return;
+        }
+        
         // Check if this popup was opened as an approval window (has request param in URL)
         const urlParams = new URLSearchParams(window.location.search);
-        const isApprovalWindow = urlParams.has('request');
+        isApprovalWindow = urlParams.has('request');
         
         // For approval windows, check for pending request
         if (isApprovalWindow) {
-          if (typeof chrome !== 'undefined' && chrome.runtime) {
-            const response = await chrome.runtime.sendMessage({ type: 'get-pending-request' });
+          const response = await safeSendMessage({ type: 'get-pending-request' });
+          if (response) {
             const pendingReq = response?.request || response;
             setHasDAppRequest(pendingReq && pendingReq.type ? true : false);
           }
           return;
         }
         
-        // For regular popup (no URL params), also check if there's a pending request
-        // This handles the case where background uses action.openPopup()
-        if (typeof chrome !== 'undefined' && chrome.runtime) {
-          const response = await chrome.runtime.sendMessage({ type: 'get-pending-request' });
-          const pendingReq = response?.request || response;
-          if (pendingReq && pendingReq.type) {
-            setHasDAppRequest(true);
-          }
-        }
+        // For regular popup/side panel (no URL params), check if there's a pending request
+        // But DON'T continuously poll - only check once on mount
+        // This prevents the side panel from being affected by other window's transactions
       } catch (err) {
-        // Ignore errors
+        // Only log if it's not a context invalidation
+        if (!err.message?.includes('Extension context invalidated')) {
+          logger.log('[App] Error checking dApp request:', err.message);
+        }
       }
     };
     
     // Connect to background via port for real-time approval notifications
     const connectPort = () => {
-      if (typeof chrome !== 'undefined' && chrome.runtime) {
-        try {
-          port = chrome.runtime.connect({ name: 'x1-wallet-popup' });
-          
-          port.onMessage.addListener((message) => {
-            if (message.type === 'pending-request' && message.request) {
-              logger.log('[App] Received pending request via port:', message.request.type);
-              setHasDAppRequest(true);
-            }
-          });
-          
-          port.onDisconnect.addListener(() => {
-            logger.log('[App] Port disconnected from background');
-            port = null;
-          });
-          
-          logger.log('[App] Connected to background via port');
-        } catch (err) {
+      if (!isExtensionContextValid()) return;
+      
+      try {
+        port = chrome.runtime.connect({ name: 'x1-wallet-popup' });
+        
+        port.onMessage.addListener((message) => {
+          if (message.type === 'pending-request' && message.request) {
+            logger.log('[App] Received pending request via port:', message.request.type);
+            setHasDAppRequest(true);
+          }
+        });
+        
+        port.onDisconnect.addListener(() => {
+          logger.log('[App] Port disconnected from background');
+          port = null;
+          // Don't try to reconnect - might cause issues
+        });
+        
+        logger.log('[App] Connected to background via port');
+      } catch (err) {
+        if (!err.message?.includes('Extension context invalidated')) {
           logger.log('[App] Failed to connect port:', err.message);
         }
       }
     };
     
-    // Connect port and check for pending requests
+    // Connect port and check for pending requests once on mount
     connectPort();
     checkDAppRequest();
     
-    // Keep checking periodically (for approval windows)
-    const interval = setInterval(checkDAppRequest, 500);
+    // Only poll for approval windows (where we need to know when request is handled)
+    // Regular popup/side panel should NOT poll - it interferes with other windows
+    let interval = null;
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.has('request')) {
+      interval = setInterval(checkDAppRequest, 500);
+    }
     
     return () => {
-      clearInterval(interval);
+      if (interval) clearInterval(interval);
       if (port) {
         try {
           port.disconnect();
@@ -1456,4 +1580,13 @@ function App() {
   );
 }
 
-export default App;
+// Wrap App with ErrorBoundary to prevent black screen on errors
+function AppWithErrorBoundary() {
+  return (
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
+  );
+}
+
+export default AppWithErrorBoundary;

@@ -311,18 +311,18 @@ export function useWallet() {
     const activeId = localStorage.getItem(ACTIVE_KEY);
     setActiveWalletId(activeId || (loadedWallets.length > 0 ? loadedWallets[0].id : null));
     
-    // Save to session storage for auto-lock timer to work
+    // Save to session storage for auto-lock timer to work (non-blocking)
     // Session storage clears when browser closes - secure enough for this use case
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
-      try {
-        await chrome.storage.session.set({
-          x1wallet_session_wallets: JSON.stringify(loadedWallets),
-          x1wallet_session_password: password
-        });
+      // Fire and forget - don't await
+      chrome.storage.session.set({
+        x1wallet_session_wallets: JSON.stringify(loadedWallets),
+        x1wallet_session_password: password
+      }).then(() => {
         console.log('[useWallet] Saved to session storage for auto-lock');
-      } catch (e) {
+      }).catch(e => {
         console.warn('[useWallet] Failed to save to session storage:', e.message);
-      }
+      });
     }
     
     return true;

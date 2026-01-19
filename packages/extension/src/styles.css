@@ -1855,6 +1855,62 @@ body {
   opacity: 1 !important;
 }
 
+/* Token Hide Button */
+.token-hide-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: -2px;
+}
+
+.token-item:hover .token-hide-btn {
+  opacity: 0.4;
+}
+
+.token-hide-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  opacity: 1 !important;
+}
+
+/* Hidden token styling */
+.token-item.token-hidden {
+  opacity: 0.5;
+}
+
+.token-item.token-hidden .token-hide-btn {
+  opacity: 0.6;
+}
+
+/* Show hidden tokens toggle */
+.show-hidden-tokens-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 16px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.show-hidden-tokens-btn:hover {
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+}
+
 .token-menu-btn {
   background: none;
   border: none;

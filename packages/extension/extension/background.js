@@ -753,6 +753,10 @@ async function handleApproveSign(message) {
     pendingRequestCallback({ result: { signature: message.signature } });
     pendingRequestCallback = null;
     pendingRequest = null;
+    
+    // Trigger balance refresh in wallet UI
+    broadcastBalanceRefresh();
+    
     return { success: true };
   }
   
@@ -834,6 +838,14 @@ async function revokeSiteConnection(origin) {
     return { success: true };
   }
   return { success: false, error: 'Site not connected' };
+}
+
+// Broadcast balance refresh to wallet UI after transactions
+function broadcastBalanceRefresh() {
+  console.log('[Background] Broadcasting balance refresh after transaction');
+  chrome.storage.local.set({ 
+    x1wallet_last_tx_time: Date.now() 
+  }).catch(() => {});
 }
 
 console.log('[X1 Wallet] Background script loaded');

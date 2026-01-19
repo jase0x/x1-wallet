@@ -51,6 +51,61 @@ class RateLimiter {
 // Rate limiter for XDEX API (5 requests per second)
 const xdexRateLimiter = new RateLimiter(5, 1000);
 
+// ============================================
+// RPC TOKEN ACCOUNTS CACHE - For faster subsequent loads
+// ============================================
+const rpcTokenAccountsCache = new Map();
+const RPC_CACHE_TTL = 15 * 1000; // 15 seconds - short enough to catch external dApp transactions
+
+// Cache for XDEX wallet tokens response (prices change slowly, can cache longer)
+const walletTokensCache = new Map();
+const WALLET_TOKENS_CACHE_TTL = 60 * 1000; // 60 seconds for prices
+
+function getCachedRPCTokenAccounts(ownerAddress, rpcUrl) {
+  const cacheKey = `${ownerAddress}:${rpcUrl}`;
+  const cached = rpcTokenAccountsCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < RPC_CACHE_TTL) {
+    logger.log('[RPC Cache] Hit - using cached token accounts, age:', Math.round((Date.now() - cached.timestamp) / 1000), 's');
+    return cached.data;
+  }
+  return null;
+}
+
+function setCachedRPCTokenAccounts(ownerAddress, rpcUrl, splTokens, token2022) {
+  const cacheKey = `${ownerAddress}:${rpcUrl}`;
+  rpcTokenAccountsCache.set(cacheKey, {
+    data: { splTokens, token2022 },
+    timestamp: Date.now()
+  });
+  // Keep max 5 wallets cached
+  if (rpcTokenAccountsCache.size > 5) {
+    const oldestKey = rpcTokenAccountsCache.keys().next().value;
+    rpcTokenAccountsCache.delete(oldestKey);
+  }
+  logger.log('[RPC Cache] Stored token accounts for', ownerAddress.slice(0, 8));
+}
+
+// Invalidate RPC cache for a wallet (call after transactions)
+export function invalidateRPCCache(ownerAddress = null) {
+  if (ownerAddress) {
+    for (const key of rpcTokenAccountsCache.keys()) {
+      if (key.startsWith(ownerAddress)) {
+        rpcTokenAccountsCache.delete(key);
+      }
+    }
+    for (const key of walletTokensCache.keys()) {
+      if (key.startsWith(ownerAddress)) {
+        walletTokensCache.delete(key);
+      }
+    }
+    logger.log('[Cache] Invalidated for wallet:', ownerAddress.slice(0, 8));
+  } else {
+    rpcTokenAccountsCache.clear();
+    walletTokensCache.clear();
+    logger.log('[Cache] Invalidated all');
+  }
+}
+
 // Cache for failed requests to avoid retrying them repeatedly
 // Now uses localStorage for persistence across sessions
 const FAILED_CACHE_KEY = 'x1wallet_failed_token_lookups';
@@ -207,6 +262,20 @@ async function fetchLPTokenInfoFromXDEX(lpMint) {
   return null;
 }
 
+// Helper to check if LP token has a specific name (not generic fallback)
+// Specific names contain pair separators like "XNT/USDC.X LP" or "XNT-USDC LP"
+function hasSpecificLPName(name) {
+  return name && 
+    name !== 'XLP' &&
+    name !== 'SLP' &&
+    name !== 'SPL Token' && 
+    name !== 'Token-2022' &&
+    name !== 'XDEX LP Token' &&
+    name !== 'SLP Token' &&
+    name !== 'Unknown Token' &&
+    (name.includes('/') || name.includes('-'));
+}
+
 // Check if a token is an XDEX LP token by its mint authority
 async function checkAndApplyLPBranding(rpcUrl, token, network) {
   // Check on X1 networks where XDEX operates, or Solana
@@ -220,45 +289,50 @@ async function checkAndApplyLPBranding(rpcUrl, token, network) {
     
     if (mintAuthority === XDEX_LP_MINT_AUTHORITY) {
       token.isLPToken = true;
-      if (!token.logoURI) token.logoURI = XLP_LOGO_URL;
+      token.logoURI = XLP_LOGO_URL;
       
-      // Check if token already has a meaningful LP name (from XDEX wallet API)
+      // If token already has a good name (not generic), keep it
       const hasGoodName = token.name && 
-                          token.name !== 'SPL Token' && 
-                          token.name !== 'Token-2022' && 
-                          token.name !== 'Unknown Token' &&
-                          token.name.trim() !== '';
+        token.name !== 'XLP' &&
+        token.name !== 'SLP' &&
+        token.name !== 'SPL Token' && 
+        token.name !== 'Token-2022' &&
+        token.name !== 'XDEX LP Token' &&
+        token.name !== 'SLP Token' &&
+        token.name !== 'Unknown Token';
       
       if (hasGoodName) {
-        // Preserve existing good name, just ensure symbol is set
         if (!token.symbol || token.symbol === token.mint?.slice(0, 4).toUpperCase()) {
           token.symbol = 'XLP';
         }
-        logger.log(`[Tokens] XDEX LP token with existing name: ${token.mint} -> ${token.name}`);
+        logger.log(`[Tokens] LP token keeping good name: ${token.mint} -> ${token.name}`);
         return true;
       }
       
       if (isX1) {
         // Try to get actual LP name from XDEX devapi
+        logger.log('[Tokens] Fetching LP name from XDEX devapi for:', token.mint);
         const lpInfo = await fetchLPTokenInfoFromXDEX(token.mint);
         
-        if (lpInfo && lpInfo.name) {
+        // Accept ANY name from the API that's not generic
+        if (lpInfo && lpInfo.name && lpInfo.name !== 'Unknown Token') {
           token.name = lpInfo.name;
           token.symbol = lpInfo.symbol || 'XLP';
-          if (lpInfo.logoURI) token.logoURI = lpInfo.logoURI;
-          logger.log(`[Tokens] XDEX LP token with API name: ${token.mint} -> ${token.name}`);
+          logger.log(`[Tokens] LP token got API name: ${token.mint} -> ${token.name}`);
         } else {
-          // Fallback for X1
+          // Fallback
           token.name = 'XDEX LP Token';
           token.symbol = 'XLP';
-          logger.log(`[Tokens] XDEX LP token (fallback): ${token.mint}`);
+          logger.log(`[Tokens] LP token using fallback name: ${token.mint}`);
         }
       } else if (isSolana) {
-        // Fallback for Solana
         token.name = 'SLP Token';
         token.symbol = 'SLP';
         logger.log(`[Tokens] Solana LP token: ${token.mint}`);
       }
+      
+      // ALWAYS ensure XLP icon is set (in case it was overwritten)
+      token.logoURI = XLP_LOGO_URL;
       
       return true;
     }
@@ -273,8 +347,84 @@ async function checkAndApplyLPBranding(rpcUrl, token, network) {
 // KNOWN TOKENS - Imported from knownTokens.js
 // ============================================
 
-// Metadata cache (in-memory)
+// Metadata cache - persisted to localStorage for instant loads
+const METADATA_CACHE_KEY = 'x1wallet_metadata_cache';
+const METADATA_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 const metadataCache = new Map();
+
+// Load metadata cache from localStorage on module init
+function loadMetadataCache() {
+  try {
+    const cached = localStorage.getItem(METADATA_CACHE_KEY);
+    if (cached) {
+      const data = JSON.parse(cached);
+      if (data._timestamp && (Date.now() - data._timestamp < METADATA_CACHE_TTL)) {
+        let count = 0;
+        let skipped = 0;
+        
+        // Generic names that indicate LP token needs enrichment
+        const genericNames = ['XLP', 'SLP', 'SPL Token', 'Token-2022', 'XDEX LP Token', 'SLP Token', 'Unknown Token'];
+        
+        for (const [key, value] of Object.entries(data)) {
+          if (key !== '_timestamp') {
+            // Skip LP tokens with generic names - they need fresh enrichment
+            if (value.isLPToken && genericNames.includes(value.name)) {
+              skipped++;
+              continue;
+            }
+            metadataCache.set(key, value);
+            count++;
+          }
+        }
+        logger.log('[Tokens] Loaded', count, 'entries from cache (skipped', skipped, 'LP tokens)');
+      }
+    }
+  } catch (e) {
+    logger.warn('[Tokens] Error loading metadata cache:', e);
+  }
+}
+
+// Save metadata cache to localStorage (debounced)
+let metadataCacheSaveTimeout = null;
+function saveMetadataCache() {
+  // Debounce saves to avoid excessive writes
+  if (metadataCacheSaveTimeout) {
+    clearTimeout(metadataCacheSaveTimeout);
+  }
+  metadataCacheSaveTimeout = setTimeout(() => {
+    try {
+      const data = { _timestamp: Date.now() };
+      // Only save up to 200 entries to prevent localStorage bloat
+      let count = 0;
+      for (const [key, value] of metadataCache.entries()) {
+        if (count >= 200) break;
+        data[key] = value;
+        count++;
+      }
+      localStorage.setItem(METADATA_CACHE_KEY, JSON.stringify(data));
+      logger.log('[Tokens] Saved', count, 'entries to metadata cache');
+    } catch (e) {
+      logger.warn('[Tokens] Error saving metadata cache:', e);
+    }
+  }, 1000); // Save after 1 second of no new updates
+}
+
+// Clear metadata cache - useful for debugging or forcing fresh data
+export function clearMetadataCache() {
+  metadataCache.clear();
+  rpcTokenAccountsCache.clear();
+  walletTokensCache.clear();
+  try {
+    localStorage.removeItem(METADATA_CACHE_KEY);
+    localStorage.removeItem(PRICE_CACHE_KEY);
+    logger.log('[Tokens] Cleared all token caches');
+  } catch (e) {
+    logger.warn('[Tokens] Error clearing caches:', e);
+  }
+}
+
+// Initialize metadata cache from localStorage
+loadMetadataCache();
 
 // Persistent price cache using localStorage
 // This prevents price flicker during refreshes
@@ -418,37 +568,141 @@ async function fetchFromDAS(rpcUrl, mint) {
 // MAIN TOKEN FETCH
 // ============================================
 
-// Fetch all token accounts for an address
-export async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null, onUpdate = null) {
+/**
+ * Fetch all token accounts for an address
+ * @param {string} rpcUrl - RPC endpoint URL
+ * @param {string} ownerAddress - Wallet address
+ * @param {string} network - Network name (e.g., 'X1 Mainnet')
+ * @param {function} onUpdate - Callback for background updates
+ * @param {object} options - Optional settings
+ * @param {string} options.mode - 'import' for fast initial load, 'refresh' for full sync (default)
+ * @param {boolean} options.forceRefresh - Bypass RPC cache entirely (for post-transaction refresh)
+ */
+export async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null, onUpdate = null, options = {}) {
   const tokens = [];
   const startTime = Date.now();
+  const mode = options.mode || 'refresh';  // Default to full refresh
+  const forceRefresh = options.forceRefresh || false;
   
   try {
-    logger.log('[Tokens] Starting token fetch for:', ownerAddress, 'on network:', network);
+    logger.log('[Tokens] Starting token fetch for:', ownerAddress, 'on network:', network, 'mode:', mode, 'force:', forceRefresh);
     
-    // Fetch tokens from RPC and XDEX price API in parallel
-    const [splTokens, token2022, xdexPrices] = await Promise.all([
-      fetchTokenAccountsByProgram(rpcUrl, ownerAddress, TOKEN_PROGRAM_ID),
-      fetchTokenAccountsByProgram(rpcUrl, ownerAddress, TOKEN_2022_PROGRAM_ID),
-      fetchXDEXWalletTokens(ownerAddress, network)
-    ]);
+    // Check RPC cache first (unless forceRefresh)
+    const cachedRPC = forceRefresh ? null : getCachedRPCTokenAccounts(ownerAddress, rpcUrl);
+    
+    let splTokens, token2022, xdexPrices;
+    
+    if (mode === 'import' && !forceRefresh) {
+      // IMPORT MODE: Fastest possible initial load
+      // 1. Use cached RPC data if available
+      // 2. Skip XDEX batch call initially (prices come later)
+      // 3. Background enrichment will fill in prices/metadata
+      if (cachedRPC) {
+        splTokens = cachedRPC.splTokens;
+        token2022 = cachedRPC.token2022;
+        xdexPrices = {}; // Skip XDEX on import - use cached prices
+        logger.log('[Tokens] Import mode - using cached RPC, skipping XDEX');
+      } else {
+        // No RPC cache - must fetch tokens, but skip XDEX pricing
+        [splTokens, token2022] = await Promise.all([
+          fetchTokenAccountsByProgram(rpcUrl, ownerAddress, TOKEN_PROGRAM_ID),
+          fetchTokenAccountsByProgram(rpcUrl, ownerAddress, TOKEN_2022_PROGRAM_ID)
+        ]);
+        xdexPrices = {}; // Skip XDEX on import
+        // Cache for next time
+        setCachedRPCTokenAccounts(ownerAddress, rpcUrl, splTokens, token2022);
+        logger.log('[Tokens] Import mode - fresh RPC, skipping XDEX');
+      }
+    } else if (cachedRPC) {
+      // REFRESH MODE with cache: Use cached RPC data, only fetch fresh prices from XDEX
+      splTokens = cachedRPC.splTokens;
+      token2022 = cachedRPC.token2022;
+      xdexPrices = await fetchXDEXWalletTokens(ownerAddress, network);
+      logger.log('[Tokens] Fast path - cached RPC +', Date.now() - startTime, 'ms for XDEX');
+    } else {
+      // REFRESH MODE without cache: Fetch everything fresh in parallel
+      [splTokens, token2022, xdexPrices] = await Promise.all([
+        fetchTokenAccountsByProgram(rpcUrl, ownerAddress, TOKEN_PROGRAM_ID),
+        fetchTokenAccountsByProgram(rpcUrl, ownerAddress, TOKEN_2022_PROGRAM_ID),
+        fetchXDEXWalletTokens(ownerAddress, network)
+      ]);
+      // Cache for next time
+      setCachedRPCTokenAccounts(ownerAddress, rpcUrl, splTokens, token2022);
+    }
     
     logger.log('[Tokens] RPC done in', Date.now() - startTime, 'ms - SPL:', splTokens.length, 'Token2022:', token2022.length);
     logger.log('[Tokens] XDEX prices received for', Object.keys(xdexPrices).length, 'tokens');
     
     tokens.push(...splTokens, ...token2022);
     
+    // PRE-FILTER: Mark dust tokens BEFORE they enter the pricing pipeline
+    // This prevents unnecessary price lookups and enrichment for worthless tokens
+    const DUST_RAW_THRESHOLD = 1;  // Raw amount threshold
+    let dustCount = 0;
+    for (const token of tokens) {
+      // Zero balance - skip completely
+      if (token.balance === 0 || token.uiAmount === 0 || parseInt(token.amount) === 0) {
+        token.isDust = true;
+        token.skipEnrichment = true;
+        dustCount++;
+        continue;
+      }
+      // Near-zero raw amount
+      if (parseInt(token.amount) <= DUST_RAW_THRESHOLD) {
+        token.isDust = true;
+        token.skipEnrichment = true;
+        dustCount++;
+      }
+    }
+    if (dustCount > 0) {
+      logger.log('[Tokens] Pre-filtered', dustCount, 'dust tokens from pricing pipeline');
+    }
+    
+    // Generic names that indicate LP token needs enrichment
+    const genericLPNames = ['XLP', 'SLP', 'SPL Token', 'Token-2022', 'XDEX LP Token', 'SLP Token', 'Unknown Token'];
+    
     // Quick pass: apply cached/known metadata and XDEX prices
     for (const token of tokens) {
+      // Skip dust tokens entirely - they don't need pricing or metadata
+      if (token.isDust) {
+        token.symbol = token.mint?.slice(0, 4) || 'DUST';
+        token.name = 'Dust Token';
+        continue;
+      }
+      
       const cacheKey = network ? `${network}:${token.mint}` : token.mint;
+      
+      // Log all tokens for debugging
+      logger.log('[Tokens] Processing token:', token.mint?.slice(0, 8), 'symbol:', token.symbol, 'name:', token.name);
       
       // Check cache first
       if (metadataCache.has(cacheKey)) {
         const cached = metadataCache.get(cacheKey);
+        logger.log('[Tokens] Found in cache:', token.mint?.slice(0, 8), 'isLPToken:', cached.isLPToken, 'name:', cached.name);
+        
+        // Skip cached LP tokens with generic names - they need enrichment
+        if (cached.isLPToken && genericLPNames.includes(cached.name)) {
+          logger.log('[Tokens] Quick pass: skipping cached LP with generic name:', cached.name);
+          Object.assign(token, cached);
+          token.needsEnrichment = true;
+          // Ensure XLP icon for LP tokens
+          token.logoURI = XLP_LOGO_URL;
+          // Still update price from XDEX
+          const xdexPrice = xdexPrices[token.mint]?.price;
+          if (xdexPrice !== undefined && xdexPrice !== null && !isNaN(xdexPrice)) {
+            token.price = parseFloat(xdexPrice);
+          }
+          continue;
+        }
         Object.assign(token, cached);
-        // Keep XDEX price if we got one (prices update more frequently)
-        if (xdexPrices[token.mint]?.price !== undefined) {
-          token.price = parseFloat(xdexPrices[token.mint].price);
+        // Ensure XLP icon for LP tokens loaded from cache
+        if (cached.isLPToken) {
+          token.logoURI = XLP_LOGO_URL;
+        }
+        // Override with XDEX price if available
+        const xdexPrice = xdexPrices[token.mint]?.price;
+        if (xdexPrice !== undefined && xdexPrice !== null && !isNaN(xdexPrice)) {
+          token.price = parseFloat(xdexPrice);
           updatePriceCache(token.mint, token.price);
         }
         continue;
@@ -462,9 +716,11 @@ export async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null, o
         token.logoURI = known.logoURI;
         // Use known price as default, but prefer XDEX price if available
         token.price = known.price;
-        if (xdexPrices[token.mint]?.price !== undefined) {
-          token.price = parseFloat(xdexPrices[token.mint].price);
+        const xdexPrice = xdexPrices[token.mint]?.price;
+        if (xdexPrice !== undefined && xdexPrice !== null && !isNaN(xdexPrice)) {
+          token.price = parseFloat(xdexPrice);
           updatePriceCache(token.mint, token.price);
+          logger.log('[Tokens] XDEX price for', token.symbol, ':', token.price);
         }
         metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
         continue;
@@ -473,6 +729,8 @@ export async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null, o
       // Apply XDEX data if available (for non-hardcoded tokens)
       if (xdexPrices[token.mint]) {
         const xdexData = xdexPrices[token.mint];
+        logger.log('[Tokens] XDEX data for:', token.mint?.slice(0, 8), 'symbol:', xdexData.symbol, 'name:', xdexData.name, 'isLPToken:', xdexData.isLPToken);
+        
         if (xdexData.price !== undefined && xdexData.price !== null) {
           token.price = parseFloat(xdexData.price);
           updatePriceCache(token.mint, token.price);
@@ -480,29 +738,65 @@ export async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null, o
         // Use XDEX metadata
         if (xdexData.symbol) token.symbol = xdexData.symbol;
         if (xdexData.name) token.name = xdexData.name;
-        if (xdexData.image) token.logoURI = xdexData.image;
         
-        // Check if this is an LP token (by symbol or name)
-        const isLPToken = xdexData.symbol === 'XLP' || 
-                          xdexData.symbol === 'SLP' || 
-                          (xdexData.name && xdexData.name.includes(' LP'));
+        // AGGRESSIVE LP TOKEN DETECTION - use flag from XDEX or detect by pattern
+        const tokenName = (xdexData.name || '').toLowerCase();
+        const tokenSymbol = (xdexData.symbol || '').toUpperCase();
+        
+        // Check for XLP/SLP in symbol or name
+        const isLPToken = xdexData.isLPToken || 
+                          tokenSymbol === 'XLP' || 
+                          tokenSymbol === 'SLP' || 
+                          tokenSymbol.includes('XLP') ||     // catches "WXNT-USDC.X XLP"
+                          tokenSymbol.includes('SLP') ||
+                          tokenName.includes('xlp') ||       // catches "wxnt-usdc.x xlp"
+                          tokenName.includes(' lp') ||
+                          tokenName.includes('lp token') ||
+                          tokenName.includes('/') ||
+                          (tokenName.includes('xdex') && tokenName.includes('lp')) ||
+                          /[a-z0-9.]+\/[a-z0-9.]+/i.test(xdexData.name);
+        
+        logger.log('[Tokens] LP detection for', token.mint?.slice(0, 8), '- isLPToken:', isLPToken, 'tokenName:', tokenName, 'tokenSymbol:', tokenSymbol);
         
         if (isLPToken) {
           token.isLPToken = true;
-          if (!token.logoURI) token.logoURI = XLP_LOGO_URL;
-          metadataCache.set(cacheKey, { 
-            symbol: token.symbol, 
-            name: token.name, 
-            logoURI: token.logoURI, 
-            price: token.price,
-            isLPToken: true
-          });
-          logger.log('[Tokens] Quick pass: cached LP token from XDEX:', token.name);
+          token.logoURI = XLP_LOGO_URL;  // Always use XLP icon for LP tokens
+          logger.log('[Tokens] Quick pass: LP token detected:', token.symbol, token.name, 'logoURI:', token.logoURI);
+          
+          // Check if we have a good name (not generic)
+          const hasGoodName = token.name && 
+            token.name !== 'XLP' &&
+            token.name !== 'SLP' &&
+            token.name !== 'SPL Token' && 
+            token.name !== 'Token-2022' &&
+            token.name !== 'XDEX LP Token' &&
+            token.name !== 'Unknown Token';
+          
+          if (hasGoodName) {
+            // Cache the good LP data
+            metadataCache.set(cacheKey, { 
+              symbol: token.symbol, 
+              name: token.name, 
+              logoURI: token.logoURI, 
+              price: token.price,
+              isLPToken: true
+            });
+            logger.log('[Tokens] Quick pass: LP token with good name:', token.name);
+          } else {
+            // Need enrichment to get real name
+            token.needsEnrichment = true;
+            logger.log('[Tokens] Quick pass: LP token needs enrichment:', token.mint?.slice(0, 8));
+          }
           continue;
         }
         
-        // If XDEX provided complete data (symbol, name, AND image), cache it
-        if (xdexData.symbol && xdexData.name && xdexData.image) {
+        // For non-LP tokens, use XDEX image if valid
+        if (xdexData.image) {
+          token.logoURI = xdexData.image;
+        }
+        
+        // Cache if we have good data
+        if (xdexData.symbol && xdexData.name) {
           metadataCache.set(cacheKey, { 
             symbol: token.symbol, 
             name: token.name, 
@@ -532,11 +826,38 @@ export async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null, o
     
     logger.log('[Tokens] Quick pass done in', Date.now() - startTime, 'ms - RETURNING IMMEDIATELY');
     
+    // DUST GATE: Skip expensive enrichment for dust/spam tokens
+    // This dramatically speeds up wallets with many spam tokens
+    // (DUST_RAW_THRESHOLD already defined in pre-filter above)
+    const DUST_USD_THRESHOLD = 0.01;  // Skip enrichment if value < $0.01
+    
     // Identify tokens that still need metadata enrichment
     const tokensNeedingMetadata = tokens.filter(t => {
+      // Already filtered as dust in pre-filter
+      if (t.isDust || t.skipEnrichment) {
+        return false;
+      }
+      
+      // Check if this is a dust token by value
+      if (t.price && t.uiAmount) {
+        const valueUsd = t.uiAmount * t.price;
+        if (valueUsd < DUST_USD_THRESHOLD) {
+          t.skipEnrichment = true;
+          logger.log('[Tokens] Skipping dust token:', t.mint?.slice(0, 8), 'value:', valueUsd);
+          return false;
+        }
+      }
+      
+      // Explicitly marked for enrichment
+      if (t.needsEnrichment) return true;
+      
       const cacheKey = network ? `${network}:${t.mint}` : t.mint;
       if (!metadataCache.has(cacheKey)) return true;
+      
       const cached = metadataCache.get(cacheKey);
+      // LP tokens with generic names need enrichment
+      if (cached.isLPToken && genericLPNames.includes(cached.name)) return true;
+      // Tokens without logos need enrichment
       return !cached.logoURI;
     });
     
@@ -547,8 +868,8 @@ export async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null, o
       // Fire and forget - enrich in background
       (async () => {
         try {
-          // Process in batches to avoid overwhelming APIs
-          const batchSize = 5;
+          // Process in larger batches for speed
+          const batchSize = 10;  // Increased from 5 to 10
           let updated = false;
           
           for (let i = 0; i < tokensNeedingMetadata.length; i += batchSize) {
@@ -567,17 +888,16 @@ export async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null, o
               onUpdate([...tokens]);
               updated = false;
             }
-            
-            // Small delay between batches
-            if (i + batchSize < tokensNeedingMetadata.length) {
-              await new Promise(r => setTimeout(r, 100));
-            }
+            // No delay between batches - let rate limiter handle it
           }
           
           // Final update
           if (onUpdate) {
             onUpdate([...tokens]);
           }
+          
+          // Save metadata cache to localStorage for faster future loads
+          saveMetadataCache();
           
           logger.log('[Tokens] Background enrichment complete in', Date.now() - startTime, 'ms');
         } catch (e) {
@@ -586,6 +906,50 @@ export async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null, o
       })();
     }
     
+    // IMPORT MODE: Fetch prices in background after returning tokens immediately
+    if (mode === 'import' && onUpdate && tokens.length > 0) {
+      logger.log('[Tokens] Import mode - fetching prices in background');
+      (async () => {
+        try {
+          // Wait a tick to let UI render first
+          await new Promise(r => setTimeout(r, 100));
+          
+          // Fetch XDEX prices in background
+          const priceData = await fetchXDEXWalletTokens(ownerAddress, network);
+          
+          if (Object.keys(priceData).length > 0) {
+            let pricesUpdated = false;
+            
+            // Apply prices to tokens
+            for (const token of tokens) {
+              if (priceData[token.mint]) {
+                const data = priceData[token.mint];
+                if (data.price !== undefined && data.price !== null && !isNaN(data.price)) {
+                  token.price = parseFloat(data.price);
+                  updatePriceCache(token.mint, token.price);
+                  pricesUpdated = true;
+                }
+                // Also apply any metadata we got
+                if (data.symbol && !token.symbol) token.symbol = data.symbol;
+                if (data.name && (!token.name || token.name === 'Unknown Token')) token.name = data.name;
+                if (data.image && !token.logoURI) token.logoURI = data.image;
+              }
+            }
+            
+            if (pricesUpdated) {
+              logger.log('[Tokens] Background prices applied for', Object.keys(priceData).length, 'tokens');
+              onUpdate([...tokens]);
+            }
+          }
+        } catch (e) {
+          logger.warn('[Tokens] Background price fetch error:', e.message);
+        }
+      })();
+    }
+    
+    // Save metadata cache after quick pass (for known tokens/cached data)
+    saveMetadataCache();
+    
     logger.log('[Tokens] Returning', tokens.length, 'tokens');
     return tokens;
   } catch (e) {
@@ -593,10 +957,6 @@ export async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null, o
     return [];
   }
 }
-
-// Cache for wallet tokens response (short TTL to prevent rapid duplicate calls)
-const walletTokensCache = new Map();
-const WALLET_TOKENS_CACHE_TTL = 30 * 1000; // 30 seconds
 
 /**
  * Fetch wallet tokens with prices from XDEX API (batch endpoint)
@@ -616,10 +976,10 @@ async function fetchXDEXWalletTokens(walletAddress, network) {
     
     const url = `https://devapi.xdex.xyz/api/xendex/wallet/tokens?wallet_address=${walletAddress}&network=${encodeURIComponent(networkName)}&price=true`;
     
-    logger.log('[XDEX] Fetching wallet tokens with prices:', url);
+    logger.log('[XDEX] Fetching wallet tokens with prices');
     
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
+    const timeout = setTimeout(() => controller.abort(), 5000);  // 5s timeout for price data
     
     const response = await fetch(url, { 
       signal: controller.signal,
@@ -629,6 +989,8 @@ async function fetchXDEXWalletTokens(walletAddress, network) {
     
     if (!response.ok) {
       logger.warn('[XDEX] Wallet tokens API returned:', response.status);
+      // Cache empty result to avoid hammering API
+      walletTokensCache.set(cacheKey, { data: {}, timestamp: Date.now() });
       return {};
     }
     
@@ -672,11 +1034,32 @@ async function fetchXDEXWalletTokens(walletAddress, network) {
           imageUrl = null;
         }
         
+        // AGGRESSIVE LP TOKEN DETECTION - catch all XDEX LP tokens
+        const tokenName = (token.name || '').toLowerCase();
+        const tokenSymbol = (token.symbol || '').toUpperCase();
+        
+        // Check for XLP/SLP in symbol or name
+        const isLP = tokenSymbol === 'XLP' || 
+                     tokenSymbol === 'SLP' ||
+                     tokenSymbol.includes('XLP') ||     // catches "WXNT-USDC.X XLP"
+                     tokenSymbol.includes('SLP') ||
+                     tokenName.includes('xlp') ||       // catches "wxnt-usdc.x xlp"
+                     tokenName.includes(' lp') ||
+                     tokenName.includes('lp token') ||
+                     tokenName.includes('/') ||
+                     (tokenName.includes('xdex') && tokenName.includes('lp')) ||
+                     /[a-z0-9.]+\/[a-z0-9.]+/i.test(token.name);
+        
+        if (isLP) {
+          logger.log('[XDEX] Detected LP token:', token.symbol, token.name);
+        }
+        
         priceMap[mint] = {
           price: price,
           symbol: token.symbol,
           name: token.name,
-          image: imageUrl
+          image: isLP ? XLP_LOGO_URL : imageUrl,  // Use XLP icon for LP tokens
+          isLPToken: isLP
         };
         
         if (price !== null) {
@@ -716,7 +1099,7 @@ async function fetchTokenAccountsByProgram(rpcUrl, ownerAddress, programId) {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000);
+      const timeout = setTimeout(() => controller.abort(), 8000);  // 8s timeout - RPC can be slow
       
       const response = await fetch(rpcUrl, {
         method: 'POST',
@@ -740,7 +1123,7 @@ async function fetchTokenAccountsByProgram(rpcUrl, ownerAddress, programId) {
         logger.error(`[Tokens] HTTP error: ${response.status} ${response.statusText} (attempt ${attempt}/${maxRetries})`);
         lastError = new Error(`HTTP ${response.status}`);
         if (attempt < maxRetries) {
-          await new Promise(r => setTimeout(r, 1000 * attempt));
+          await new Promise(r => setTimeout(r, 500 * attempt));
           continue;
         }
         return [];
@@ -752,7 +1135,7 @@ async function fetchTokenAccountsByProgram(rpcUrl, ownerAddress, programId) {
         logger.warn('[Tokens] RPC error fetching tokens:', data.error, `(attempt ${attempt}/${maxRetries})`);
         lastError = data.error;
         if (attempt < maxRetries) {
-          await new Promise(r => setTimeout(r, 1000 * attempt));
+          await new Promise(r => setTimeout(r, 500 * attempt));
           continue;
         }
         return [];
@@ -766,8 +1149,6 @@ async function fetchTokenAccountsByProgram(rpcUrl, ownerAddress, programId) {
       const tokens = data.result.value.map(item => {
         const info = item.account.data.parsed.info;
         const uiAmount = info.tokenAmount.uiAmount || 0;
-        
-        logger.log(`[Tokens] Found token: mint=${info.mint?.slice(0, 8)}... amount=${info.tokenAmount.amount} uiAmount=${uiAmount} program=${programId === TOKEN_2022_PROGRAM_ID ? 'Token-2022' : 'SPL'}`);
         
         return {
           address: item.pubkey,
@@ -793,7 +1174,7 @@ async function fetchTokenAccountsByProgram(rpcUrl, ownerAddress, programId) {
       }
       lastError = e;
       if (attempt < maxRetries) {
-        await new Promise(r => setTimeout(r, 1000 * attempt));
+        await new Promise(r => setTimeout(r, 500 * attempt));  // Reduced retry delay
         continue;
       }
     }
@@ -818,10 +1199,13 @@ async function enrichTokenMetadata(rpcUrl, token, network = null) {
     return;
   }
   
+  // Check cache - but only use if it has complete data
   if (metadataCache.has(cacheKey)) {
     const cached = metadataCache.get(cacheKey);
-    Object.assign(token, cached);
-    return;
+    if (cached.name && cached.name !== 'Unknown Token' && cached.logoURI) {
+      Object.assign(token, cached);
+      return;
+    }
   }
   
   // Check known tokens first
@@ -854,15 +1238,15 @@ async function enrichTokenMetadata(rpcUrl, token, network = null) {
       token.logoURI = apiMetadata.logoURI;
       token.price = apiMetadata.price || null;
       
-      // If we have price, we're done. Otherwise continue to check XDEX for price.
+      // If we have price, we're done. Otherwise continue to check for price.
       if (token.price !== null && token.price !== undefined) {
         metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
         return;
       }
-      // Continue to XDEX to try to get price
+      // Continue to try to get price from other sources
     }
   } catch (e) {
-    logger.warn('Failed to fetch from X1 Mobile API:', e);
+    logger.warn('[Tokens] Failed to fetch from X1 Mobile API:', e.message);
   }
   
   // Try Token-2022 extension metadata
@@ -879,15 +1263,15 @@ async function enrichTokenMetadata(rpcUrl, token, network = null) {
             const uriMetadata = await fetchTokenMetadataFromURI(extMetadata.uri);
             if (uriMetadata?.image) token.logoURI = uriMetadata.image;
           } catch (e) {
-            logger.warn('Failed to fetch metadata from URI:', e);
+            logger.warn('[Tokens] Failed to fetch metadata from URI:', e.message);
           }
         }
         
-        metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI });
+        metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
         return;
       }
     } catch (e) {
-      logger.warn('Failed to fetch Token-2022 extension metadata:', e);
+      logger.warn('[Tokens] Failed to fetch Token-2022 extension metadata:', e.message);
     }
   }
   
@@ -902,12 +1286,13 @@ async function enrichTokenMetadata(rpcUrl, token, network = null) {
       
       if (metaplexData.uri && metaplexData.uri.startsWith('http')) {
         try {
+          logger.log('[Metaplex] Fetching URI metadata:', metaplexData.uri.substring(0, 60));
           const uriMetadata = await fetchTokenMetadataFromURI(metaplexData.uri);
           if (uriMetadata?.image) token.logoURI = uriMetadata.image;
           if (uriMetadata?.name && !apiMetadata?.name) token.name = uriMetadata.name;
           if (uriMetadata?.symbol && !apiMetadata?.symbol) token.symbol = uriMetadata.symbol;
         } catch (e) {
-          logger.warn('Failed to fetch metadata from URI:', e);
+          logger.warn('[Metaplex] Failed to fetch metadata from URI:', e.message);
         }
       }
       
@@ -915,7 +1300,7 @@ async function enrichTokenMetadata(rpcUrl, token, network = null) {
       return;
     }
   } catch (e) {
-    logger.warn('Failed to fetch on-chain metadata:', e);
+    logger.warn('[Tokens] Failed to fetch Metaplex on-chain metadata:', e.message);
   }
   
   // Try DAS API
@@ -932,7 +1317,7 @@ async function enrichTokenMetadata(rpcUrl, token, network = null) {
           const uriMetadata = await fetchTokenMetadataFromURI(dasData.uri);
           if (uriMetadata?.image) token.logoURI = uriMetadata.image;
         } catch (e) {
-          logger.warn('Failed to fetch metadata from DAS URI:', e);
+          logger.warn('[Tokens] Failed to fetch metadata from DAS URI:', e.message);
         }
       }
       
@@ -940,13 +1325,13 @@ async function enrichTokenMetadata(rpcUrl, token, network = null) {
       return;
     }
   } catch (e) {
-    logger.warn('Failed to fetch from DAS API:', e);
+    logger.warn('[Tokens] Failed to fetch from DAS API:', e.message);
   }
   
   // Try Jupiter API (for Solana tokens)
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
+    const timeout = setTimeout(() => controller.abort(), 5000);
     const jupiterResponse = await fetch(`https://lite-api.jup.ag/tokens/v1/token/${token.mint}`, {
       signal: controller.signal
     });
@@ -974,7 +1359,7 @@ async function enrichTokenMetadata(rpcUrl, token, network = null) {
       
       const xdexResponse = await fetchWithRateLimit(
         'https://api.xdex.xyz/api/xendex/tokens/' + token.mint,
-        { signal: AbortSignal.timeout(2000) }
+        { signal: AbortSignal.timeout(3000) }
       );
       
       if (xdexResponse.status === 429) {
@@ -1084,13 +1469,13 @@ export async function fetchTokenPriceFromXDEX(mint) {
 // METAPLEX ON-CHAIN METADATA
 // ============================================
 
-// Fetch Metaplex on-chain metadata
+// Fetch Metaplex on-chain metadata using getProgramAccounts
 async function fetchMetaplexMetadata(rpcUrl, mint) {
   try {
     logger.log('[Metaplex] Fetching metadata for mint:', mint);
     
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
+    const timeout = setTimeout(() => controller.abort(), 8000);  // Longer timeout
     
     const response = await fetch(rpcUrl, {
       method: 'POST',
@@ -1112,8 +1497,14 @@ async function fetchMetaplexMetadata(rpcUrl, mint) {
     clearTimeout(timeout);
     
     const data = await response.json();
-    if (!data.result?.length > 0) {
-      logger.log('[Metaplex] No metadata account found');
+    
+    if (data.error) {
+      logger.warn('[Metaplex] RPC error:', data.error.message || data.error);
+      return null;
+    }
+    
+    if (!data.result || data.result.length === 0) {
+      logger.log('[Metaplex] No metadata account found for:', mint);
       return null;
     }
     
@@ -1121,10 +1512,14 @@ async function fetchMetaplexMetadata(rpcUrl, mint) {
     const bytes = Uint8Array.from(atob(accountData), c => c.charCodeAt(0));
     const parsed = parseMetaplexMetadata(bytes);
     
-    logger.log('[Metaplex] Parsed metadata:', parsed?.name, parsed?.symbol);
+    logger.log('[Metaplex] Parsed metadata:', parsed?.name, parsed?.symbol, parsed?.uri?.substring(0, 50));
     return parsed;
   } catch (e) {
-    logger.warn('Error fetching Metaplex metadata:', e);
+    if (e.name === 'AbortError') {
+      logger.warn('[Metaplex] Request timeout for:', mint);
+    } else {
+      logger.warn('[Metaplex] Error fetching on-chain metadata:', e.message);
+    }
     return null;
   }
 }
@@ -1211,24 +1606,46 @@ export async function fetchTokenMetadataFromURI(uri) {
   
   try {
     let fetchUrl = uri;
+    
+    // Handle various IPFS formats
     if (uri.startsWith('ipfs://')) {
       fetchUrl = uri.replace('ipfs://', 'https://ipfs.io/ipfs/');
+    } else if (uri.includes('/ipfs/') && !uri.startsWith('http')) {
+      // Handle bare IPFS paths
+      fetchUrl = 'https://ipfs.io' + uri;
     }
     
+    // Handle Arweave
+    if (uri.startsWith('ar://')) {
+      fetchUrl = uri.replace('ar://', 'https://arweave.net/');
+    }
+    
+    logger.log('[URI] Fetching metadata from:', fetchUrl.substring(0, 80));
+    
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
+    const timeout = setTimeout(() => controller.abort(), 8000);  // Increased timeout for IPFS
     
     const response = await fetch(fetchUrl, { signal: controller.signal });
     clearTimeout(timeout);
     
-    if (!response.ok) return null;
+    if (!response.ok) {
+      logger.warn('[URI] HTTP error:', response.status, 'for:', fetchUrl.substring(0, 50));
+      return null;
+    }
     
     const data = await response.json();
     let image = data.image;
     
-    if (image && image.startsWith('ipfs://')) {
-      image = image.replace('ipfs://', 'https://ipfs.io/ipfs/');
+    // Handle various image URI formats
+    if (image) {
+      if (image.startsWith('ipfs://')) {
+        image = image.replace('ipfs://', 'https://ipfs.io/ipfs/');
+      } else if (image.startsWith('ar://')) {
+        image = image.replace('ar://', 'https://arweave.net/');
+      }
     }
+    
+    logger.log('[URI] Got metadata - name:', data.name, 'symbol:', data.symbol, 'hasImage:', !!image);
     
     return {
       name: data.name,
@@ -1237,7 +1654,11 @@ export async function fetchTokenMetadataFromURI(uri) {
       description: data.description
     };
   } catch (e) {
-    logger.warn('Failed to fetch metadata from URI:', uri, e.message);
+    if (e.name === 'AbortError') {
+      logger.warn('[URI] Timeout fetching:', uri?.substring(0, 50));
+    } else {
+      logger.warn('[URI] Failed to fetch metadata from:', uri?.substring(0, 50), e.message);
+    }
     return null;
   }
 }

@@ -7,6 +7,8 @@ import { logger } from '@x1-wallet/core';
 // API endpoints
 const JUPITER_PRICE_API = 'https://price.jup.ag/v6/price';
 const COINGECKO_API = 'https://api.coingecko.com/api/v3/simple/price';
+const XDEX_API = 'https://api.xdex.xyz/api/xendex';
+const XDEX_DEVAPI = 'https://devapi.xdex.xyz/api/xendex';
 
 // =======================================================
 // XNT PRICE CONFIGURATION
@@ -79,7 +81,7 @@ export default function TokenDetail({
     };
 
     fetchData();
-  }, [mint, symbol, network]);
+  }, [mint, symbol, network, token?.price]); // Added token.price to trigger updates when price becomes available
 
   // Fetch Solana token price from multiple sources with fallbacks
   const fetchSolanaPrice = async () => {
@@ -88,19 +90,27 @@ export default function TokenDetail({
     
     let price = null;
     
-    // Try Jupiter API first
-    try {
-      const response = await fetch(`${JUPITER_PRICE_API}?ids=${tokenAddress}`);
-      if (response.ok) {
-        const data = await response.json();
-        logger.log('[TokenDetail] Jupiter response:', data);
-        
-        if (data.data && data.data[tokenAddress]) {
-          price = data.data[tokenAddress].price;
+    // FIRST: Check if token already has a price from the tokens service (cached/XDEX)
+    if (token?.price !== undefined && token?.price !== null && !isNaN(token.price)) {
+      price = parseFloat(token.price);
+      logger.log('[TokenDetail] Using existing token.price for Solana:', price, 'for', symbol);
+    }
+    
+    // Try Jupiter API if no cached price
+    if (!price) {
+      try {
+        const response = await fetch(`${JUPITER_PRICE_API}?ids=${tokenAddress}`);
+        if (response.ok) {
+          const data = await response.json();
+          logger.log('[TokenDetail] Jupiter response:', data);
+          
+          if (data.data && data.data[tokenAddress]) {
+            price = data.data[tokenAddress].price;
+          }
         }
+      } catch (e) {
+        logger.warn('[TokenDetail] Jupiter fetch failed:', e.message);
       }
-    } catch (e) {
-      logger.warn('[TokenDetail] Jupiter fetch failed:', e.message);
     }
     
     // Fallback to CoinGecko for native SOL
@@ -166,14 +176,15 @@ export default function TokenDetail({
     try {
       let price = null;
       
-      if (isNative) {
-        // =======================================================
-        // XNT PRICE SOURCE - Currently pegged to $1.00
-        // TODO: Replace with oracle price feed when available
-        // Future implementation:
-        //   const oraclePrice = await fetchOraclePrice('XNT');
-        //   price = oraclePrice;
-        // =======================================================
+      // FIRST: Check if token already has a price from the tokens service (cached/XDEX)
+      // This is the most reliable source - prices come from XDEX wallet API
+      if (token?.price !== undefined && token?.price !== null && !isNaN(token.price)) {
+        price = parseFloat(token.price);
+        logger.log('[TokenDetail] Using existing token.price:', price, 'for', symbol);
+      }
+      // Fallbacks for known tokens if no XDEX price available
+      else if (isNative) {
+        // XNT native token - fallback to pegged price
         price = getXNTPrice();
       } else if (symbol === 'USDC.X' || symbol === 'USDC' || symbol === 'USDT') {
         // Stablecoins are pegged to $1.00
@@ -185,26 +196,55 @@ export default function TokenDetail({
         // Wrapped XNT is pegged 1:1 with XNT
         price = getXNTPrice();
       } else if (mint) {
-        // For other X1 tokens, try to get price from XDEX pools
-        const response = await fetch(`${XDEX_API}/pools`);
-        
-        if (response.ok) {
-          const pools = await response.json();
-          logger.log('[TokenDetail] XDEX pools:', pools?.length || 0);
+        // For other X1 tokens, try to get price from XDEX
+        // Try single token endpoint first
+        try {
+          const tokenResponse = await fetch(`${XDEX_API}/tokens/${mint}`, {
+            signal: AbortSignal.timeout(3000)
+          });
           
-          // Find pool for this token
-          const tokenPool = pools.find(p => 
-            p.tokenA?.mint === mint || p.tokenB?.mint === mint
-          );
-          
-          if (tokenPool) {
-            const isTokenA = tokenPool.tokenA?.mint === mint;
-            const reserveToken = parseFloat(isTokenA ? tokenPool.reserveA : tokenPool.reserveB) || 0;
-            const reserveOther = parseFloat(isTokenA ? tokenPool.reserveB : tokenPool.reserveA) || 0;
+          if (tokenResponse.ok) {
+            const tokenData = await tokenResponse.json();
+            logger.log('[TokenDetail] XDEX token data for', symbol, ':', tokenData);
             
-            if (reserveToken > 0 && reserveOther > 0) {
-              price = reserveOther / reserveToken;
+            const tokenPrice = tokenData.price ?? tokenData.priceUsd ?? tokenData.price_usd;
+            if (tokenPrice !== undefined && tokenPrice !== null) {
+              price = parseFloat(tokenPrice);
+              logger.log('[TokenDetail] Got price from XDEX token endpoint:', price);
             }
+          }
+        } catch (e) {
+          logger.log('[TokenDetail] XDEX token endpoint failed:', e.message);
+        }
+        
+        // Fallback: try pools endpoint
+        if (!price) {
+          try {
+            const response = await fetch(`${XDEX_API}/pools`, {
+              signal: AbortSignal.timeout(3000)
+            });
+            
+            if (response.ok) {
+              const pools = await response.json();
+              logger.log('[TokenDetail] XDEX pools:', pools?.length || 0);
+              
+              // Find pool for this token
+              const tokenPool = pools.find(p => 
+                p.tokenA?.mint === mint || p.tokenB?.mint === mint
+              );
+              
+              if (tokenPool) {
+                const isTokenA = tokenPool.tokenA?.mint === mint;
+                const reserveToken = parseFloat(isTokenA ? tokenPool.reserveA : tokenPool.reserveB) || 0;
+                const reserveOther = parseFloat(isTokenA ? tokenPool.reserveB : tokenPool.reserveA) || 0;
+                
+                if (reserveToken > 0 && reserveOther > 0) {
+                  price = reserveOther / reserveToken;
+                }
+              }
+            }
+          } catch (e) {
+            logger.log('[TokenDetail] XDEX pools endpoint failed:', e.message);
           }
         }
       }

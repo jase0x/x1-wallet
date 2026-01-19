@@ -7,9 +7,21 @@ import { NETWORKS, getTxExplorerUrl } from '@x1-wallet/core/services/networks';
 import { getNetworkConfig } from '@x1-wallet/core/hooks/useWallet';
 import { getTransactionHistory, formatTransaction, fetchBlockchainTransactions } from '@x1-wallet/core/utils/transaction';
 import { fetchTransactions as fetchAPITransactions, registerWallet } from '@x1-wallet/core/services/activity';
+import { fetchTokenAccounts, invalidateRPCCache } from '@x1-wallet/core/services/tokens';
 
 // Global image cache to prevent re-fetching across screens
 const imageCache = new Map();
+
+// ============================================
+// REQUEST DEDUPLICATION - Prevents duplicate concurrent fetches
+// ============================================
+const pendingFetches = new Map();
+const lastFetchTime = new Map();
+const FETCH_DEBOUNCE_MS = 2000; // Don't re-fetch within 2 seconds
+
+function getFetchCacheKey(walletAddress, network) {
+  return `${walletAddress}:${network}`;
+}
 
 // ============================================
 // TOKEN LIST CACHE - Persists across wallet switches
@@ -17,19 +29,67 @@ const imageCache = new Map();
 const TOKEN_CACHE_KEY = 'x1wallet_token_cache';
 const TOKEN_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
+// ============================================
+// BALANCE CACHE - For instant display on load
+// ============================================
+const BALANCE_CACHE_KEY = 'x1wallet_balance_cache';
+
+function getCachedBalance(walletAddress, network) {
+  try {
+    const cache = JSON.parse(localStorage.getItem(BALANCE_CACHE_KEY) || '{}');
+    const key = `${walletAddress}:${network}`;
+    const entry = cache[key];
+    if (entry && entry.balance !== undefined) {
+      return entry.balance;
+    }
+  } catch (e) {
+    // Ignore
+  }
+  return null;
+}
+
+function setCachedBalance(walletAddress, network, balance) {
+  try {
+    const cache = JSON.parse(localStorage.getItem(BALANCE_CACHE_KEY) || '{}');
+    const key = `${walletAddress}:${network}`;
+    cache[key] = { balance, timestamp: Date.now() };
+    // Keep only last 10 entries
+    const keys = Object.keys(cache);
+    if (keys.length > 10) {
+      const oldest = keys.sort((a, b) => (cache[a]?.timestamp || 0) - (cache[b]?.timestamp || 0))[0];
+      delete cache[oldest];
+    }
+    localStorage.setItem(BALANCE_CACHE_KEY, JSON.stringify(cache));
+  } catch (e) {
+    // Ignore
+  }
+}
+
 function getTokenCacheKey(walletAddress, network) {
   return `${walletAddress}:${network}`;
 }
 
+// In-memory session cache for instant access within same session
+const sessionTokenCache = new Map();
+
 function getCachedTokens(walletAddress, network) {
   try {
-    const cache = JSON.parse(localStorage.getItem(TOKEN_CACHE_KEY) || '{}');
     const key = getTokenCacheKey(walletAddress, network);
+    
+    // 1. Check in-memory cache first (instant)
+    if (sessionTokenCache.has(key)) {
+      const entry = sessionTokenCache.get(key);
+      logger.log('[TokenCache] Memory hit:', entry.tokens.length, 'tokens');
+      return entry.tokens;
+    }
+    
+    // 2. Check localStorage (persistent)
+    const cache = JSON.parse(localStorage.getItem(TOKEN_CACHE_KEY) || '{}');
     const entry = cache[key];
     if (entry && entry.tokens && entry.timestamp) {
-      // Return cached tokens even if expired - better than nothing
-      // Fresh fetch will update in background
-      logger.log('[TokenCache] Found cached tokens for', key, '- count:', entry.tokens.length);
+      // Populate memory cache
+      sessionTokenCache.set(key, entry);
+      logger.log('[TokenCache] LocalStorage hit:', entry.tokens.length, 'tokens');
       return entry.tokens;
     }
   } catch (e) {
@@ -40,12 +100,15 @@ function getCachedTokens(walletAddress, network) {
 
 function setCachedTokens(walletAddress, network, tokens) {
   try {
-    const cache = JSON.parse(localStorage.getItem(TOKEN_CACHE_KEY) || '{}');
     const key = getTokenCacheKey(walletAddress, network);
-    cache[key] = {
-      tokens: tokens,
-      timestamp: Date.now()
-    };
+    const entry = { tokens, timestamp: Date.now() };
+    
+    // 1. Update memory cache (instant for next read)
+    sessionTokenCache.set(key, entry);
+    
+    // 2. Update localStorage (persistent)
+    const cache = JSON.parse(localStorage.getItem(TOKEN_CACHE_KEY) || '{}');
+    cache[key] = entry;
     // Keep only last 10 wallet/network combos to prevent bloat
     const keys = Object.keys(cache);
     if (keys.length > 10) {
@@ -82,15 +145,98 @@ function tokensNeedUpdate(oldTokens, newTokens) {
     // Check for meaningful balance change (more than 0.01% difference to avoid float issues)
     const oldBal = parseFloat(oldToken.uiAmount || oldToken.balance || 0);
     const newBal = parseFloat(newToken.uiAmount || newToken.balance || 0);
-    if (oldBal === 0 && newBal === 0) continue;
+    if (oldBal === 0 && newBal === 0) {
+      // Even with zero balance, check if price became available
+      const oldPrice = oldToken.price;
+      const newPrice = newToken.price;
+      if ((oldPrice === null || oldPrice === undefined) && newPrice !== null && newPrice !== undefined) {
+        return true; // Price became available
+      }
+      continue;
+    }
     if (oldBal === 0 || newBal === 0) return true;
     
     const diff = Math.abs(newBal - oldBal) / Math.max(oldBal, newBal);
     if (diff > 0.0001) return true; // 0.01% threshold
+    
+    // Also check if price became available
+    const oldPrice = oldToken.price;
+    const newPrice = newToken.price;
+    if ((oldPrice === null || oldPrice === undefined) && newPrice !== null && newPrice !== undefined) {
+      return true; // Price became available
+    }
   }
   
   return false;
 }
+
+// Merge new token data into existing tokens (diff/patch instead of replace)
+// This prevents UI flicker and maintains token order
+function mergeTokenUpdates(existingTokens, newTokens) {
+  if (!existingTokens || existingTokens.length === 0) return newTokens;
+  if (!newTokens || newTokens.length === 0) return existingTokens;
+  
+  // Build map of new tokens by mint
+  const newMap = new Map();
+  newTokens.forEach(t => {
+    const key = t.mint || 'native';
+    newMap.set(key, t);
+  });
+  
+  // Build map of existing tokens by mint
+  const existingMap = new Map();
+  existingTokens.forEach(t => {
+    const key = t.mint || 'native';
+    existingMap.set(key, t);
+  });
+  
+  // Start with existing tokens, update in place
+  const merged = existingTokens.map(existing => {
+    const key = existing.mint || 'native';
+    const updated = newMap.get(key);
+    
+    if (!updated) {
+      // Token no longer exists - keep it but mark as stale (will be filtered later if needed)
+      return existing;
+    }
+    
+    // Merge: keep existing metadata if new is missing, update balance/price
+    return {
+      ...existing,
+      // Always update balance
+      amount: updated.amount,
+      uiAmount: updated.uiAmount,
+      balance: updated.balance || updated.uiAmount,
+      // Update price if available
+      price: updated.price !== undefined ? updated.price : existing.price,
+      // Update metadata only if we got better data
+      symbol: updated.symbol || existing.symbol,
+      name: (updated.name && updated.name !== 'Unknown Token') ? updated.name : existing.name,
+      logoURI: updated.logoURI || existing.logoURI,
+      // Preserve LP token flag
+      isLPToken: updated.isLPToken || existing.isLPToken,
+    };
+  });
+  
+  // Add any new tokens that didn't exist before
+  for (const [key, newToken] of newMap) {
+    if (!existingMap.has(key)) {
+      merged.push(newToken);
+    }
+  }
+  
+  // Filter out tokens with zero balance that weren't in the new list
+  // (they may have been transferred out)
+  return merged.filter(t => {
+    const key = t.mint || 'native';
+    const inNewList = newMap.has(key);
+    const hasBalance = parseFloat(t.uiAmount || t.balance || 0) > 0;
+    return inNewList || hasBalance;
+  });
+}
+
+// XLP Icon path - same format as other working icons like SOLANA_LOGO_URL
+const XLP_ICON_PATH = '/icons/48-xlp.png';
 
 // Preload and cache an image
 function preloadImage(url) {
@@ -100,11 +246,33 @@ function preloadImage(url) {
   imageCache.set(url, img);
 }
 
+// Preload XLP icon on module load
+preloadImage(XLP_ICON_PATH);
+
 // Preload multiple token images
 function preloadTokenImages(tokens) {
   if (!tokens) return;
   tokens.forEach(token => {
-    if (token.logoURI) preloadImage(token.logoURI);
+    // AGGRESSIVE LP DETECTION - same logic as render
+    const tokenName = (token.name || '').toLowerCase();
+    const tokenSymbol = (token.symbol || '').toUpperCase();
+    
+    const isLP = token.isLPToken || 
+                 tokenSymbol === 'XLP' || 
+                 tokenSymbol === 'SLP' ||
+                 tokenSymbol.includes('XLP') ||
+                 tokenSymbol.includes('SLP') ||
+                 tokenName.includes('xlp') ||
+                 tokenName.includes(' lp') ||
+                 tokenName.includes('lp token') ||
+                 tokenName.includes('/') ||
+                 (tokenName.includes('xdex') && tokenName.includes('lp'));
+    
+    if (isLP) {
+      preloadImage(XLP_ICON_PATH);
+    } else if (token.logoURI) {
+      preloadImage(token.logoURI);
+    }
   });
 }
 
@@ -3118,7 +3286,17 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
   });
   
   const [copiedTokenMint, setCopiedTokenMint] = useState(null);
+  const [showHiddenTokens, setShowHiddenTokens] = useState(false);
+  const [hiddenTokens, setHiddenTokens] = useState(() => {
+    try {
+      const saved = localStorage.getItem('x1wallet_hidden_tokens');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
   const [internalRefreshKey, setInternalRefreshKey] = useState(0);
+  const [tokenRefreshKey, setTokenRefreshKey] = useState(0);  // For forcing token refresh after transactions
   const [prevBalanceRefreshKey, setPrevBalanceRefreshKey] = useState(0);
   const lastManualRefresh = useRef(0);
   
@@ -3134,6 +3312,13 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
     }
   }, [initialTokens]);
   
+  // Cache balance when it updates (for instant display on next load)
+  useEffect(() => {
+    if (wallet.wallet?.publicKey && wallet.balance !== undefined && wallet.balance !== null) {
+      setCachedBalance(wallet.wallet.publicKey, wallet.network, wallet.balance);
+    }
+  }, [wallet.balance, wallet.wallet?.publicKey, wallet.network]);
+  
   // Check for network panel flag from Stake/Bridge screens
   useEffect(() => {
     const shouldOpenNetwork = sessionStorage.getItem('openNetworkPanel');
@@ -3142,6 +3327,8 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
       setShowNetworkPanel(true);
     }
   }, []);
+  
+  // Note: Token refresh effect (watching tokenRefreshKey) is defined after fetchTokens
   
   // Combine internal and external refresh keys
   const activityRefreshKey = internalRefreshKey + externalRefreshKey;
@@ -3172,10 +3359,25 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
     return total + tokenValue;
   }, 0);
   
+  // Get display balance - use cached if fresh balance not yet loaded
+  const displayBalance = (() => {
+    if (wallet.balance !== undefined && wallet.balance !== null && wallet.balance > 0) {
+      return wallet.balance;
+    }
+    // Fallback to cached balance for instant display
+    if (wallet.wallet?.publicKey) {
+      const cached = getCachedBalance(wallet.wallet.publicKey, wallet.network);
+      if (cached !== null) {
+        return cached;
+      }
+    }
+    return wallet.balance || 0;
+  })();
+  
   // Add native balance value
   // XNT is pegged at $1.00, SOL fetches real price (fallback to estimate)
   const nativePrice = isSolana ? 150 : 1; // SOL price estimate, XNT = $1.00 (pegged)
-  const nativeUsdValue = (wallet.balance || 0) * nativePrice;
+  const nativeUsdValue = displayBalance * nativePrice;
   
   const totalPortfolioUsd = tokensUsdValue + nativeUsdValue;
   logger.log('[Portfolio] Total USD:', totalPortfolioUsd, 'tokens:', tokensUsdValue, 'native:', nativeUsdValue);
@@ -3201,11 +3403,22 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
     return parseFloat(fixed).toString();
   };
   
+  // Toggle token visibility (hide/show)
+  const toggleHiddenToken = (tokenMint) => {
+    setHiddenTokens(prev => {
+      const newHidden = prev.includes(tokenMint)
+        ? prev.filter(m => m !== tokenMint)
+        : [...prev, tokenMint];
+      localStorage.setItem('x1wallet_hidden_tokens', JSON.stringify(newHidden));
+      return newHidden;
+    });
+  };
+  
   // Get current editing wallet from wallet list (stays in sync with updates)
   const editingWallet = editingWalletId ? wallet.wallets?.find(w => w.id === editingWalletId) : null;
 
-  // Fetch tokens function
-  const fetchTokens = async (isInitialLoad = false) => {
+  // Fetch tokens function - optimized with deduplication
+  const fetchTokens = async (isInitialLoad = false, forceRefresh = false, mode = null) => {
     if (!wallet.wallet?.publicKey || !networkConfig?.rpcUrl) {
       logger.log('[WalletMain] Cannot fetch tokens - missing:', {
         publicKey: wallet.wallet?.publicKey,
@@ -3215,92 +3428,126 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
       return;
     }
     
+    // Determine fetch mode: 'import' for fast initial loads, 'refresh' for full sync
+    const fetchMode = mode || (isInitialLoad ? 'import' : 'refresh');
+    
     // Capture wallet/network at fetch start to detect stale results
     const fetchWallet = wallet.wallet.publicKey;
     const fetchNetwork = wallet.network;
+    const cacheKey = getFetchCacheKey(fetchWallet, fetchNetwork);
     
-    logger.log('[WalletMain] Fetching tokens for:', fetchWallet, 'on', fetchNetwork, 'RPC:', networkConfig.rpcUrl);
+    // OPTIMIZATION: Skip if we fetched very recently (unless forced)
+    if (!forceRefresh && !isInitialLoad) {
+      const lastFetch = lastFetchTime.get(cacheKey);
+      if (lastFetch && Date.now() - lastFetch < FETCH_DEBOUNCE_MS) {
+        logger.log('[WalletMain] Skipping fetch - too recent:', Date.now() - lastFetch, 'ms ago');
+        return;
+      }
+    }
+    
+    // OPTIMIZATION: Deduplicate concurrent requests - return existing promise if in flight
+    if (pendingFetches.has(cacheKey)) {
+      logger.log('[WalletMain] Reusing pending fetch for:', cacheKey);
+      return pendingFetches.get(cacheKey);
+    }
+    
+    logger.log('[WalletMain] Fetching tokens for:', fetchWallet, 'on', fetchNetwork, 'mode:', fetchMode);
     
     // Only show loading state on initial load when we have no tokens
-    // This prevents flicker during 5-second refresh intervals
     if (isInitialLoad && tokens.length === 0) {
       setTokensLoading(true);
     }
     
-    try {
-      const { fetchTokenAccounts } = await import('@x1-wallet/core/services/tokens');
-      
-      // Callback for background metadata updates
-      const handleTokenUpdate = (updatedTokens) => {
-        // IMPORTANT: Check if wallet/network changed since fetch started
-        if (currentWalletRef.current !== fetchWallet || currentNetworkRef.current !== fetchNetwork) {
-          logger.log('[WalletMain] Ignoring stale background update - wallet/network changed');
-          return;
-        }
-        
-        const tokenList = updatedTokens.filter(token => {
-          const isNFT = token.decimals === 0 && token.uiAmount === 1;
-          return !isNFT;
-        });
-        // Only update if data actually changed - prevents flicker
-        if (tokensNeedUpdate(tokens, tokenList)) {
+    // Create the fetch promise
+    const fetchPromise = (async () => {
+      try {
+        // Callback for background metadata updates
+        const handleTokenUpdate = (updatedTokens) => {
+          // IMPORTANT: Check if wallet/network changed since fetch started
+          if (currentWalletRef.current !== fetchWallet || currentNetworkRef.current !== fetchNetwork) {
+            logger.log('[WalletMain] Ignoring stale background update');
+            return;
+          }
+          
+          const tokenList = updatedTokens.filter(token => {
+            const isNFT = token.decimals === 0 && token.uiAmount === 1;
+            return !isNFT;
+          });
+          
+          // Direct update for background metadata enrichment
           logger.log('[WalletMain] Background token update:', tokenList.length, 'tokens');
           setTokens(tokenList);
           setCachedTokens(fetchWallet, fetchNetwork, tokenList);
           if (onTokensUpdate) onTokensUpdate(tokenList);
-        } else {
-          logger.log('[WalletMain] Background update skipped - no meaningful changes');
+        };
+        
+        const allTokens = await fetchTokenAccounts(networkConfig.rpcUrl, fetchWallet, fetchNetwork, handleTokenUpdate, { mode: fetchMode, forceRefresh });
+        
+        // Record fetch time
+        lastFetchTime.set(cacheKey, Date.now());
+        
+        // IMPORTANT: Check if wallet/network changed since fetch started
+        if (currentWalletRef.current !== fetchWallet || currentNetworkRef.current !== fetchNetwork) {
+          logger.log('[WalletMain] Ignoring stale fetch result');
+          return;
         }
-      };
-      
-      const allTokens = await fetchTokenAccounts(networkConfig.rpcUrl, fetchWallet, fetchNetwork, handleTokenUpdate);
-      
-      // IMPORTANT: Check if wallet/network changed since fetch started
-      if (currentWalletRef.current !== fetchWallet || currentNetworkRef.current !== fetchNetwork) {
-        logger.log('[WalletMain] Ignoring stale fetch result - wallet/network changed');
-        return;
-      }
-      
-      // Filter out NFTs (decimals=0 and amount=1) - they belong in NFTs tab only
-      const tokenList = allTokens.filter(token => {
-        const isNFT = token.decimals === 0 && token.uiAmount === 1;
-        if (isNFT) {
-          logger.log('[WalletMain] Filtering out NFT from token list:', token.symbol || token.mint?.slice(0, 8));
-        }
-        return !isNFT;
-      });
-      
-      // Only update if data actually changed - prevents flicker
-      if (tokensNeedUpdate(tokens, tokenList)) {
-        logger.log('[WalletMain] Fetched tokens:', tokenList.length, '(filtered', allTokens.length - tokenList.length, 'NFTs)');
+        
+        // Filter out NFTs
+        const tokenList = allTokens.filter(token => {
+          const isNFT = token.decimals === 0 && token.uiAmount === 1;
+          return !isNFT;
+        });
+        
+        // Update tokens - direct replacement ensures fresh data
+        logger.log('[WalletMain] Fetched tokens:', tokenList.length);
         setTokens(tokenList);
         setCachedTokens(fetchWallet, fetchNetwork, tokenList);
         preloadTokenImages(tokenList);
         if (onTokensUpdate) onTokensUpdate(tokenList);
-      } else {
-        logger.log('[WalletMain] Token fetch complete - no meaningful changes, skipping update');
+      } catch (err) {
+        logger.error('[WalletMain] Failed to fetch tokens:', err);
+      } finally {
+        // Clean up pending fetch
+        pendingFetches.delete(cacheKey);
+        // Only clear loading if we're still on same wallet
+        if (currentWalletRef.current === fetchWallet && currentNetworkRef.current === fetchNetwork) {
+          setTokensLoading(false);
+        }
       }
-    } catch (err) {
-      logger.error('[WalletMain] Failed to fetch tokens:', err);
-      // Don't clear existing tokens on error - keep showing cached data
-      // setTokens([]);  // REMOVED: This caused flicker
-    } finally {
-      // Only clear loading if we're still on same wallet
-      if (currentWalletRef.current === fetchWallet && currentNetworkRef.current === fetchNetwork) {
-        setTokensLoading(false);
+    })();
+    
+    // Store the pending promise for deduplication
+    pendingFetches.set(cacheKey, fetchPromise);
+    
+    return fetchPromise;
+  };
+
+  // Force token refresh when tokenRefreshKey changes (triggered by dApp transactions)
+  const prevTokenRefreshKeyRef = useRef(0);
+  useEffect(() => {
+    if (tokenRefreshKey > prevTokenRefreshKeyRef.current) {
+      prevTokenRefreshKeyRef.current = tokenRefreshKey;
+      logger.log('[WalletMain] Token refresh triggered by key change:', tokenRefreshKey);
+      if (wallet.wallet?.publicKey && networkConfig?.rpcUrl) {
+        fetchTokens(false, true);  // forceRefresh=true
       }
     }
-  };
+  }, [tokenRefreshKey, wallet.wallet?.publicKey, networkConfig?.rpcUrl]);
 
   // Manual refresh function - parallelized for speed
   const refreshBalance = async () => {
     if (isRefreshing) return;
     setIsRefreshing(true);
+    lastManualRefresh.current = Date.now();
+    // Invalidate RPC cache to get fresh data
+    if (wallet.wallet?.publicKey) {
+      invalidateRPCCache(wallet.wallet.publicKey);
+    }
     try {
       // Fetch balance and tokens in PARALLEL for faster refresh
       await Promise.all([
         wallet.refreshBalance(),
-        fetchTokens()
+        fetchTokens(false, true)  // forceRefresh=true bypasses debounce
       ]);
       setLastRefresh(Date.now());
       setInternalRefreshKey(prev => prev + 1); // Trigger activity refresh
@@ -3316,10 +3563,11 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
       logger.log('[WalletMain] Balance refresh triggered by key change');
       setPrevBalanceRefreshKey(balanceRefreshKey);
       lastManualRefresh.current = Date.now();
-      // Immediate refresh
+      // Invalidate RPC cache to get fresh balances after transaction
       if (wallet.wallet?.publicKey) {
+        invalidateRPCCache(wallet.wallet.publicKey);
         wallet.refreshBalance();
-        fetchTokens();
+        fetchTokens(false, true);  // forceRefresh=true
       }
     }
   }, [balanceRefreshKey, prevBalanceRefreshKey, wallet.wallet?.publicKey]);
@@ -3328,7 +3576,108 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
   const prevNetworkRef = useRef(wallet.network);
   const prevWalletRef = useRef(wallet.wallet?.publicKey);
 
-  // Auto-refresh and handle network/wallet changes - 5 second interval
+  // Listen for balance refresh signal from background script (after dApp transactions)
+  const lastTxRefreshRef = useRef(0);
+  const lastKnownTxTimeRef = useRef(0);
+  
+  useEffect(() => {
+    // Handler for runtime messages from background
+    const handleRuntimeMessage = (message) => {
+      if (message.type === 'balance-refresh-needed') {
+        // Debounce: skip if we refreshed in the last 1.5 seconds
+        const now = Date.now();
+        if (now - lastTxRefreshRef.current < 1500) {
+          logger.log('[WalletMain] Skipping duplicate refresh signal');
+          return;
+        }
+        lastTxRefreshRef.current = now;
+        
+        logger.log('[WalletMain] Received balance-refresh-needed signal - refreshing immediately');
+        if (wallet.wallet?.publicKey) {
+          // Invalidate caches and force refresh
+          invalidateRPCCache(wallet.wallet.publicKey);
+          wallet.refreshBalance();
+          setTokenRefreshKey(prev => prev + 1);  // Trigger token refresh
+          setInternalRefreshKey(prev => prev + 1);  // Trigger activity refresh
+        }
+      }
+    };
+    
+    // Handler for storage changes (backup method)
+    const handleStorageChange = (changes, areaName) => {
+      if (areaName === 'local' && changes.x1wallet_last_tx_time) {
+        const newTxTime = changes.x1wallet_last_tx_time.newValue;
+        if (newTxTime && newTxTime > lastKnownTxTimeRef.current) {
+          lastKnownTxTimeRef.current = newTxTime;
+          
+          const now = Date.now();
+          if (now - lastTxRefreshRef.current < 1500) {
+            return;
+          }
+          lastTxRefreshRef.current = now;
+          
+          logger.log('[WalletMain] Detected transaction via storage change - refreshing');
+          if (wallet.wallet?.publicKey) {
+            invalidateRPCCache(wallet.wallet.publicKey);
+            wallet.refreshBalance();
+            setTokenRefreshKey(prev => prev + 1);
+            setInternalRefreshKey(prev => prev + 1);
+          }
+        }
+      }
+    };
+    
+    // ALSO: Check for missed transactions on mount/focus
+    // This catches transactions that happened while popup was closed
+    const checkForMissedTransactions = async () => {
+      if (typeof chrome !== 'undefined' && chrome.storage) {
+        try {
+          const result = await chrome.storage.local.get('x1wallet_last_tx_time');
+          const lastTxTime = result.x1wallet_last_tx_time || 0;
+          
+          if (lastTxTime > lastKnownTxTimeRef.current) {
+            logger.log('[WalletMain] Found missed transaction, triggering refresh');
+            lastKnownTxTimeRef.current = lastTxTime;
+            
+            if (wallet.wallet?.publicKey) {
+              invalidateRPCCache(wallet.wallet.publicKey);
+              wallet.refreshBalance();
+              setTokenRefreshKey(prev => prev + 1);
+              setInternalRefreshKey(prev => prev + 1);
+            }
+          }
+        } catch (e) {
+          // Ignore
+        }
+      }
+    };
+    
+    // Check immediately on mount
+    checkForMissedTransactions();
+    
+    // Also check periodically (every 2 seconds) - fast polling for transactions
+    const pollInterval = setInterval(checkForMissedTransactions, 2000);
+    
+    // Add listeners
+    if (typeof chrome !== 'undefined' && chrome.runtime) {
+      chrome.runtime.onMessage.addListener(handleRuntimeMessage);
+    }
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      chrome.storage.onChanged.addListener(handleStorageChange);
+    }
+    
+    return () => {
+      clearInterval(pollInterval);
+      if (typeof chrome !== 'undefined' && chrome.runtime) {
+        chrome.runtime.onMessage.removeListener(handleRuntimeMessage);
+      }
+      if (typeof chrome !== 'undefined' && chrome.storage) {
+        chrome.storage.onChanged.removeListener(handleStorageChange);
+      }
+    };
+  }, [wallet.wallet?.publicKey, wallet.refreshBalance]);  // Removed fetchTokens from deps
+
+  // Auto-refresh and handle network/wallet changes
   useEffect(() => {
     const networkChanged = prevNetworkRef.current !== wallet.network;
     const walletChanged = prevWalletRef.current !== wallet.wallet?.publicKey;
@@ -3342,6 +3691,10 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
     // Handle wallet OR network change - load cached tokens immediately
     if (walletChanged || networkChanged) {
       logger.log('[WalletMain] Wallet/network changed - network:', networkChanged, 'wallet:', walletChanged);
+      
+      // Clear old fetch cache for this new context
+      const newCacheKey = getFetchCacheKey(wallet.wallet?.publicKey, wallet.network);
+      lastFetchTime.delete(newCacheKey);
       
       // Try to load cached tokens immediately (prevents blank screen)
       if (wallet.wallet?.publicKey) {
@@ -3361,7 +3714,7 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
         logger.log('[WalletMain] Fetching fresh data in background');
         Promise.all([
           wallet.refreshBalance(),
-          fetchTokens(cachedTokens?.length === 0)  // Only show loading if no cache
+          fetchTokens(cachedTokens?.length === 0, true)  // forceRefresh=true for new wallet/network
         ]).catch(logger.error);
         // Also trigger activity refresh on wallet/network change
         setInternalRefreshKey(prev => prev + 1);
@@ -3371,22 +3724,22 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
       }
     }
     
-    // Token/balance refresh every 5 seconds (silent) - skip if manual refresh was recent
+    // Token/balance refresh every 10 seconds (silent) - skip if manual refresh was recent
     const tokenInterval = setInterval(() => {
-      // Skip if manual refresh was within last 10 seconds
-      if (Date.now() - lastManualRefresh.current < 10000) {
+      // Skip if manual refresh was within last 8 seconds
+      if (Date.now() - lastManualRefresh.current < 8000) {
         logger.log('[WalletMain] Skipping interval refresh - manual refresh was recent');
         return;
       }
       if (wallet.wallet?.publicKey) {
         Promise.all([
           wallet.refreshBalance().catch(logger.error),
-          fetchTokens().catch(logger.error)
+          fetchTokens(false, true)  // forceRefresh=true to bypass debounce and get fresh data
         ]).then(() => {
           setLastRefresh(Date.now());
         });
       }
-    }, 5000);
+    }, 10000);
     
     // Activity refresh every 30 seconds
     const activityInterval = setInterval(() => {
@@ -3528,7 +3881,7 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
             {/* Total portfolio USD value */}
             <div className="balance-amount">{formatUsd(totalPortfolioUsd)}</div>
           </div>
-          <div className="balance-usd">{formatBalance(wallet.balance)} {networkConfig.symbol}</div>
+          <div className="balance-usd">{formatBalance(displayBalance)} {networkConfig.symbol}</div>
         </div>
       )}
 
@@ -3615,8 +3968,8 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
               onClick={() => onTokenClick ? onTokenClick({
                 symbol: networkConfig.symbol,
                 name: isSolana ? 'Solana' : 'X1 Native Token',
-                balance: wallet.balance,
-                uiAmount: wallet.balance,
+                balance: displayBalance,
+                uiAmount: displayBalance,
                 mint: null,
                 isNative: true,
                 logoURI: null,
@@ -3626,7 +3979,7 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
               <NetworkLogo network={wallet.network} size={40} />
               <div className="token-info">
                 <span className="token-name">{isSolana ? 'Solana' : 'X1 Native Token'}</span>
-                <span className="token-amount-sub">{formatBalance(wallet.balance)} {networkConfig.symbol}</span>
+                <span className="token-amount-sub">{formatBalance(displayBalance)} {networkConfig.symbol}</span>
               </div>
               <div className="token-balance">
                 <span className="token-usd">{formatUsd(nativeUsdValue)}</span>
@@ -3642,29 +3995,77 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
               </div>
             )}
 
-            {tokens.map((token) => (
+            {tokens
+              .filter(token => showHiddenTokens || !hiddenTokens.includes(token.mint))
+              .map((token) => {
+              const isHidden = hiddenTokens.includes(token.mint);
+              // AGGRESSIVE LP TOKEN DETECTION
+              const tokenName = (token.name || '').toLowerCase();
+              const tokenSymbol = (token.symbol || '').toUpperCase();
+              
+              // Detect LP tokens by multiple methods:
+              // 1. isLPToken flag (set by tokens.js)
+              // 2. Symbol is XLP or SLP
+              // 3. Name contains "xlp" (catches "WXNT-USDC.X XLP")
+              // 4. Name contains " lp" (catches "SOL/USDC LP")
+              // 5. Name contains "/" (pair format)
+              // 6. Symbol contains "XLP" (catches symbols like "WXNT-USDC.X XLP")
+              const isLP = token.isLPToken === true || 
+                           tokenSymbol === 'XLP' || 
+                           tokenSymbol === 'SLP' ||
+                           tokenSymbol.includes('XLP') ||   // NEW: catches "WXNT-USDC.X XLP" symbol
+                           tokenSymbol.includes('SLP') ||   // NEW: catches SLP variants
+                           tokenName.includes('xlp') ||     // NEW: catches "wxnt-usdc.x xlp"
+                           tokenName.includes(' lp') ||
+                           tokenName.includes('lp token') ||
+                           tokenName.includes('/') ||
+                           (tokenName.includes('xdex') && tokenName.includes('lp'));
+              
+              // For LP tokens, use the XLP icon path
+              const effectiveLogoUrl = isLP ? XLP_ICON_PATH : token.logoURI;
+              const hasLogo = effectiveLogoUrl && (effectiveLogoUrl.startsWith('http') || effectiveLogoUrl.startsWith('/'));
+              
+              // Always log LP token detection for debugging
+              if (isLP || tokenName.includes('lp') || tokenName.includes('xlp') || tokenSymbol.includes('XLP')) {
+                console.log('[LP Check]', {
+                  name: token.name,
+                  symbol: token.symbol,
+                  isLPToken: token.isLPToken,
+                  detected: isLP,
+                  effectiveLogoUrl,
+                  hasLogo
+                });
+              }
+              
+              return (
               <div 
                 key={token.address} 
-                className="token-item clickable"
+                className={`token-item clickable${isHidden ? ' token-hidden' : ''}`}
                 onClick={() => onTokenClick ? onTokenClick(token) : onSend(token)}
               >
                 <div className="token-icon">
-                  {token.logoURI ? (
+                  {hasLogo ? (
                     <img 
-                      src={token.logoURI} 
+                      src={effectiveLogoUrl} 
                       alt={token.symbol} 
                       className="token-logo"
                       onError={(e) => {
+                        console.error('[Image Load Failed]', effectiveLogoUrl, 'for', token.name);
                         e.target.style.display = 'none';
-                        e.target.nextSibling.style.display = 'flex';
+                        if (e.target.nextSibling) {
+                          e.target.nextSibling.style.display = 'flex';
+                        }
+                      }}
+                      onLoad={() => {
+                        if (isLP) console.log('[LP Icon Loaded]', effectiveLogoUrl);
                       }}
                     />
                   ) : null}
                   <div 
-                    className={`token-logo-fallback ${token.symbol === 'pXNT' ? 'pxnt' : ''}`}
-                    style={{ display: token.logoURI ? 'none' : 'flex' }}
+                    className={`token-logo-fallback ${token.symbol === 'pXNT' ? 'pxnt' : ''} ${isLP ? 'lp-token' : ''}`}
+                    style={{ display: hasLogo ? 'none' : 'flex' }}
                   >
-                    {token.symbol === 'pXNT' ? 'pXNT' : (token.symbol?.charAt(0) || '?')}
+                    {isLP ? 'LP' : (token.symbol === 'pXNT' ? 'pXNT' : (token.symbol?.charAt(0) || '?'))}
                   </div>
                 </div>
                 <div className="token-info">
@@ -3688,6 +4089,26 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2">
                           <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
                           <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                        </svg>
+                      )}
+                    </button>
+                    <button 
+                      className="token-hide-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleHiddenToken(token.mint);
+                      }}
+                      title={isHidden ? "Show token" : "Hide token"}
+                    >
+                      {isHidden ? (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2">
+                          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                          <line x1="1" y1="1" x2="23" y2="23" />
+                        </svg>
+                      ) : (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2">
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                          <circle cx="12" cy="12" r="3" />
                         </svg>
                       )}
                     </button>
@@ -3729,7 +4150,31 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
                   <span className="token-change neutral">0.00%</span>
                 </div>
               </div>
-            ))}
+              );
+            })}
+            
+            {/* Show hidden tokens toggle */}
+            {hiddenTokens.length > 0 && (
+              <button 
+                className="show-hidden-tokens-btn"
+                onClick={() => setShowHiddenTokens(!showHiddenTokens)}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  {showHiddenTokens ? (
+                    <>
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                      <circle cx="12" cy="12" r="3" />
+                    </>
+                  ) : (
+                    <>
+                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                      <line x1="1" y1="1" x2="23" y2="23" />
+                    </>
+                  )}
+                </svg>
+                {showHiddenTokens ? 'Hide' : 'Show'} {hiddenTokens.length} hidden token{hiddenTokens.length !== 1 ? 's' : ''}
+              </button>
+            )}
           </div>
         )}
 

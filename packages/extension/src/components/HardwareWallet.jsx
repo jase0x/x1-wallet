@@ -359,8 +359,8 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
     if (selectedAccounts.length === 1) {
       const account = selectedAccounts[0];
       onComplete({
-        type: 'ledger',
-        name: walletName || `Ledger ${account.label}`,
+        type: deviceType,
+        name: walletName || `${deviceType === 'trezor' ? 'Trezor' : 'Ledger'} ${account.label}`,
         publicKey: account.address,
         derivationPath: account.path,
         derivationScheme: account.scheme || selectedScheme,
@@ -370,8 +370,8 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
     } else {
       // Multiple accounts - complete with array
       const walletsToAdd = selectedAccounts.map((account, idx) => ({
-        type: 'ledger',
-        name: `Ledger ${account.label}`,
+        type: deviceType,
+        name: `${deviceType === 'trezor' ? 'Trezor' : 'Ledger'} ${account.label}`,
         publicKey: account.address,
         derivationPath: account.path,
         derivationScheme: account.scheme || selectedScheme,
@@ -417,8 +417,8 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
     if (selectedAccounts.length === 1) {
       const account = selectedAccounts[0];
       onComplete({
-        type: 'ledger',
-        name: walletName || `Ledger ${account.label}`,
+        type: deviceType,
+        name: walletName || `${deviceType === 'trezor' ? 'Trezor' : 'Ledger'} ${account.label}`,
         publicKey: account.address,
         derivationPath: account.path,
         derivationScheme: account.scheme || selectedScheme,
@@ -429,8 +429,8 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
     } else {
       // Multiple accounts - complete with array and password
       const walletsToAdd = selectedAccounts.map((account, idx) => ({
-        type: 'ledger',
-        name: `Ledger ${account.label}`,
+        type: deviceType,
+        name: `${deviceType === 'trezor' ? 'Trezor' : 'Ledger'} ${account.label}`,
         publicKey: account.address,
         derivationPath: account.path,
         derivationScheme: account.scheme || selectedScheme,
@@ -526,7 +526,7 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
             </div>
             <div className="hardware-option-text">
               <span className="hardware-option-title">Trezor</span>
-              <span className="hardware-option-desc">Model T, Model One, Safe 3</span>
+              <span className="hardware-option-desc">Model T, Safe 3, Safe 5</span>
             </div>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M9 18l6-6-6-6" />
@@ -1112,7 +1112,7 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
             className="form-input"
             value={walletName}
             onChange={(e) => setWalletName(e.target.value)}
-            placeholder={`Ledger ${selectedAccount?.label || 'Wallet'}`}
+            placeholder={`${deviceType === 'trezor' ? 'Trezor' : 'Ledger'} ${selectedAccount?.label || 'Wallet'}`}
             autoFocus
           />
         </div>
@@ -1120,7 +1120,7 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
         <div className="hardware-summary">
           <div className="hardware-summary-item">
             <span className="hardware-summary-label">Device</span>
-            <span className="hardware-summary-value">Ledger</span>
+            <span className="hardware-summary-value">{deviceType === 'trezor' ? 'Trezor' : 'Ledger'}</span>
           </div>
           <div className="hardware-summary-item">
             <span className="hardware-summary-label">Connection</span>
@@ -1154,9 +1154,9 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
             <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
           </svg>
           <span>
-            <strong>Blind Signing Warning:</strong> Some transactions may not display full details on your Ledger screen. 
+            <strong>Blind Signing Warning:</strong> Some transactions may not display full details on your {deviceType === 'trezor' ? 'Trezor' : 'Ledger'} screen. 
             Always verify transaction details in the wallet before confirming on your device. If you can't verify 
-            the full transaction on your Ledger, consider enabling blind signing only for trusted dApps.
+            the full transaction on your device, consider enabling blind signing only for trusted dApps.
           </span>
         </div>
 
@@ -1285,7 +1285,7 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
             <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
           </svg>
           <span>
-            This password protects the wallet app. Your Ledger device remains your primary security - 
+            This password protects the wallet app. Your {deviceType === 'trezor' ? 'Trezor' : 'Ledger'} device remains your primary security - 
             transactions still require physical confirmation on your device.
           </span>
         </div>

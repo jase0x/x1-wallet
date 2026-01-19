@@ -1,4 +1,7 @@
 const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["TransportWebBLE.js","index2.js","events.js","index3.js","tslib.es6.js","TransportWebHID.js","hid-framing.js","TransportWebUSB.js","Solana.js","index.js"])))=>i.map(i=>d[i]);
+var __defProp = Object.defineProperty;
+var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 var _a, _b;
 (function polyfill() {
   const relList = document.createElement("link").relList;
@@ -10826,7 +10829,7 @@ const base58 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
   validateAddress
 }, Symbol.toStringTag, { value: "Module" }));
 const SYSTEM_PROGRAM_ID$1 = "11111111111111111111111111111111";
-const TOKEN_PROGRAM_ID$2 = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const TOKEN_PROGRAM_ID$3 = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const ASSOCIATED_TOKEN_PROGRAM_ID$1 = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
 const COMPUTE_BUDGET_PROGRAM_ID = "ComputeBudget111111111111111111111111111111";
 const BUBBLEGUM_PROGRAM_ID = "BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY";
@@ -10909,7 +10912,7 @@ async function createTokenTransferTransaction({
     if (!secretKey || secretKey.length !== 64) {
       throw new Error(`Invalid secret key length: ${(secretKey == null ? void 0 : secretKey.length) || 0}, expected 64`);
     }
-    const tokenProgramId = programId || TOKEN_PROGRAM_ID$2;
+    const tokenProgramId = programId || TOKEN_PROGRAM_ID$3;
     let toTokenAccount = providedToTokenAccount;
     let needsCreateATA = false;
     if (!toTokenAccount && rpcUrl) {
@@ -11810,7 +11813,7 @@ function buildTokenTransferMessageForHardware({
       mint,
       amount,
       recentBlockhash,
-      tokenProgramId: tokenProgramId || TOKEN_PROGRAM_ID$2
+      tokenProgramId: tokenProgramId || TOKEN_PROGRAM_ID$3
     });
   } else {
     return buildTokenTransferMessage({
@@ -11819,7 +11822,7 @@ function buildTokenTransferMessageForHardware({
       toTokenAccount,
       amount,
       recentBlockhash,
-      tokenProgramId: tokenProgramId || TOKEN_PROGRAM_ID$2
+      tokenProgramId: tokenProgramId || TOKEN_PROGRAM_ID$3
     });
   }
 }
@@ -11948,17 +11951,17 @@ async function fetchBlockchainTransactions(rpcUrl, walletAddress, limit = 20, ne
     }
     if (mintsToLookup.size > 0) {
       try {
-        const { fetchTokenMetadataFromAPI, fetchToken2022Metadata } = await __vitePreload(async () => {
-          const { fetchTokenMetadataFromAPI: fetchTokenMetadataFromAPI2, fetchToken2022Metadata: fetchToken2022Metadata2 } = await import("./tokens.js");
-          return { fetchTokenMetadataFromAPI: fetchTokenMetadataFromAPI2, fetchToken2022Metadata: fetchToken2022Metadata2 };
-        }, true ? [] : void 0);
+        const { fetchTokenMetadataFromAPI: fetchTokenMetadataFromAPI2, fetchToken2022Metadata: fetchToken2022Metadata2 } = await __vitePreload(async () => {
+          const { fetchTokenMetadataFromAPI: fetchTokenMetadataFromAPI3, fetchToken2022Metadata: fetchToken2022Metadata3 } = await Promise.resolve().then(() => tokens);
+          return { fetchTokenMetadataFromAPI: fetchTokenMetadataFromAPI3, fetchToken2022Metadata: fetchToken2022Metadata3 };
+        }, true ? void 0 : void 0);
         const mintArray = Array.from(mintsToLookup);
         logger$1.log("[fetchBlockchainTransactions] Looking up symbols for", mintArray.length, "mints");
         const mintSymbols = {};
         for (const mint of mintArray) {
           let symbol = null;
           try {
-            const apiResult = await fetchTokenMetadataFromAPI(mint);
+            const apiResult = await fetchTokenMetadataFromAPI2(mint);
             if (apiResult == null ? void 0 : apiResult.symbol) {
               symbol = apiResult.symbol;
               logger$1.log("[fetchBlockchainTransactions] API found:", mint.slice(0, 8), "->", symbol);
@@ -11967,7 +11970,7 @@ async function fetchBlockchainTransactions(rpcUrl, walletAddress, limit = 20, ne
           }
           if (!symbol) {
             try {
-              const t22Metadata = await fetchToken2022Metadata(rpcUrl, mint);
+              const t22Metadata = await fetchToken2022Metadata2(rpcUrl, mint);
               if (t22Metadata == null ? void 0 : t22Metadata.symbol) {
                 symbol = t22Metadata.symbol;
                 logger$1.log("[fetchBlockchainTransactions] Token2022 found:", mint.slice(0, 8), "->", symbol);
@@ -12645,7 +12648,7 @@ async function createWrapTransaction({ owner, amount, rpcUrl, privateKey }) {
       logger$1.log("[Wrap] Could not query token accounts:", e == null ? void 0 : e.message);
     }
     if (!ataAddress) {
-      ataAddress = await deriveATAAddressStandard(owner, NATIVE_MINT, TOKEN_PROGRAM_ID$2);
+      ataAddress = await deriveATAAddressStandard(owner, NATIVE_MINT, TOKEN_PROGRAM_ID$3);
       logger$1.log("[Wrap] Derived ATA address:", ataAddress);
     }
     const ataInfoResponse = await fetch(rpcUrl, {
@@ -12664,7 +12667,7 @@ async function createWrapTransaction({ owner, amount, rpcUrl, privateKey }) {
     const ownerKey = decodeToFixedSize$1(owner, 32);
     const nativeMintKey = decodeToFixedSize$1(NATIVE_MINT, 32);
     const ataKey = decodeToFixedSize$1(ataAddress, 32);
-    const tokenProgramKey = decodeToFixedSize$1(TOKEN_PROGRAM_ID$2, 32);
+    const tokenProgramKey = decodeToFixedSize$1(TOKEN_PROGRAM_ID$3, 32);
     const systemProgramKey = decodeToFixedSize$1(SYSTEM_PROGRAM_ID$1, 32);
     const ataProgramKey = decodeToFixedSize$1(ASSOCIATED_TOKEN_PROGRAM_ID$1, 32);
     const blockhashBytes = decodeBase58(recentBlockhash);
@@ -12805,7 +12808,7 @@ async function createUnwrapTransaction({ owner, amount, rpcUrl, privateKey }) {
         throw e;
       }
       console.log("[Unwrap] Could not query token accounts:", e == null ? void 0 : e.message);
-      ataAddress = await deriveATAAddressStandard(owner, NATIVE_MINT, TOKEN_PROGRAM_ID$2);
+      ataAddress = await deriveATAAddressStandard(owner, NATIVE_MINT, TOKEN_PROGRAM_ID$3);
       console.log("[Unwrap] Derived ATA address:", ataAddress);
     }
     const ataInfoResponse = await fetch(rpcUrl, {
@@ -12825,7 +12828,7 @@ async function createUnwrapTransaction({ owner, amount, rpcUrl, privateKey }) {
     }
     const ownerKey = decodeToFixedSize$1(owner, 32);
     const ataKey = decodeToFixedSize$1(ataAddress, 32);
-    const tokenProgramKey = decodeToFixedSize$1(TOKEN_PROGRAM_ID$2, 32);
+    const tokenProgramKey = decodeToFixedSize$1(TOKEN_PROGRAM_ID$3, 32);
     const blockhashBytes = decodeBase58(recentBlockhash);
     const accountKeys = [ownerKey, ataKey, tokenProgramKey];
     const closeInstruction = {
@@ -12920,13 +12923,13 @@ async function createWrapTransactionHardware({ owner, amount, rpcUrl, hardwareWa
       logger$1.log("[Wrap HW] Could not query token accounts:", e == null ? void 0 : e.message);
     }
     if (!ataAddress) {
-      ataAddress = await deriveATAAddressStandard(owner, NATIVE_MINT, TOKEN_PROGRAM_ID$2);
+      ataAddress = await deriveATAAddressStandard(owner, NATIVE_MINT, TOKEN_PROGRAM_ID$3);
       logger$1.log("[Wrap HW] Derived ATA address:", ataAddress);
     }
     const ownerKey = decodeToFixedSize$1(owner, 32);
     const nativeMintKey = decodeToFixedSize$1(NATIVE_MINT, 32);
     const ataKey = decodeToFixedSize$1(ataAddress, 32);
-    const tokenProgramKey = decodeToFixedSize$1(TOKEN_PROGRAM_ID$2, 32);
+    const tokenProgramKey = decodeToFixedSize$1(TOKEN_PROGRAM_ID$3, 32);
     const systemProgramKey = decodeToFixedSize$1(SYSTEM_PROGRAM_ID$1, 32);
     const ataProgramKey = decodeToFixedSize$1(ASSOCIATED_TOKEN_PROGRAM_ID$1, 32);
     const blockhashBytes = decodeBase58(recentBlockhash);
@@ -13052,7 +13055,7 @@ async function createUnwrapTransactionHardware({ owner, amount, rpcUrl, hardware
     console.log("[Unwrap HW] Found ATA:", ataAddress);
     const ownerKey = decodeToFixedSize$1(owner, 32);
     const ataKey = decodeToFixedSize$1(ataAddress, 32);
-    const tokenProgramKey = decodeToFixedSize$1(TOKEN_PROGRAM_ID$2, 32);
+    const tokenProgramKey = decodeToFixedSize$1(TOKEN_PROGRAM_ID$3, 32);
     const blockhashBytes = decodeBase58(recentBlockhash);
     const accountKeys = [];
     const addKey = (key) => {
@@ -13518,7 +13521,7 @@ const XDEX_LOGOS = {
   USDC: "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png",
   USDC_X: "/icons/48-usdcx.png"
 };
-const KNOWN_TOKENS = {
+const KNOWN_TOKENS$1 = {
   "X1 Mainnet": {
     "B69chRzqzDCmdB5WYB8NRu5Yv5ZA95ABiZcdzCgGm9Tq": {
       symbol: "USDC.X",
@@ -13582,7 +13585,7 @@ const SOLANA_TOKENS = {
 function isSolanaNetwork(network) {
   return network === "Solana Mainnet" || network === "Solana Devnet";
 }
-function isX1Network(network) {
+function isX1Network$1(network) {
   var _a2, _b2;
   if (network === "X1 Mainnet" || network === "X1 Testnet") return true;
   const lowerName = network.toLowerCase();
@@ -13600,7 +13603,7 @@ function isX1Network(network) {
   return false;
 }
 function getKnownToken(network, mintAddress) {
-  const networkTokens = KNOWN_TOKENS[network] || {};
+  const networkTokens = KNOWN_TOKENS$1[network] || {};
   return networkTokens[mintAddress] || null;
 }
 function getNetworkName(network) {
@@ -13806,9 +13809,9 @@ async function fetchJupiterTokens() {
       logger$1.warn("[Jupiter] API returned", response.status);
       return SOLANA_TOKEN_LIST;
     }
-    const tokens = await response.json();
-    if (Array.isArray(tokens) && tokens.length > 0) {
-      const normalizedTokens = tokens.map((t2) => ({
+    const tokens2 = await response.json();
+    if (Array.isArray(tokens2) && tokens2.length > 0) {
+      const normalizedTokens = tokens2.map((t2) => ({
         address: t2.id || t2.address,
         symbol: t2.symbol,
         name: t2.name,
@@ -13849,7 +13852,7 @@ const POPULAR_SOLANA_MINTS = [
   // mSOL
 ];
 async function getSwapTokens(network) {
-  if (isX1Network(network)) {
+  if (isX1Network$1(network)) {
     return [
       { symbol: "XNT", name: "X1 Native Token", mint: "native", logoURI: XDEX_LOGOS.X1, decimals: 9, isNative: true },
       {
@@ -13966,8 +13969,8 @@ async function fetchTokenMetadata(rpcUrl, mintAddress, network = null) {
         logger$1.log("[XDEX] Trying Jupiter API for Solana token...");
         const jupResponse = await fetch(`${JUPITER_TOKEN_API}/tag?query=verified`);
         if (jupResponse.ok) {
-          const tokens = await jupResponse.json();
-          const token = tokens.find((t2) => (t2.id || t2.address) === mintAddress);
+          const tokens2 = await jupResponse.json();
+          const token = tokens2.find((t2) => (t2.id || t2.address) === mintAddress);
           if (token) {
             logger$1.log("[XDEX] Found token in Jupiter:", token.symbol);
             const result2 = {
@@ -14199,7 +14202,7 @@ async function searchXDEXTokens(query, network) {
 }
 const xdex = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
-  KNOWN_TOKENS,
+  KNOWN_TOKENS: KNOWN_TOKENS$1,
   SOLANA_TOKENS,
   XDEX_LOGOS,
   fetchTokenMetadata,
@@ -14208,10 +14211,1357 @@ const xdex = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty
   getQuote,
   getSwapTokens,
   isSolanaNetwork,
-  isX1Network,
+  isX1Network: isX1Network$1,
   prepareSwap,
   searchTokens,
   searchXDEXTokens
+}, Symbol.toStringTag, { value: "Module" }));
+const ICONS = {
+  X1: "/icons/48-x1.png",
+  PXNT: "/icons/48-pxnt.png",
+  USDCX: "/icons/48-usdcx.png",
+  XLP: "/icons/48-xlp.png",
+  // External icons (third-party tokens)
+  SOL: "/icons/48-sol.png",
+  USDC: "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png",
+  USDT: "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.png",
+  MSOL: "https://raw.githubusercontent.com/marinade-finance/msol-logo/main/msol-logo.png",
+  BONK: "https://arweave.net/hQiPZOsRZXGXBJd_82PhVdlM_hACsT_q6wqwf5cSY7I",
+  JUP: "https://static.jup.ag/jup/icon.png",
+  ETH: "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs/logo.png",
+  MIND: "https://xdex.s3.us-east-2.amazonaws.com/tokens/mind-48.png"
+};
+const XDEX_LP_MINT_AUTHORITY = "9Dpjw2pB5kXJr6ZTHiqzEMfJPic3om9jgNacnwpLCoaU";
+const XLP_LOGO_URL = ICONS.XLP;
+const KNOWN_TOKENS = {
+  // === Native/Wrapped Tokens ===
+  "So11111111111111111111111111111111111111112": {
+    symbol: "SOL",
+    name: "Wrapped SOL",
+    decimals: 9,
+    logoURI: ICONS.SOL
+  },
+  // === Stablecoins ===
+  "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+    symbol: "USDC",
+    name: "USD Coin",
+    decimals: 6,
+    logoURI: ICONS.USDC
+  },
+  "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": {
+    symbol: "USDT",
+    name: "Tether USD",
+    decimals: 6,
+    logoURI: ICONS.USDT
+  },
+  "B69chRzqzDCmdB5WYB8NRu5Yv5ZA95ABiZcdzCgGm9Tq": {
+    symbol: "USDC.X",
+    name: "USDC X1",
+    decimals: 6,
+    logoURI: ICONS.USDCX,
+    isToken2022: true,
+    price: 1
+  },
+  // === Liquid Staking Tokens ===
+  "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So": {
+    symbol: "mSOL",
+    name: "Marinade staked SOL",
+    decimals: 9,
+    logoURI: ICONS.MSOL
+  },
+  "pXNTyoqQsskHdZ7Q1rnP25FEyHHjissbs7n6RRN2nP5": {
+    symbol: "pXNT",
+    name: "Staked XNT",
+    decimals: 9,
+    logoURI: ICONS.PXNT,
+    isToken2022: false,
+    isStakePoolToken: true,
+    price: 1
+  },
+  // === Popular Tokens ===
+  "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263": {
+    symbol: "BONK",
+    name: "Bonk",
+    decimals: 5,
+    logoURI: ICONS.BONK
+  },
+  "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN": {
+    symbol: "JUP",
+    name: "Jupiter",
+    decimals: 6,
+    logoURI: ICONS.JUP
+  },
+  "7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs": {
+    symbol: "ETH",
+    name: "Ether (Wormhole)",
+    decimals: 8,
+    logoURI: ICONS.ETH
+  },
+  // === X1 Ecosystem Tokens ===
+  "DohWBfvXER6qs8zFGtdZRDpgbHmm97ZZwgCUTCdtHQNT": {
+    symbol: "MIND",
+    name: "Mind",
+    decimals: 9,
+    logoURI: ICONS.MIND
+  }
+};
+const NETWORK_TOKEN_OVERRIDES = {
+  "X1 Mainnet": {
+    "So11111111111111111111111111111111111111112": {
+      symbol: "WXNT",
+      name: "Wrapped XNT",
+      decimals: 9,
+      logoURI: ICONS.X1
+    }
+  },
+  "X1 Testnet": {
+    "So11111111111111111111111111111111111111112": {
+      symbol: "WXNT",
+      name: "Wrapped XNT",
+      decimals: 9,
+      logoURI: ICONS.X1
+    }
+  },
+  "Solana Mainnet": {
+    "So11111111111111111111111111111111111111112": {
+      symbol: "SOL",
+      name: "Solana",
+      decimals: 9,
+      logoURI: ICONS.SOL
+    },
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": {
+      symbol: "USDC",
+      name: "USD Coin",
+      decimals: 6,
+      logoURI: ICONS.USDC
+    },
+    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": {
+      symbol: "USDT",
+      name: "Tether USD",
+      decimals: 6,
+      logoURI: ICONS.USDT
+    }
+  },
+  "Solana Devnet": {
+    "So11111111111111111111111111111111111111112": {
+      symbol: "SOL",
+      name: "Solana",
+      decimals: 9,
+      logoURI: ICONS.SOL
+    }
+  }
+};
+const X1_TOKEN_OVERRIDES = {
+  "So11111111111111111111111111111111111111112": {
+    symbol: "WXNT",
+    name: "Wrapped XNT",
+    decimals: 9,
+    logoURI: ICONS.X1
+  }
+};
+function isX1Network(network) {
+  var _a2, _b2;
+  if (!network) return false;
+  if (network === "X1 Mainnet" || network === "X1 Testnet") return true;
+  const lowerName = network.toLowerCase();
+  if (lowerName.includes("x1") || lowerName.includes("xnt")) return true;
+  try {
+    const customNetworks = JSON.parse(localStorage.getItem("x1wallet_customRpcs") || "[]");
+    const customNet = customNetworks.find((n2) => n2.name === network);
+    if (customNet) {
+      const url = ((_a2 = customNet.url) == null ? void 0 : _a2.toLowerCase()) || "";
+      if (url.includes("x1.xyz") || url.includes("x1.") || url.includes("/x1") || ((_b2 = customNet.symbol) == null ? void 0 : _b2.toUpperCase()) === "XNT") {
+        return true;
+      }
+    }
+  } catch {
+  }
+  return false;
+}
+function getKnownTokenMetadata(mint, network) {
+  const networkOverrides = NETWORK_TOKEN_OVERRIDES[network];
+  if (networkOverrides && networkOverrides[mint]) {
+    return networkOverrides[mint];
+  }
+  if (isX1Network(network) && X1_TOKEN_OVERRIDES[mint]) {
+    return X1_TOKEN_OVERRIDES[mint];
+  }
+  return KNOWN_TOKENS[mint] || null;
+}
+const API_SERVER$1 = "https://mobile-api.x1.xyz";
+const TOKEN_PROGRAM_ID$2 = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+const METADATA_PROGRAM_ID = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
+class RateLimiter {
+  constructor(maxRequests = 5, windowMs = 1e3) {
+    this.maxRequests = maxRequests;
+    this.windowMs = windowMs;
+    this.requests = [];
+  }
+  async acquire() {
+    const now = Date.now();
+    this.requests = this.requests.filter((time) => now - time < this.windowMs);
+    if (this.requests.length >= this.maxRequests) {
+      const waitTime = this.windowMs - (now - this.requests[0]) + 10;
+      await new Promise((resolve) => setTimeout(resolve, waitTime));
+      return this.acquire();
+    }
+    this.requests.push(now);
+    return true;
+  }
+}
+const xdexRateLimiter = new RateLimiter(5, 1e3);
+const rpcTokenAccountsCache = /* @__PURE__ */ new Map();
+const RPC_CACHE_TTL = 15 * 1e3;
+const walletTokensCache = /* @__PURE__ */ new Map();
+const WALLET_TOKENS_CACHE_TTL = 60 * 1e3;
+function getCachedRPCTokenAccounts(ownerAddress, rpcUrl) {
+  const cacheKey = `${ownerAddress}:${rpcUrl}`;
+  const cached = rpcTokenAccountsCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < RPC_CACHE_TTL) {
+    logger$1.log("[RPC Cache] Hit - using cached token accounts, age:", Math.round((Date.now() - cached.timestamp) / 1e3), "s");
+    return cached.data;
+  }
+  return null;
+}
+function setCachedRPCTokenAccounts(ownerAddress, rpcUrl, splTokens, token2022) {
+  const cacheKey = `${ownerAddress}:${rpcUrl}`;
+  rpcTokenAccountsCache.set(cacheKey, {
+    data: { splTokens, token2022 },
+    timestamp: Date.now()
+  });
+  if (rpcTokenAccountsCache.size > 5) {
+    const oldestKey = rpcTokenAccountsCache.keys().next().value;
+    rpcTokenAccountsCache.delete(oldestKey);
+  }
+  logger$1.log("[RPC Cache] Stored token accounts for", ownerAddress.slice(0, 8));
+}
+function invalidateRPCCache(ownerAddress = null) {
+  if (ownerAddress) {
+    for (const key of rpcTokenAccountsCache.keys()) {
+      if (key.startsWith(ownerAddress)) {
+        rpcTokenAccountsCache.delete(key);
+      }
+    }
+    for (const key of walletTokensCache.keys()) {
+      if (key.startsWith(ownerAddress)) {
+        walletTokensCache.delete(key);
+      }
+    }
+    logger$1.log("[Cache] Invalidated for wallet:", ownerAddress.slice(0, 8));
+  } else {
+    rpcTokenAccountsCache.clear();
+    walletTokensCache.clear();
+    logger$1.log("[Cache] Invalidated all");
+  }
+}
+const FAILED_CACHE_KEY = "x1wallet_failed_token_lookups";
+const FAILED_CACHE_TTL = 10 * 60 * 1e3;
+function getFailedCache() {
+  try {
+    const cached = localStorage.getItem(FAILED_CACHE_KEY);
+    return cached ? JSON.parse(cached) : {};
+  } catch {
+    return {};
+  }
+}
+function setFailedCache(cache) {
+  try {
+    const now = Date.now();
+    const cleaned = {};
+    for (const [key, timestamp] of Object.entries(cache)) {
+      if (now - timestamp < FAILED_CACHE_TTL) {
+        cleaned[key] = timestamp;
+      }
+    }
+    const entries = Object.entries(cleaned);
+    if (entries.length > 100) {
+      entries.sort((a, b) => b[1] - a[1]);
+      const limited = Object.fromEntries(entries.slice(0, 100));
+      localStorage.setItem(FAILED_CACHE_KEY, JSON.stringify(limited));
+    } else {
+      localStorage.setItem(FAILED_CACHE_KEY, JSON.stringify(cleaned));
+    }
+  } catch {
+  }
+}
+function hasRecentlyFailed(key) {
+  const cache = getFailedCache();
+  const failedAt = cache[key];
+  if (!failedAt) return false;
+  if (Date.now() - failedAt > FAILED_CACHE_TTL) {
+    delete cache[key];
+    setFailedCache(cache);
+    return false;
+  }
+  return true;
+}
+function markFailed(key) {
+  const cache = getFailedCache();
+  cache[key] = Date.now();
+  setFailedCache(cache);
+}
+function clearFailed(key) {
+  const cache = getFailedCache();
+  delete cache[key];
+  setFailedCache(cache);
+}
+async function fetchWithRateLimit(url, options = {}) {
+  await xdexRateLimiter.acquire();
+  return fetch(url, options);
+}
+const mintAuthorityCache = /* @__PURE__ */ new Map();
+const MINT_AUTHORITY_CACHE_TTL = 30 * 60 * 1e3;
+const lpTokenInfoCache = /* @__PURE__ */ new Map();
+const LP_TOKEN_INFO_CACHE_TTL = 10 * 60 * 1e3;
+async function fetchMintAuthority(rpcUrl, mintAddress) {
+  var _a2, _b2, _c, _d, _e;
+  const cacheKey = `${rpcUrl}:${mintAddress}`;
+  const cached = mintAuthorityCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < MINT_AUTHORITY_CACHE_TTL) {
+    return cached.authority;
+  }
+  try {
+    const response = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getAccountInfo",
+        params: [
+          mintAddress,
+          { encoding: "jsonParsed" }
+        ]
+      })
+    });
+    const data = await response.json();
+    const mintAuthority = ((_e = (_d = (_c = (_b2 = (_a2 = data == null ? void 0 : data.result) == null ? void 0 : _a2.value) == null ? void 0 : _b2.data) == null ? void 0 : _c.parsed) == null ? void 0 : _d.info) == null ? void 0 : _e.mintAuthority) || null;
+    mintAuthorityCache.set(cacheKey, { authority: mintAuthority, timestamp: Date.now() });
+    return mintAuthority;
+  } catch (e) {
+    logger$1.warn("[Tokens] Failed to fetch mint authority:", e.message);
+    return null;
+  }
+}
+async function fetchLPTokenInfoFromXDEX(lpMint) {
+  const cacheKey = `lp:${lpMint}`;
+  const cached = lpTokenInfoCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < LP_TOKEN_INFO_CACHE_TTL) {
+    return cached.info;
+  }
+  try {
+    const response = await fetchWithRateLimit(
+      `https://devapi.xdex.xyz/api/xendex/tokens/${lpMint}`,
+      { signal: AbortSignal.timeout(2e3) }
+    );
+    if (response.ok) {
+      const data = await response.json();
+      logger$1.log("[Tokens] XDEX devapi LP token data:", data);
+      if (data.name && data.name !== "Unknown Token" && data.name.trim() !== "") {
+        const info = {
+          name: data.name,
+          symbol: data.symbol || "XLP",
+          logoURI: data.image || data.logo || data.logoURI
+        };
+        lpTokenInfoCache.set(cacheKey, { info, timestamp: Date.now() });
+        return info;
+      }
+    }
+  } catch (e) {
+    logger$1.warn("[Tokens] XDEX devapi LP lookup failed:", e.message);
+  }
+  lpTokenInfoCache.set(cacheKey, { info: null, timestamp: Date.now() });
+  return null;
+}
+async function checkAndApplyLPBranding(rpcUrl, token, network) {
+  var _a2;
+  const isX1 = network == null ? void 0 : network.includes("X1");
+  const isSolana = network == null ? void 0 : network.includes("Solana");
+  if (!isX1 && !isSolana) return false;
+  try {
+    const mintAuthority = await fetchMintAuthority(rpcUrl, token.mint);
+    if (mintAuthority === XDEX_LP_MINT_AUTHORITY) {
+      token.isLPToken = true;
+      token.logoURI = XLP_LOGO_URL;
+      const hasGoodName = token.name && token.name !== "XLP" && token.name !== "SLP" && token.name !== "SPL Token" && token.name !== "Token-2022" && token.name !== "XDEX LP Token" && token.name !== "SLP Token" && token.name !== "Unknown Token";
+      if (hasGoodName) {
+        if (!token.symbol || token.symbol === ((_a2 = token.mint) == null ? void 0 : _a2.slice(0, 4).toUpperCase())) {
+          token.symbol = "XLP";
+        }
+        logger$1.log(`[Tokens] LP token keeping good name: ${token.mint} -> ${token.name}`);
+        return true;
+      }
+      if (isX1) {
+        logger$1.log("[Tokens] Fetching LP name from XDEX devapi for:", token.mint);
+        const lpInfo = await fetchLPTokenInfoFromXDEX(token.mint);
+        if (lpInfo && lpInfo.name && lpInfo.name !== "Unknown Token") {
+          token.name = lpInfo.name;
+          token.symbol = lpInfo.symbol || "XLP";
+          logger$1.log(`[Tokens] LP token got API name: ${token.mint} -> ${token.name}`);
+        } else {
+          token.name = "XDEX LP Token";
+          token.symbol = "XLP";
+          logger$1.log(`[Tokens] LP token using fallback name: ${token.mint}`);
+        }
+      } else if (isSolana) {
+        token.name = "SLP Token";
+        token.symbol = "SLP";
+        logger$1.log(`[Tokens] Solana LP token: ${token.mint}`);
+      }
+      token.logoURI = XLP_LOGO_URL;
+      return true;
+    }
+  } catch (e) {
+    logger$1.warn("[Tokens] LP token check failed:", e.message);
+  }
+  return false;
+}
+const METADATA_CACHE_KEY = "x1wallet_metadata_cache";
+const METADATA_CACHE_TTL = 30 * 60 * 1e3;
+const metadataCache = /* @__PURE__ */ new Map();
+function loadMetadataCache() {
+  try {
+    const cached = localStorage.getItem(METADATA_CACHE_KEY);
+    if (cached) {
+      const data = JSON.parse(cached);
+      if (data._timestamp && Date.now() - data._timestamp < METADATA_CACHE_TTL) {
+        let count = 0;
+        let skipped = 0;
+        const genericNames = ["XLP", "SLP", "SPL Token", "Token-2022", "XDEX LP Token", "SLP Token", "Unknown Token"];
+        for (const [key, value] of Object.entries(data)) {
+          if (key !== "_timestamp") {
+            if (value.isLPToken && genericNames.includes(value.name)) {
+              skipped++;
+              continue;
+            }
+            metadataCache.set(key, value);
+            count++;
+          }
+        }
+        logger$1.log("[Tokens] Loaded", count, "entries from cache (skipped", skipped, "LP tokens)");
+      }
+    }
+  } catch (e) {
+    logger$1.warn("[Tokens] Error loading metadata cache:", e);
+  }
+}
+let metadataCacheSaveTimeout = null;
+function saveMetadataCache() {
+  if (metadataCacheSaveTimeout) {
+    clearTimeout(metadataCacheSaveTimeout);
+  }
+  metadataCacheSaveTimeout = setTimeout(() => {
+    try {
+      const data = { _timestamp: Date.now() };
+      let count = 0;
+      for (const [key, value] of metadataCache.entries()) {
+        if (count >= 200) break;
+        data[key] = value;
+        count++;
+      }
+      localStorage.setItem(METADATA_CACHE_KEY, JSON.stringify(data));
+      logger$1.log("[Tokens] Saved", count, "entries to metadata cache");
+    } catch (e) {
+      logger$1.warn("[Tokens] Error saving metadata cache:", e);
+    }
+  }, 1e3);
+}
+loadMetadataCache();
+const PRICE_CACHE_KEY = "x1wallet_price_cache";
+const PRICE_CACHE_TTL = 5 * 60 * 1e3;
+function getPriceCache() {
+  try {
+    const cached = localStorage.getItem(PRICE_CACHE_KEY);
+    if (cached) {
+      return JSON.parse(cached);
+    }
+  } catch (e) {
+  }
+  return {};
+}
+function setPriceCache(prices) {
+  try {
+    localStorage.setItem(PRICE_CACHE_KEY, JSON.stringify({
+      ...prices,
+      _timestamp: Date.now()
+    }));
+  } catch (e) {
+  }
+}
+function getCachedPrice(mint) {
+  const cache = getPriceCache();
+  if (cache[mint] !== void 0 && cache._timestamp && Date.now() - cache._timestamp < PRICE_CACHE_TTL) {
+    return cache[mint];
+  }
+  return void 0;
+}
+function updatePriceCache(mint, price) {
+  const cache = getPriceCache();
+  cache[mint] = price;
+  cache._timestamp = Date.now();
+  setPriceCache(cache);
+}
+async function fetchTokenMetadataFromAPI(mint) {
+  try {
+    const url = `${API_SERVER$1}/tokens?mint=${encodeURIComponent(mint)}&verified=true`;
+    logger$1.log("[Token API] Fetching metadata for:", mint);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3e3);
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeout);
+    if (!response.ok) {
+      logger$1.log("[Token API] HTTP", response.status, "- Failed to fetch");
+      return null;
+    }
+    const data = await response.json();
+    if (data && data.tokens && data.tokens.length > 0) {
+      const token = data.tokens[0];
+      logger$1.log("[Token API] Found:", token.name, "(" + token.symbol + ")");
+      return {
+        name: token.name,
+        symbol: token.symbol,
+        logoURI: token.icon,
+        price: token.price,
+        mint: token.mint
+      };
+    }
+    logger$1.log("[Token API] No token found for mint:", mint);
+    return null;
+  } catch (e) {
+    if (e.name === "AbortError") {
+      logger$1.warn("[Token API] Request timeout for:", mint);
+    } else {
+      logger$1.warn("[Token API] Error fetching metadata:", e);
+    }
+    return null;
+  }
+}
+async function fetchFromDAS(rpcUrl, mint) {
+  try {
+    if (!rpcUrl.includes("helius")) return null;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3e3);
+    const response = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getAsset",
+        params: { id: mint }
+      }),
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    const data = await response.json();
+    if (data.result && data.result.content) {
+      const content = data.result.content;
+      const metadata = content.metadata || {};
+      const links = content.links || {};
+      const files = content.files || [];
+      let logoURI = links.image || null;
+      if (!logoURI && files.length > 0) {
+        const imageFile = files.find((f2) => {
+          var _a2;
+          return (_a2 = f2.mime) == null ? void 0 : _a2.startsWith("image/");
+        });
+        if (imageFile) logoURI = imageFile.uri;
+      }
+      logger$1.log("[DAS API] Found metadata:", metadata.name);
+      return {
+        name: metadata.name,
+        symbol: metadata.symbol,
+        logoURI,
+        uri: content.json_uri
+      };
+    }
+    return null;
+  } catch (e) {
+    logger$1.warn("[DAS API] Error:", e.message);
+    return null;
+  }
+}
+async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null, onUpdate = null, options = {}) {
+  var _a2, _b2, _c, _d, _e, _f, _g, _h, _i;
+  const tokens2 = [];
+  const startTime = Date.now();
+  const mode = options.mode || "refresh";
+  const forceRefresh = options.forceRefresh || false;
+  try {
+    logger$1.log("[Tokens] Starting token fetch for:", ownerAddress, "on network:", network, "mode:", mode, "force:", forceRefresh);
+    const cachedRPC = forceRefresh ? null : getCachedRPCTokenAccounts(ownerAddress, rpcUrl);
+    let splTokens, token2022, xdexPrices;
+    if (mode === "import" && !forceRefresh) {
+      if (cachedRPC) {
+        splTokens = cachedRPC.splTokens;
+        token2022 = cachedRPC.token2022;
+        xdexPrices = {};
+        logger$1.log("[Tokens] Import mode - using cached RPC, skipping XDEX");
+      } else {
+        [splTokens, token2022] = await Promise.all([
+          fetchTokenAccountsByProgram(rpcUrl, ownerAddress, TOKEN_PROGRAM_ID$2),
+          fetchTokenAccountsByProgram(rpcUrl, ownerAddress, TOKEN_2022_PROGRAM_ID)
+        ]);
+        xdexPrices = {};
+        setCachedRPCTokenAccounts(ownerAddress, rpcUrl, splTokens, token2022);
+        logger$1.log("[Tokens] Import mode - fresh RPC, skipping XDEX");
+      }
+    } else if (cachedRPC) {
+      splTokens = cachedRPC.splTokens;
+      token2022 = cachedRPC.token2022;
+      xdexPrices = await fetchXDEXWalletTokens(ownerAddress, network);
+      logger$1.log("[Tokens] Fast path - cached RPC +", Date.now() - startTime, "ms for XDEX");
+    } else {
+      [splTokens, token2022, xdexPrices] = await Promise.all([
+        fetchTokenAccountsByProgram(rpcUrl, ownerAddress, TOKEN_PROGRAM_ID$2),
+        fetchTokenAccountsByProgram(rpcUrl, ownerAddress, TOKEN_2022_PROGRAM_ID),
+        fetchXDEXWalletTokens(ownerAddress, network)
+      ]);
+      setCachedRPCTokenAccounts(ownerAddress, rpcUrl, splTokens, token2022);
+    }
+    logger$1.log("[Tokens] RPC done in", Date.now() - startTime, "ms - SPL:", splTokens.length, "Token2022:", token2022.length);
+    logger$1.log("[Tokens] XDEX prices received for", Object.keys(xdexPrices).length, "tokens");
+    tokens2.push(...splTokens, ...token2022);
+    const DUST_RAW_THRESHOLD = 1;
+    let dustCount = 0;
+    for (const token of tokens2) {
+      if (token.balance === 0 || token.uiAmount === 0 || parseInt(token.amount) === 0) {
+        token.isDust = true;
+        token.skipEnrichment = true;
+        dustCount++;
+        continue;
+      }
+      if (parseInt(token.amount) <= DUST_RAW_THRESHOLD) {
+        token.isDust = true;
+        token.skipEnrichment = true;
+        dustCount++;
+      }
+    }
+    if (dustCount > 0) {
+      logger$1.log("[Tokens] Pre-filtered", dustCount, "dust tokens from pricing pipeline");
+    }
+    const genericLPNames = ["XLP", "SLP", "SPL Token", "Token-2022", "XDEX LP Token", "SLP Token", "Unknown Token"];
+    for (const token of tokens2) {
+      if (token.isDust) {
+        token.symbol = ((_a2 = token.mint) == null ? void 0 : _a2.slice(0, 4)) || "DUST";
+        token.name = "Dust Token";
+        continue;
+      }
+      const cacheKey = network ? `${network}:${token.mint}` : token.mint;
+      logger$1.log("[Tokens] Processing token:", (_b2 = token.mint) == null ? void 0 : _b2.slice(0, 8), "symbol:", token.symbol, "name:", token.name);
+      if (metadataCache.has(cacheKey)) {
+        const cached = metadataCache.get(cacheKey);
+        logger$1.log("[Tokens] Found in cache:", (_c = token.mint) == null ? void 0 : _c.slice(0, 8), "isLPToken:", cached.isLPToken, "name:", cached.name);
+        if (cached.isLPToken && genericLPNames.includes(cached.name)) {
+          logger$1.log("[Tokens] Quick pass: skipping cached LP with generic name:", cached.name);
+          Object.assign(token, cached);
+          token.needsEnrichment = true;
+          token.logoURI = XLP_LOGO_URL;
+          const xdexPrice2 = (_d = xdexPrices[token.mint]) == null ? void 0 : _d.price;
+          if (xdexPrice2 !== void 0 && xdexPrice2 !== null && !isNaN(xdexPrice2)) {
+            token.price = parseFloat(xdexPrice2);
+          }
+          continue;
+        }
+        Object.assign(token, cached);
+        if (cached.isLPToken) {
+          token.logoURI = XLP_LOGO_URL;
+        }
+        const xdexPrice = (_e = xdexPrices[token.mint]) == null ? void 0 : _e.price;
+        if (xdexPrice !== void 0 && xdexPrice !== null && !isNaN(xdexPrice)) {
+          token.price = parseFloat(xdexPrice);
+          updatePriceCache(token.mint, token.price);
+        }
+        continue;
+      }
+      const known = getKnownTokenMetadata(token.mint, network);
+      if (known) {
+        token.symbol = known.symbol;
+        token.name = known.name;
+        token.logoURI = known.logoURI;
+        token.price = known.price;
+        const xdexPrice = (_f = xdexPrices[token.mint]) == null ? void 0 : _f.price;
+        if (xdexPrice !== void 0 && xdexPrice !== null && !isNaN(xdexPrice)) {
+          token.price = parseFloat(xdexPrice);
+          updatePriceCache(token.mint, token.price);
+          logger$1.log("[Tokens] XDEX price for", token.symbol, ":", token.price);
+        }
+        metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
+        continue;
+      }
+      if (xdexPrices[token.mint]) {
+        const xdexData = xdexPrices[token.mint];
+        logger$1.log("[Tokens] XDEX data for:", (_g = token.mint) == null ? void 0 : _g.slice(0, 8), "symbol:", xdexData.symbol, "name:", xdexData.name, "isLPToken:", xdexData.isLPToken);
+        if (xdexData.price !== void 0 && xdexData.price !== null) {
+          token.price = parseFloat(xdexData.price);
+          updatePriceCache(token.mint, token.price);
+        }
+        if (xdexData.symbol) token.symbol = xdexData.symbol;
+        if (xdexData.name) token.name = xdexData.name;
+        const tokenName = (xdexData.name || "").toLowerCase();
+        const tokenSymbol = (xdexData.symbol || "").toUpperCase();
+        const isLPToken = xdexData.isLPToken || tokenSymbol === "XLP" || tokenSymbol === "SLP" || tokenSymbol.includes("XLP") || // catches "WXNT-USDC.X XLP"
+        tokenSymbol.includes("SLP") || tokenName.includes("xlp") || // catches "wxnt-usdc.x xlp"
+        tokenName.includes(" lp") || tokenName.includes("lp token") || tokenName.includes("/") || tokenName.includes("xdex") && tokenName.includes("lp") || /[a-z0-9.]+\/[a-z0-9.]+/i.test(xdexData.name);
+        logger$1.log("[Tokens] LP detection for", (_h = token.mint) == null ? void 0 : _h.slice(0, 8), "- isLPToken:", isLPToken, "tokenName:", tokenName, "tokenSymbol:", tokenSymbol);
+        if (isLPToken) {
+          token.isLPToken = true;
+          token.logoURI = XLP_LOGO_URL;
+          logger$1.log("[Tokens] Quick pass: LP token detected:", token.symbol, token.name, "logoURI:", token.logoURI);
+          const hasGoodName = token.name && token.name !== "XLP" && token.name !== "SLP" && token.name !== "SPL Token" && token.name !== "Token-2022" && token.name !== "XDEX LP Token" && token.name !== "Unknown Token";
+          if (hasGoodName) {
+            metadataCache.set(cacheKey, {
+              symbol: token.symbol,
+              name: token.name,
+              logoURI: token.logoURI,
+              price: token.price,
+              isLPToken: true
+            });
+            logger$1.log("[Tokens] Quick pass: LP token with good name:", token.name);
+          } else {
+            token.needsEnrichment = true;
+            logger$1.log("[Tokens] Quick pass: LP token needs enrichment:", (_i = token.mint) == null ? void 0 : _i.slice(0, 8));
+          }
+          continue;
+        }
+        if (xdexData.image) {
+          token.logoURI = xdexData.image;
+        }
+        if (xdexData.symbol && xdexData.name) {
+          metadataCache.set(cacheKey, {
+            symbol: token.symbol,
+            name: token.name,
+            logoURI: token.logoURI,
+            price: token.price
+          });
+          continue;
+        }
+      }
+      if (token.price === void 0 || token.price === null) {
+        const cachedPrice = getCachedPrice(token.mint);
+        if (cachedPrice !== void 0) {
+          token.price = cachedPrice;
+        }
+      }
+      if (!token.symbol) {
+        token.symbol = token.mint ? token.mint.slice(0, 4).toUpperCase() : "UNK";
+      }
+      if (!token.name) {
+        token.name = token.isToken2022 ? "Token-2022" : "SPL Token";
+      }
+    }
+    logger$1.log("[Tokens] Quick pass done in", Date.now() - startTime, "ms - RETURNING IMMEDIATELY");
+    const DUST_USD_THRESHOLD = 0.01;
+    const tokensNeedingMetadata = tokens2.filter((t2) => {
+      var _a3;
+      if (t2.isDust || t2.skipEnrichment) {
+        return false;
+      }
+      if (t2.price && t2.uiAmount) {
+        const valueUsd = t2.uiAmount * t2.price;
+        if (valueUsd < DUST_USD_THRESHOLD) {
+          t2.skipEnrichment = true;
+          logger$1.log("[Tokens] Skipping dust token:", (_a3 = t2.mint) == null ? void 0 : _a3.slice(0, 8), "value:", valueUsd);
+          return false;
+        }
+      }
+      if (t2.needsEnrichment) return true;
+      const cacheKey = network ? `${network}:${t2.mint}` : t2.mint;
+      if (!metadataCache.has(cacheKey)) return true;
+      const cached = metadataCache.get(cacheKey);
+      if (cached.isLPToken && genericLPNames.includes(cached.name)) return true;
+      return !cached.logoURI;
+    });
+    if (tokensNeedingMetadata.length > 0) {
+      logger$1.log("[Tokens] Will enrich", tokensNeedingMetadata.length, "tokens in background");
+      (async () => {
+        try {
+          const batchSize = 10;
+          let updated = false;
+          for (let i = 0; i < tokensNeedingMetadata.length; i += batchSize) {
+            const batch = tokensNeedingMetadata.slice(i, i + batchSize);
+            await Promise.allSettled(batch.map(async (token) => {
+              try {
+                await enrichTokenMetadata(rpcUrl, token, network);
+                updated = true;
+              } catch (e) {
+                logger$1.warn("[Tokens] Failed to enrich metadata for", token.mint, e.message);
+              }
+            }));
+            if (updated && onUpdate) {
+              onUpdate([...tokens2]);
+              updated = false;
+            }
+          }
+          if (onUpdate) {
+            onUpdate([...tokens2]);
+          }
+          saveMetadataCache();
+          logger$1.log("[Tokens] Background enrichment complete in", Date.now() - startTime, "ms");
+        } catch (e) {
+          logger$1.warn("[Tokens] Background enrichment error:", e);
+        }
+      })();
+    }
+    if (mode === "import" && onUpdate && tokens2.length > 0) {
+      logger$1.log("[Tokens] Import mode - fetching prices in background");
+      (async () => {
+        try {
+          await new Promise((r2) => setTimeout(r2, 100));
+          const priceData = await fetchXDEXWalletTokens(ownerAddress, network);
+          if (Object.keys(priceData).length > 0) {
+            let pricesUpdated = false;
+            for (const token of tokens2) {
+              if (priceData[token.mint]) {
+                const data = priceData[token.mint];
+                if (data.price !== void 0 && data.price !== null && !isNaN(data.price)) {
+                  token.price = parseFloat(data.price);
+                  updatePriceCache(token.mint, token.price);
+                  pricesUpdated = true;
+                }
+                if (data.symbol && !token.symbol) token.symbol = data.symbol;
+                if (data.name && (!token.name || token.name === "Unknown Token")) token.name = data.name;
+                if (data.image && !token.logoURI) token.logoURI = data.image;
+              }
+            }
+            if (pricesUpdated) {
+              logger$1.log("[Tokens] Background prices applied for", Object.keys(priceData).length, "tokens");
+              onUpdate([...tokens2]);
+            }
+          }
+        } catch (e) {
+          logger$1.warn("[Tokens] Background price fetch error:", e.message);
+        }
+      })();
+    }
+    saveMetadataCache();
+    logger$1.log("[Tokens] Returning", tokens2.length, "tokens");
+    return tokens2;
+  } catch (e) {
+    logger$1.error("[Tokens] Error fetching token accounts:", e);
+    return [];
+  }
+}
+async function fetchXDEXWalletTokens(walletAddress, network) {
+  var _a2;
+  try {
+    const networkName = network || "X1 Mainnet";
+    const cacheKey = `${walletAddress}:${networkName}`;
+    const cached = walletTokensCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < WALLET_TOKENS_CACHE_TTL) {
+      logger$1.log("[XDEX] Using cached wallet tokens response");
+      return cached.data;
+    }
+    const url = `https://devapi.xdex.xyz/api/xendex/wallet/tokens?wallet_address=${walletAddress}&network=${encodeURIComponent(networkName)}&price=true`;
+    logger$1.log("[XDEX] Fetching wallet tokens with prices");
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5e3);
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: { "Accept": "application/json" }
+    });
+    clearTimeout(timeout);
+    if (!response.ok) {
+      logger$1.warn("[XDEX] Wallet tokens API returned:", response.status);
+      walletTokensCache.set(cacheKey, { data: {}, timestamp: Date.now() });
+      return {};
+    }
+    const data = await response.json();
+    const tokenList = ((_a2 = data == null ? void 0 : data.data) == null ? void 0 : _a2.tokens) || (data == null ? void 0 : data.tokens) || (Array.isArray(data) ? data : []);
+    logger$1.log("[XDEX] Wallet tokens response - count:", tokenList.length);
+    if (tokenList[0]) {
+      logger$1.log("[XDEX] Sample token fields:", Object.keys(tokenList[0]).join(", "));
+    }
+    const priceMap = {};
+    const extractPrice = (token) => {
+      const priceValue = token.price ?? token.priceUsd ?? token.price_usd ?? token.priceUSD ?? token.usdPrice ?? token.usd_price ?? token.tokenPrice ?? token.token_price ?? null;
+      if (priceValue !== null && priceValue !== void 0) {
+        const parsed = parseFloat(priceValue);
+        if (!isNaN(parsed) && parsed >= 0) {
+          return parsed;
+        }
+      }
+      return null;
+    };
+    for (const token of tokenList) {
+      if (token.mint || token.address) {
+        const mint = token.mint || token.address;
+        const price = extractPrice(token);
+        let imageUrl = token.imageUrl || token.image || token.logo || token.logoURI || token.icon;
+        if (imageUrl && !imageUrl.startsWith("http")) {
+          imageUrl = null;
+        }
+        const tokenName = (token.name || "").toLowerCase();
+        const tokenSymbol = (token.symbol || "").toUpperCase();
+        const isLP = tokenSymbol === "XLP" || tokenSymbol === "SLP" || tokenSymbol.includes("XLP") || // catches "WXNT-USDC.X XLP"
+        tokenSymbol.includes("SLP") || tokenName.includes("xlp") || // catches "wxnt-usdc.x xlp"
+        tokenName.includes(" lp") || tokenName.includes("lp token") || tokenName.includes("/") || tokenName.includes("xdex") && tokenName.includes("lp") || /[a-z0-9.]+\/[a-z0-9.]+/i.test(token.name);
+        if (isLP) {
+          logger$1.log("[XDEX] Detected LP token:", token.symbol, token.name);
+        }
+        priceMap[mint] = {
+          price,
+          symbol: token.symbol,
+          name: token.name,
+          image: isLP ? XLP_LOGO_URL : imageUrl,
+          // Use XLP icon for LP tokens
+          isLPToken: isLP
+        };
+        if (price !== null) {
+          logger$1.log("[XDEX] Price found for", token.symbol || mint.slice(0, 8), ":", price);
+        }
+      }
+    }
+    logger$1.log("[XDEX] Total prices extracted:", Object.values(priceMap).filter((p2) => p2.price !== null).length);
+    walletTokensCache.set(cacheKey, { data: priceMap, timestamp: Date.now() });
+    return priceMap;
+  } catch (e) {
+    if (e.name === "AbortError") {
+      logger$1.warn("[XDEX] Wallet tokens request timeout");
+    } else {
+      logger$1.warn("[XDEX] Failed to fetch wallet tokens:", e.message);
+    }
+    return {};
+  }
+}
+async function fetchTokenAccountsByProgram(rpcUrl, ownerAddress, programId) {
+  var _a2;
+  if (!rpcUrl) {
+    logger$1.error("[Tokens] No RPC URL provided");
+    return [];
+  }
+  logger$1.log(`[Tokens] Fetching ${programId === TOKEN_2022_PROGRAM_ID ? "Token-2022" : "SPL Token"} accounts from:`, rpcUrl);
+  const maxRetries = 2;
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8e3);
+      const response = await fetch(rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "getTokenAccountsByOwner",
+          params: [
+            ownerAddress,
+            { programId },
+            { encoding: "jsonParsed", commitment: "confirmed" }
+          ]
+        }),
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+      if (!response.ok) {
+        logger$1.error(`[Tokens] HTTP error: ${response.status} ${response.statusText} (attempt ${attempt}/${maxRetries})`);
+        lastError = new Error(`HTTP ${response.status}`);
+        if (attempt < maxRetries) {
+          await new Promise((r2) => setTimeout(r2, 500 * attempt));
+          continue;
+        }
+        return [];
+      }
+      const data = await response.json();
+      if (data.error) {
+        logger$1.warn("[Tokens] RPC error fetching tokens:", data.error, `(attempt ${attempt}/${maxRetries})`);
+        lastError = data.error;
+        if (attempt < maxRetries) {
+          await new Promise((r2) => setTimeout(r2, 500 * attempt));
+          continue;
+        }
+        return [];
+      }
+      if (!((_a2 = data.result) == null ? void 0 : _a2.value)) {
+        logger$1.log("[Tokens] No token accounts found");
+        return [];
+      }
+      const tokens2 = data.result.value.map((item) => {
+        const info = item.account.data.parsed.info;
+        const uiAmount = info.tokenAmount.uiAmount || 0;
+        return {
+          address: item.pubkey,
+          mint: info.mint,
+          owner: info.owner,
+          amount: info.tokenAmount.amount,
+          decimals: info.tokenAmount.decimals,
+          uiAmount,
+          balance: uiAmount,
+          programId,
+          isToken2022: programId === TOKEN_2022_PROGRAM_ID
+        };
+      }).filter((t2) => parseFloat(t2.amount) > 0);
+      logger$1.log(`[Tokens] Found ${tokens2.length} ${programId === TOKEN_2022_PROGRAM_ID ? "Token-2022" : "SPL"} tokens`);
+      return tokens2;
+    } catch (e) {
+      if (e.name === "AbortError") {
+        logger$1.error(`[Tokens] Request timeout (attempt ${attempt}/${maxRetries})`);
+      } else {
+        logger$1.error(`[Tokens] Error fetching ${programId} accounts:`, e.message || e, `(attempt ${attempt}/${maxRetries})`);
+      }
+      lastError = e;
+      if (attempt < maxRetries) {
+        await new Promise((r2) => setTimeout(r2, 500 * attempt));
+        continue;
+      }
+    }
+  }
+  logger$1.error("[Tokens] All retry attempts failed:", lastError);
+  return [];
+}
+async function enrichTokenMetadata(rpcUrl, token, network = null) {
+  const cacheKey = network ? `${network}:${token.mint}` : token.mint;
+  if (token.isLPToken && token.name && token.name !== "SPL Token" && token.name !== "Token-2022") {
+    metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, isLPToken: true, price: token.price });
+    logger$1.log("[Tokens] Preserving existing LP token data:", token.name);
+    return;
+  }
+  if (metadataCache.has(cacheKey)) {
+    const cached = metadataCache.get(cacheKey);
+    if (cached.name && cached.name !== "Unknown Token" && cached.logoURI) {
+      Object.assign(token, cached);
+      return;
+    }
+  }
+  const known = getKnownTokenMetadata(token.mint, network);
+  if (known) {
+    token.symbol = known.symbol;
+    token.name = known.name;
+    token.logoURI = known.logoURI;
+    if (known.isToken2022 !== void 0) token.isToken2022 = known.isToken2022;
+    if (known.price !== void 0) token.price = known.price;
+    metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
+    return;
+  }
+  const isLP = await checkAndApplyLPBranding(rpcUrl, token, network);
+  if (isLP) {
+    metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, isLPToken: true, price: token.price });
+    return;
+  }
+  let apiMetadata = null;
+  try {
+    apiMetadata = await fetchTokenMetadataFromAPI(token.mint);
+    if (apiMetadata && apiMetadata.name && apiMetadata.logoURI) {
+      token.symbol = apiMetadata.symbol || token.mint.slice(0, 4);
+      token.name = apiMetadata.name;
+      token.logoURI = apiMetadata.logoURI;
+      token.price = apiMetadata.price || null;
+      if (token.price !== null && token.price !== void 0) {
+        metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
+        return;
+      }
+    }
+  } catch (e) {
+    logger$1.warn("[Tokens] Failed to fetch from X1 Mobile API:", e.message);
+  }
+  if (token.isToken2022) {
+    try {
+      const extMetadata = await fetchToken2022Metadata(rpcUrl, token.mint);
+      if (extMetadata && extMetadata.name) {
+        token.symbol = extMetadata.symbol || token.mint.slice(0, 4);
+        token.name = extMetadata.name || "Unknown Token";
+        token.logoURI = extMetadata.uri || null;
+        if (extMetadata.uri) {
+          try {
+            const uriMetadata = await fetchTokenMetadataFromURI(extMetadata.uri);
+            if (uriMetadata == null ? void 0 : uriMetadata.image) token.logoURI = uriMetadata.image;
+          } catch (e) {
+            logger$1.warn("[Tokens] Failed to fetch metadata from URI:", e.message);
+          }
+        }
+        metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
+        return;
+      }
+    } catch (e) {
+      logger$1.warn("[Tokens] Failed to fetch Token-2022 extension metadata:", e.message);
+    }
+  }
+  try {
+    const metaplexData = await fetchMetaplexMetadata(rpcUrl, token.mint);
+    if (metaplexData) {
+      token.symbol = (apiMetadata == null ? void 0 : apiMetadata.symbol) || metaplexData.symbol || token.mint.slice(0, 4);
+      token.name = (apiMetadata == null ? void 0 : apiMetadata.name) || metaplexData.name || "Unknown Token";
+      token.logoURI = null;
+      token.price = (apiMetadata == null ? void 0 : apiMetadata.price) || null;
+      if (metaplexData.uri && metaplexData.uri.startsWith("http")) {
+        try {
+          logger$1.log("[Metaplex] Fetching URI metadata:", metaplexData.uri.substring(0, 60));
+          const uriMetadata = await fetchTokenMetadataFromURI(metaplexData.uri);
+          if (uriMetadata == null ? void 0 : uriMetadata.image) token.logoURI = uriMetadata.image;
+          if ((uriMetadata == null ? void 0 : uriMetadata.name) && !(apiMetadata == null ? void 0 : apiMetadata.name)) token.name = uriMetadata.name;
+          if ((uriMetadata == null ? void 0 : uriMetadata.symbol) && !(apiMetadata == null ? void 0 : apiMetadata.symbol)) token.symbol = uriMetadata.symbol;
+        } catch (e) {
+          logger$1.warn("[Metaplex] Failed to fetch metadata from URI:", e.message);
+        }
+      }
+      metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
+      return;
+    }
+  } catch (e) {
+    logger$1.warn("[Tokens] Failed to fetch Metaplex on-chain metadata:", e.message);
+  }
+  try {
+    const dasData = await fetchFromDAS(rpcUrl, token.mint);
+    if (dasData && dasData.name) {
+      token.symbol = dasData.symbol || token.mint.slice(0, 4);
+      token.name = dasData.name;
+      token.logoURI = dasData.logoURI || null;
+      token.price = (apiMetadata == null ? void 0 : apiMetadata.price) || null;
+      if (!token.logoURI && dasData.uri) {
+        try {
+          const uriMetadata = await fetchTokenMetadataFromURI(dasData.uri);
+          if (uriMetadata == null ? void 0 : uriMetadata.image) token.logoURI = uriMetadata.image;
+        } catch (e) {
+          logger$1.warn("[Tokens] Failed to fetch metadata from DAS URI:", e.message);
+        }
+      }
+      metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
+      return;
+    }
+  } catch (e) {
+    logger$1.warn("[Tokens] Failed to fetch from DAS API:", e.message);
+  }
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5e3);
+    const jupiterResponse = await fetch(`https://lite-api.jup.ag/tokens/v1/token/${token.mint}`, {
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    if (jupiterResponse.ok) {
+      const jupiterData = await jupiterResponse.json();
+      if (jupiterData && jupiterData.name) {
+        token.symbol = jupiterData.symbol || token.mint.slice(0, 4);
+        token.name = jupiterData.name;
+        token.logoURI = jupiterData.logoURI || null;
+        metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
+        return;
+      }
+    }
+  } catch (e) {
+  }
+  const xdexCacheKey = `xdex:${token.mint}`;
+  if (!hasRecentlyFailed(xdexCacheKey)) {
+    try {
+      logger$1.log("[Token API] Trying XDEX API for:", token.mint);
+      const xdexResponse = await fetchWithRateLimit(
+        "https://api.xdex.xyz/api/xendex/tokens/" + token.mint,
+        { signal: AbortSignal.timeout(3e3) }
+      );
+      if (xdexResponse.status === 429) {
+        logger$1.warn("[Token API] XDEX rate limited for:", token.mint);
+        markFailed(xdexCacheKey);
+      } else if (xdexResponse.status === 404) {
+        markFailed(xdexCacheKey);
+      } else if (xdexResponse.ok) {
+        clearFailed(xdexCacheKey);
+        const xdexData = await xdexResponse.json();
+        logger$1.log("[Token API] XDEX response:", xdexData);
+        let xdexPrice = null;
+        if (xdexData.price !== void 0 && xdexData.price !== null) {
+          xdexPrice = parseFloat(xdexData.price);
+        } else if (xdexData.priceUsd !== void 0 && xdexData.priceUsd !== null) {
+          xdexPrice = parseFloat(xdexData.priceUsd);
+        }
+        if (token.name && token.name !== "Unknown Token" && token.logoURI) {
+          if (xdexPrice !== null && (token.price === null || token.price === void 0)) {
+            token.price = xdexPrice;
+            logger$1.log("[Token API] Got price from XDEX:", xdexPrice, "for", token.symbol);
+          }
+          metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
+          return;
+        }
+        if (xdexData.name) {
+          token.symbol = xdexData.symbol || token.symbol || token.mint.slice(0, 4);
+          token.name = xdexData.name;
+          token.logoURI = xdexData.image || xdexData.logo || xdexData.logoURI || xdexData.icon || token.logoURI || null;
+          if (xdexPrice !== null) {
+            token.price = xdexPrice;
+          }
+          metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
+          return;
+        }
+      }
+    } catch (e) {
+      logger$1.warn("[Token API] XDEX API failed:", e.message);
+      markFailed(xdexCacheKey);
+    }
+  }
+  if (apiMetadata && apiMetadata.name) {
+    token.symbol = apiMetadata.symbol || token.mint.slice(0, 4);
+    token.name = apiMetadata.name;
+    token.logoURI = null;
+    token.price = apiMetadata.price || null;
+    metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: null, price: token.price });
+    return;
+  }
+  token.symbol = token.mint.slice(0, 4) + "..";
+  token.name = "Unknown Token";
+  token.logoURI = null;
+  metadataCache.set(token.mint, { symbol: token.symbol, name: token.name, logoURI: null });
+}
+async function fetchMetaplexMetadata(rpcUrl, mint) {
+  var _a2;
+  try {
+    logger$1.log("[Metaplex] Fetching metadata for mint:", mint);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8e3);
+    const response = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getProgramAccounts",
+        params: [
+          METADATA_PROGRAM_ID,
+          {
+            encoding: "base64",
+            filters: [{ memcmp: { offset: 33, bytes: mint } }]
+          }
+        ]
+      }),
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    const data = await response.json();
+    if (data.error) {
+      logger$1.warn("[Metaplex] RPC error:", data.error.message || data.error);
+      return null;
+    }
+    if (!data.result || data.result.length === 0) {
+      logger$1.log("[Metaplex] No metadata account found for:", mint);
+      return null;
+    }
+    const accountData = data.result[0].account.data[0];
+    const bytes = Uint8Array.from(atob(accountData), (c) => c.charCodeAt(0));
+    const parsed = parseMetaplexMetadata(bytes);
+    logger$1.log("[Metaplex] Parsed metadata:", parsed == null ? void 0 : parsed.name, parsed == null ? void 0 : parsed.symbol, (_a2 = parsed == null ? void 0 : parsed.uri) == null ? void 0 : _a2.substring(0, 50));
+    return parsed;
+  } catch (e) {
+    if (e.name === "AbortError") {
+      logger$1.warn("[Metaplex] Request timeout for:", mint);
+    } else {
+      logger$1.warn("[Metaplex] Error fetching on-chain metadata:", e.message);
+    }
+    return null;
+  }
+}
+function parseMetaplexMetadata(data) {
+  try {
+    let offset = 65;
+    const nameLen = data[offset] | data[offset + 1] << 8 | data[offset + 2] << 16 | data[offset + 3] << 24;
+    offset += 4;
+    const name = new TextDecoder().decode(data.slice(offset, offset + nameLen)).replace(/\0/g, "").trim();
+    offset += nameLen;
+    const symbolLen = data[offset] | data[offset + 1] << 8 | data[offset + 2] << 16 | data[offset + 3] << 24;
+    offset += 4;
+    const symbol = new TextDecoder().decode(data.slice(offset, offset + symbolLen)).replace(/\0/g, "").trim();
+    offset += symbolLen;
+    const uriLen = data[offset] | data[offset + 1] << 8 | data[offset + 2] << 16 | data[offset + 3] << 24;
+    offset += 4;
+    const uri = new TextDecoder().decode(data.slice(offset, offset + uriLen)).replace(/\0/g, "").trim();
+    return { name, symbol, uri };
+  } catch (e) {
+    logger$1.warn("Error parsing metadata:", e);
+    return null;
+  }
+}
+async function fetchToken2022Metadata(rpcUrl, mint) {
+  var _a2, _b2, _c, _d;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3e3);
+    const response = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getAccountInfo",
+        params: [mint, { encoding: "jsonParsed" }]
+      }),
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    const data = await response.json();
+    if (!((_d = (_c = (_b2 = (_a2 = data.result) == null ? void 0 : _a2.value) == null ? void 0 : _b2.data) == null ? void 0 : _c.parsed) == null ? void 0 : _d.info)) return null;
+    const info = data.result.value.data.parsed.info;
+    if (info.extensions) {
+      for (const ext of info.extensions) {
+        if (ext.extension === "tokenMetadata") {
+          const state = ext.state;
+          return {
+            name: state.name || null,
+            symbol: state.symbol || null,
+            uri: state.uri || null
+          };
+        }
+      }
+    }
+    return null;
+  } catch (e) {
+    logger$1.warn("Error fetching Token-2022 metadata:", e);
+    return null;
+  }
+}
+async function fetchTokenMetadataFromURI(uri) {
+  if (!uri) return null;
+  try {
+    let fetchUrl = uri;
+    if (uri.startsWith("ipfs://")) {
+      fetchUrl = uri.replace("ipfs://", "https://ipfs.io/ipfs/");
+    } else if (uri.includes("/ipfs/") && !uri.startsWith("http")) {
+      fetchUrl = "https://ipfs.io" + uri;
+    }
+    if (uri.startsWith("ar://")) {
+      fetchUrl = uri.replace("ar://", "https://arweave.net/");
+    }
+    logger$1.log("[URI] Fetching metadata from:", fetchUrl.substring(0, 80));
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8e3);
+    const response = await fetch(fetchUrl, { signal: controller.signal });
+    clearTimeout(timeout);
+    if (!response.ok) {
+      logger$1.warn("[URI] HTTP error:", response.status, "for:", fetchUrl.substring(0, 50));
+      return null;
+    }
+    const data = await response.json();
+    let image = data.image;
+    if (image) {
+      if (image.startsWith("ipfs://")) {
+        image = image.replace("ipfs://", "https://ipfs.io/ipfs/");
+      } else if (image.startsWith("ar://")) {
+        image = image.replace("ar://", "https://arweave.net/");
+      }
+    }
+    logger$1.log("[URI] Got metadata - name:", data.name, "symbol:", data.symbol, "hasImage:", !!image);
+    return {
+      name: data.name,
+      symbol: data.symbol,
+      image,
+      description: data.description
+    };
+  } catch (e) {
+    if (e.name === "AbortError") {
+      logger$1.warn("[URI] Timeout fetching:", uri == null ? void 0 : uri.substring(0, 50));
+    } else {
+      logger$1.warn("[URI] Failed to fetch metadata from:", uri == null ? void 0 : uri.substring(0, 50), e.message);
+    }
+    return null;
+  }
+}
+const tokens = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+  __proto__: null,
+  METADATA_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
+  TOKEN_PROGRAM_ID: TOKEN_PROGRAM_ID$2,
+  fetchToken2022Metadata,
+  fetchTokenAccounts,
+  fetchTokenMetadataFromAPI,
+  fetchTokenMetadataFromURI,
+  invalidateRPCCache
 }, Symbol.toStringTag, { value: "Module" }));
 const API_SERVER = "https://mobile-api.x1.xyz";
 function getProviderId(networkName) {
@@ -14570,7 +15920,7 @@ const ACTIVE_KEY = "x1wallet_active";
 const NETWORK_KEY = "x1wallet_network";
 const CUSTOM_NETWORKS_KEY = "x1wallet_customRpcs";
 const ENCRYPTION_ENABLED_KEY = "x1wallet_encrypted";
-const BALANCE_CACHE_KEY = "x1wallet_balance_cache";
+const BALANCE_CACHE_KEY$1 = "x1wallet_balance_cache";
 function validatePasswordStrength(password) {
   if (typeof password !== "string") return { ok: false, reason: "Invalid password" };
   if (password.length < 8) return { ok: false, reason: "Password must be at least 8 characters" };
@@ -14580,19 +15930,19 @@ function validatePasswordStrength(password) {
   if (banned.includes(password.toLowerCase())) return { ok: false, reason: "Password too weak" };
   return { ok: true };
 }
-function getCachedBalance(publicKey, network) {
+function getCachedBalance$1(publicKey, network) {
   var _a2;
   try {
-    const cache = JSON.parse(localStorage.getItem(BALANCE_CACHE_KEY) || "{}");
+    const cache = JSON.parse(localStorage.getItem(BALANCE_CACHE_KEY$1) || "{}");
     const key = `${publicKey}:${network}`;
     return ((_a2 = cache[key]) == null ? void 0 : _a2.balance) ?? 0;
   } catch {
     return 0;
   }
 }
-function setCachedBalance(publicKey, network, balance) {
+function setCachedBalance$1(publicKey, network, balance) {
   try {
-    const cache = JSON.parse(localStorage.getItem(BALANCE_CACHE_KEY) || "{}");
+    const cache = JSON.parse(localStorage.getItem(BALANCE_CACHE_KEY$1) || "{}");
     const key = `${publicKey}:${network}`;
     cache[key] = { balance, timestamp: Date.now() };
     const keys = Object.keys(cache);
@@ -14603,7 +15953,7 @@ function setCachedBalance(publicKey, network, balance) {
       })[0];
       delete cache[oldest];
     }
-    localStorage.setItem(BALANCE_CACHE_KEY, JSON.stringify(cache));
+    localStorage.setItem(BALANCE_CACHE_KEY$1, JSON.stringify(cache));
   } catch {
   }
 }
@@ -14810,15 +16160,14 @@ function useWallet() {
     const activeId = localStorage.getItem(ACTIVE_KEY);
     setActiveWalletId(activeId || (loadedWallets.length > 0 ? loadedWallets[0].id : null));
     if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.session) {
-      try {
-        await chrome.storage.session.set({
-          x1wallet_session_wallets: JSON.stringify(loadedWallets),
-          x1wallet_session_password: password
-        });
+      chrome.storage.session.set({
+        x1wallet_session_wallets: JSON.stringify(loadedWallets),
+        x1wallet_session_password: password
+      }).then(() => {
         console.log("[useWallet] Saved to session storage for auto-lock");
-      } catch (e) {
+      }).catch((e) => {
         console.warn("[useWallet] Failed to save to session storage:", e.message);
-      }
+      });
     }
     return true;
   }, [loadWalletsFromStorage]);
@@ -15285,14 +16634,14 @@ function useWallet() {
         bal = data.result.value / Math.pow(10, networkConfig.decimals);
       }
       setBalance(bal);
-      setCachedBalance(activeAddress.publicKey, network, bal);
+      setCachedBalance$1(activeAddress.publicKey, network, bal);
     } catch (e) {
       logger$1.error("[Balance] Failed to fetch:", e.message);
     }
   }, [activeAddress, network]);
   reactExports.useEffect(() => {
     if (activeAddress && !isLocked) {
-      const cachedBal = getCachedBalance(activeAddress.publicKey, network);
+      const cachedBal = getCachedBalance$1(activeAddress.publicKey, network);
       if (cachedBal > 0) {
         logger$1.log("[Balance] Loaded from cache:", cachedBal);
         setBalance(cachedBal);
@@ -17297,13 +18646,13 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
   const base64 = base64Js;
   const ieee754$1 = ieee754;
   const customInspectSymbol = typeof Symbol === "function" && typeof Symbol["for"] === "function" ? Symbol["for"]("nodejs.util.inspect.custom") : null;
-  exports$1.Buffer = Buffer;
+  exports$1.Buffer = Buffer2;
   exports$1.SlowBuffer = SlowBuffer;
   exports$1.INSPECT_MAX_BYTES = 50;
   const K_MAX_LENGTH = 2147483647;
   exports$1.kMaxLength = K_MAX_LENGTH;
-  Buffer.TYPED_ARRAY_SUPPORT = typedArraySupport();
-  if (!Buffer.TYPED_ARRAY_SUPPORT && typeof console !== "undefined" && typeof console.error === "function") {
+  Buffer2.TYPED_ARRAY_SUPPORT = typedArraySupport();
+  if (!Buffer2.TYPED_ARRAY_SUPPORT && typeof console !== "undefined" && typeof console.error === "function") {
     console.error(
       "This browser lacks typed array (Uint8Array) support which is required by `buffer` v5.x. Use `buffer` v4.x if you require old browser support."
     );
@@ -17321,17 +18670,17 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
       return false;
     }
   }
-  Object.defineProperty(Buffer.prototype, "parent", {
+  Object.defineProperty(Buffer2.prototype, "parent", {
     enumerable: true,
     get: function() {
-      if (!Buffer.isBuffer(this)) return void 0;
+      if (!Buffer2.isBuffer(this)) return void 0;
       return this.buffer;
     }
   });
-  Object.defineProperty(Buffer.prototype, "offset", {
+  Object.defineProperty(Buffer2.prototype, "offset", {
     enumerable: true,
     get: function() {
-      if (!Buffer.isBuffer(this)) return void 0;
+      if (!Buffer2.isBuffer(this)) return void 0;
       return this.byteOffset;
     }
   });
@@ -17340,10 +18689,10 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
       throw new RangeError('The value "' + length + '" is invalid for option "size"');
     }
     const buf = new Uint8Array(length);
-    Object.setPrototypeOf(buf, Buffer.prototype);
+    Object.setPrototypeOf(buf, Buffer2.prototype);
     return buf;
   }
-  function Buffer(arg, encodingOrOffset, length) {
+  function Buffer2(arg, encodingOrOffset, length) {
     if (typeof arg === "number") {
       if (typeof encodingOrOffset === "string") {
         throw new TypeError(
@@ -17354,7 +18703,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     }
     return from(arg, encodingOrOffset, length);
   }
-  Buffer.poolSize = 8192;
+  Buffer2.poolSize = 8192;
   function from(value, encodingOrOffset, length) {
     if (typeof value === "string") {
       return fromString(value, encodingOrOffset);
@@ -17380,22 +18729,22 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     }
     const valueOf = value.valueOf && value.valueOf();
     if (valueOf != null && valueOf !== value) {
-      return Buffer.from(valueOf, encodingOrOffset, length);
+      return Buffer2.from(valueOf, encodingOrOffset, length);
     }
     const b = fromObject(value);
     if (b) return b;
     if (typeof Symbol !== "undefined" && Symbol.toPrimitive != null && typeof value[Symbol.toPrimitive] === "function") {
-      return Buffer.from(value[Symbol.toPrimitive]("string"), encodingOrOffset, length);
+      return Buffer2.from(value[Symbol.toPrimitive]("string"), encodingOrOffset, length);
     }
     throw new TypeError(
       "The first argument must be one of type string, Buffer, ArrayBuffer, Array, or Array-like Object. Received type " + typeof value
     );
   }
-  Buffer.from = function(value, encodingOrOffset, length) {
+  Buffer2.from = function(value, encodingOrOffset, length) {
     return from(value, encodingOrOffset, length);
   };
-  Object.setPrototypeOf(Buffer.prototype, Uint8Array.prototype);
-  Object.setPrototypeOf(Buffer, Uint8Array);
+  Object.setPrototypeOf(Buffer2.prototype, Uint8Array.prototype);
+  Object.setPrototypeOf(Buffer2, Uint8Array);
   function assertSize(size) {
     if (typeof size !== "number") {
       throw new TypeError('"size" argument must be of type number');
@@ -17413,24 +18762,24 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     }
     return createBuffer(size);
   }
-  Buffer.alloc = function(size, fill, encoding) {
+  Buffer2.alloc = function(size, fill, encoding) {
     return alloc(size, fill, encoding);
   };
   function allocUnsafe(size) {
     assertSize(size);
     return createBuffer(size < 0 ? 0 : checked(size) | 0);
   }
-  Buffer.allocUnsafe = function(size) {
+  Buffer2.allocUnsafe = function(size) {
     return allocUnsafe(size);
   };
-  Buffer.allocUnsafeSlow = function(size) {
+  Buffer2.allocUnsafeSlow = function(size) {
     return allocUnsafe(size);
   };
   function fromString(string, encoding) {
     if (typeof encoding !== "string" || encoding === "") {
       encoding = "utf8";
     }
-    if (!Buffer.isEncoding(encoding)) {
+    if (!Buffer2.isEncoding(encoding)) {
       throw new TypeError("Unknown encoding: " + encoding);
     }
     const length = byteLength2(string, encoding) | 0;
@@ -17471,11 +18820,11 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     } else {
       buf = new Uint8Array(array, byteOffset, length);
     }
-    Object.setPrototypeOf(buf, Buffer.prototype);
+    Object.setPrototypeOf(buf, Buffer2.prototype);
     return buf;
   }
   function fromObject(obj) {
-    if (Buffer.isBuffer(obj)) {
+    if (Buffer2.isBuffer(obj)) {
       const len = checked(obj.length) | 0;
       const buf = createBuffer(len);
       if (buf.length === 0) {
@@ -17504,15 +18853,15 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     if (+length != length) {
       length = 0;
     }
-    return Buffer.alloc(+length);
+    return Buffer2.alloc(+length);
   }
-  Buffer.isBuffer = function isBuffer(b) {
-    return b != null && b._isBuffer === true && b !== Buffer.prototype;
+  Buffer2.isBuffer = function isBuffer(b) {
+    return b != null && b._isBuffer === true && b !== Buffer2.prototype;
   };
-  Buffer.compare = function compare(a, b) {
-    if (isInstance(a, Uint8Array)) a = Buffer.from(a, a.offset, a.byteLength);
-    if (isInstance(b, Uint8Array)) b = Buffer.from(b, b.offset, b.byteLength);
-    if (!Buffer.isBuffer(a) || !Buffer.isBuffer(b)) {
+  Buffer2.compare = function compare(a, b) {
+    if (isInstance(a, Uint8Array)) a = Buffer2.from(a, a.offset, a.byteLength);
+    if (isInstance(b, Uint8Array)) b = Buffer2.from(b, b.offset, b.byteLength);
+    if (!Buffer2.isBuffer(a) || !Buffer2.isBuffer(b)) {
       throw new TypeError(
         'The "buf1", "buf2" arguments must be one of type Buffer or Uint8Array'
       );
@@ -17531,7 +18880,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     if (y2 < x2) return 1;
     return 0;
   };
-  Buffer.isEncoding = function isEncoding(encoding) {
+  Buffer2.isEncoding = function isEncoding(encoding) {
     switch (String(encoding).toLowerCase()) {
       case "hex":
       case "utf8":
@@ -17549,12 +18898,12 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
         return false;
     }
   };
-  Buffer.concat = function concat2(list, length) {
+  Buffer2.concat = function concat2(list, length) {
     if (!Array.isArray(list)) {
       throw new TypeError('"list" argument must be an Array of Buffers');
     }
     if (list.length === 0) {
-      return Buffer.alloc(0);
+      return Buffer2.alloc(0);
     }
     let i;
     if (length === void 0) {
@@ -17563,13 +18912,13 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
         length += list[i].length;
       }
     }
-    const buffer2 = Buffer.allocUnsafe(length);
+    const buffer2 = Buffer2.allocUnsafe(length);
     let pos = 0;
     for (i = 0; i < list.length; ++i) {
       let buf = list[i];
       if (isInstance(buf, Uint8Array)) {
         if (pos + buf.length > buffer2.length) {
-          if (!Buffer.isBuffer(buf)) buf = Buffer.from(buf);
+          if (!Buffer2.isBuffer(buf)) buf = Buffer2.from(buf);
           buf.copy(buffer2, pos);
         } else {
           Uint8Array.prototype.set.call(
@@ -17578,7 +18927,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
             pos
           );
         }
-      } else if (!Buffer.isBuffer(buf)) {
+      } else if (!Buffer2.isBuffer(buf)) {
         throw new TypeError('"list" argument must be an Array of Buffers');
       } else {
         buf.copy(buffer2, pos);
@@ -17588,7 +18937,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     return buffer2;
   };
   function byteLength2(string, encoding) {
-    if (Buffer.isBuffer(string)) {
+    if (Buffer2.isBuffer(string)) {
       return string.length;
     }
     if (ArrayBuffer.isView(string) || isInstance(string, ArrayBuffer)) {
@@ -17630,7 +18979,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
       }
     }
   }
-  Buffer.byteLength = byteLength2;
+  Buffer2.byteLength = byteLength2;
   function slowToString(encoding, start, end) {
     let loweredCase = false;
     if (start === void 0 || start < 0) {
@@ -17677,13 +19026,13 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
       }
     }
   }
-  Buffer.prototype._isBuffer = true;
+  Buffer2.prototype._isBuffer = true;
   function swap(b, n2, m2) {
     const i = b[n2];
     b[n2] = b[m2];
     b[m2] = i;
   }
-  Buffer.prototype.swap16 = function swap16() {
+  Buffer2.prototype.swap16 = function swap16() {
     const len = this.length;
     if (len % 2 !== 0) {
       throw new RangeError("Buffer size must be a multiple of 16-bits");
@@ -17693,7 +19042,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     }
     return this;
   };
-  Buffer.prototype.swap32 = function swap32() {
+  Buffer2.prototype.swap32 = function swap32() {
     const len = this.length;
     if (len % 4 !== 0) {
       throw new RangeError("Buffer size must be a multiple of 32-bits");
@@ -17704,7 +19053,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     }
     return this;
   };
-  Buffer.prototype.swap64 = function swap64() {
+  Buffer2.prototype.swap64 = function swap64() {
     const len = this.length;
     if (len % 8 !== 0) {
       throw new RangeError("Buffer size must be a multiple of 64-bits");
@@ -17717,19 +19066,19 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     }
     return this;
   };
-  Buffer.prototype.toString = function toString() {
+  Buffer2.prototype.toString = function toString() {
     const length = this.length;
     if (length === 0) return "";
     if (arguments.length === 0) return utf8Slice(this, 0, length);
     return slowToString.apply(this, arguments);
   };
-  Buffer.prototype.toLocaleString = Buffer.prototype.toString;
-  Buffer.prototype.equals = function equals(b) {
-    if (!Buffer.isBuffer(b)) throw new TypeError("Argument must be a Buffer");
+  Buffer2.prototype.toLocaleString = Buffer2.prototype.toString;
+  Buffer2.prototype.equals = function equals(b) {
+    if (!Buffer2.isBuffer(b)) throw new TypeError("Argument must be a Buffer");
     if (this === b) return true;
-    return Buffer.compare(this, b) === 0;
+    return Buffer2.compare(this, b) === 0;
   };
-  Buffer.prototype.inspect = function inspect() {
+  Buffer2.prototype.inspect = function inspect() {
     let str = "";
     const max = exports$1.INSPECT_MAX_BYTES;
     str = this.toString("hex", 0, max).replace(/(.{2})/g, "$1 ").trim();
@@ -17737,13 +19086,13 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     return "<Buffer " + str + ">";
   };
   if (customInspectSymbol) {
-    Buffer.prototype[customInspectSymbol] = Buffer.prototype.inspect;
+    Buffer2.prototype[customInspectSymbol] = Buffer2.prototype.inspect;
   }
-  Buffer.prototype.compare = function compare(target, start, end, thisStart, thisEnd) {
+  Buffer2.prototype.compare = function compare(target, start, end, thisStart, thisEnd) {
     if (isInstance(target, Uint8Array)) {
-      target = Buffer.from(target, target.offset, target.byteLength);
+      target = Buffer2.from(target, target.offset, target.byteLength);
     }
-    if (!Buffer.isBuffer(target)) {
+    if (!Buffer2.isBuffer(target)) {
       throw new TypeError(
         'The "target" argument must be one of type Buffer or Uint8Array. Received type ' + typeof target
       );
@@ -17816,9 +19165,9 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
       else return -1;
     }
     if (typeof val === "string") {
-      val = Buffer.from(val, encoding);
+      val = Buffer2.from(val, encoding);
     }
-    if (Buffer.isBuffer(val)) {
+    if (Buffer2.isBuffer(val)) {
       if (val.length === 0) {
         return -1;
       }
@@ -17886,13 +19235,13 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     }
     return -1;
   }
-  Buffer.prototype.includes = function includes(val, byteOffset, encoding) {
+  Buffer2.prototype.includes = function includes(val, byteOffset, encoding) {
     return this.indexOf(val, byteOffset, encoding) !== -1;
   };
-  Buffer.prototype.indexOf = function indexOf(val, byteOffset, encoding) {
+  Buffer2.prototype.indexOf = function indexOf(val, byteOffset, encoding) {
     return bidirectionalIndexOf(this, val, byteOffset, encoding, true);
   };
-  Buffer.prototype.lastIndexOf = function lastIndexOf(val, byteOffset, encoding) {
+  Buffer2.prototype.lastIndexOf = function lastIndexOf(val, byteOffset, encoding) {
     return bidirectionalIndexOf(this, val, byteOffset, encoding, false);
   };
   function hexWrite(buf, string, offset, length) {
@@ -17930,7 +19279,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
   function ucs2Write(buf, string, offset, length) {
     return blitBuffer(utf16leToBytes(string, buf.length - offset), buf, offset, length);
   }
-  Buffer.prototype.write = function write(string, offset, length, encoding) {
+  Buffer2.prototype.write = function write(string, offset, length, encoding) {
     if (offset === void 0) {
       encoding = "utf8";
       length = this.length;
@@ -17985,7 +19334,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
       }
     }
   };
-  Buffer.prototype.toJSON = function toJSON() {
+  Buffer2.prototype.toJSON = function toJSON() {
     return {
       type: "Buffer",
       data: Array.prototype.slice.call(this._arr || this, 0)
@@ -18108,7 +19457,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     }
     return res;
   }
-  Buffer.prototype.slice = function slice(start, end) {
+  Buffer2.prototype.slice = function slice(start, end) {
     const len = this.length;
     start = ~~start;
     end = end === void 0 ? len : ~~end;
@@ -18126,14 +19475,14 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     }
     if (end < start) end = start;
     const newBuf = this.subarray(start, end);
-    Object.setPrototypeOf(newBuf, Buffer.prototype);
+    Object.setPrototypeOf(newBuf, Buffer2.prototype);
     return newBuf;
   };
   function checkOffset(offset, ext, length) {
     if (offset % 1 !== 0 || offset < 0) throw new RangeError("offset is not uint");
     if (offset + ext > length) throw new RangeError("Trying to access beyond buffer length");
   }
-  Buffer.prototype.readUintLE = Buffer.prototype.readUIntLE = function readUIntLE(offset, byteLength3, noAssert) {
+  Buffer2.prototype.readUintLE = Buffer2.prototype.readUIntLE = function readUIntLE(offset, byteLength3, noAssert) {
     offset = offset >>> 0;
     byteLength3 = byteLength3 >>> 0;
     if (!noAssert) checkOffset(offset, byteLength3, this.length);
@@ -18145,7 +19494,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     }
     return val;
   };
-  Buffer.prototype.readUintBE = Buffer.prototype.readUIntBE = function readUIntBE(offset, byteLength3, noAssert) {
+  Buffer2.prototype.readUintBE = Buffer2.prototype.readUIntBE = function readUIntBE(offset, byteLength3, noAssert) {
     offset = offset >>> 0;
     byteLength3 = byteLength3 >>> 0;
     if (!noAssert) {
@@ -18158,32 +19507,32 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     }
     return val;
   };
-  Buffer.prototype.readUint8 = Buffer.prototype.readUInt8 = function readUInt8(offset, noAssert) {
+  Buffer2.prototype.readUint8 = Buffer2.prototype.readUInt8 = function readUInt8(offset, noAssert) {
     offset = offset >>> 0;
     if (!noAssert) checkOffset(offset, 1, this.length);
     return this[offset];
   };
-  Buffer.prototype.readUint16LE = Buffer.prototype.readUInt16LE = function readUInt16LE(offset, noAssert) {
+  Buffer2.prototype.readUint16LE = Buffer2.prototype.readUInt16LE = function readUInt16LE(offset, noAssert) {
     offset = offset >>> 0;
     if (!noAssert) checkOffset(offset, 2, this.length);
     return this[offset] | this[offset + 1] << 8;
   };
-  Buffer.prototype.readUint16BE = Buffer.prototype.readUInt16BE = function readUInt16BE(offset, noAssert) {
+  Buffer2.prototype.readUint16BE = Buffer2.prototype.readUInt16BE = function readUInt16BE(offset, noAssert) {
     offset = offset >>> 0;
     if (!noAssert) checkOffset(offset, 2, this.length);
     return this[offset] << 8 | this[offset + 1];
   };
-  Buffer.prototype.readUint32LE = Buffer.prototype.readUInt32LE = function readUInt32LE(offset, noAssert) {
+  Buffer2.prototype.readUint32LE = Buffer2.prototype.readUInt32LE = function readUInt32LE(offset, noAssert) {
     offset = offset >>> 0;
     if (!noAssert) checkOffset(offset, 4, this.length);
     return (this[offset] | this[offset + 1] << 8 | this[offset + 2] << 16) + this[offset + 3] * 16777216;
   };
-  Buffer.prototype.readUint32BE = Buffer.prototype.readUInt32BE = function readUInt32BE(offset, noAssert) {
+  Buffer2.prototype.readUint32BE = Buffer2.prototype.readUInt32BE = function readUInt32BE(offset, noAssert) {
     offset = offset >>> 0;
     if (!noAssert) checkOffset(offset, 4, this.length);
     return this[offset] * 16777216 + (this[offset + 1] << 16 | this[offset + 2] << 8 | this[offset + 3]);
   };
-  Buffer.prototype.readBigUInt64LE = defineBigIntMethod(function readBigUInt64LE(offset) {
+  Buffer2.prototype.readBigUInt64LE = defineBigIntMethod(function readBigUInt64LE(offset) {
     offset = offset >>> 0;
     validateNumber(offset, "offset");
     const first = this[offset];
@@ -18195,7 +19544,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     const hi2 = this[++offset] + this[++offset] * 2 ** 8 + this[++offset] * 2 ** 16 + last * 2 ** 24;
     return BigInt(lo) + (BigInt(hi2) << BigInt(32));
   });
-  Buffer.prototype.readBigUInt64BE = defineBigIntMethod(function readBigUInt64BE(offset) {
+  Buffer2.prototype.readBigUInt64BE = defineBigIntMethod(function readBigUInt64BE(offset) {
     offset = offset >>> 0;
     validateNumber(offset, "offset");
     const first = this[offset];
@@ -18207,7 +19556,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     const lo = this[++offset] * 2 ** 24 + this[++offset] * 2 ** 16 + this[++offset] * 2 ** 8 + last;
     return (BigInt(hi2) << BigInt(32)) + BigInt(lo);
   });
-  Buffer.prototype.readIntLE = function readIntLE(offset, byteLength3, noAssert) {
+  Buffer2.prototype.readIntLE = function readIntLE(offset, byteLength3, noAssert) {
     offset = offset >>> 0;
     byteLength3 = byteLength3 >>> 0;
     if (!noAssert) checkOffset(offset, byteLength3, this.length);
@@ -18221,7 +19570,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     if (val >= mul) val -= Math.pow(2, 8 * byteLength3);
     return val;
   };
-  Buffer.prototype.readIntBE = function readIntBE(offset, byteLength3, noAssert) {
+  Buffer2.prototype.readIntBE = function readIntBE(offset, byteLength3, noAssert) {
     offset = offset >>> 0;
     byteLength3 = byteLength3 >>> 0;
     if (!noAssert) checkOffset(offset, byteLength3, this.length);
@@ -18235,35 +19584,35 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     if (val >= mul) val -= Math.pow(2, 8 * byteLength3);
     return val;
   };
-  Buffer.prototype.readInt8 = function readInt8(offset, noAssert) {
+  Buffer2.prototype.readInt8 = function readInt8(offset, noAssert) {
     offset = offset >>> 0;
     if (!noAssert) checkOffset(offset, 1, this.length);
     if (!(this[offset] & 128)) return this[offset];
     return (255 - this[offset] + 1) * -1;
   };
-  Buffer.prototype.readInt16LE = function readInt16LE(offset, noAssert) {
+  Buffer2.prototype.readInt16LE = function readInt16LE(offset, noAssert) {
     offset = offset >>> 0;
     if (!noAssert) checkOffset(offset, 2, this.length);
     const val = this[offset] | this[offset + 1] << 8;
     return val & 32768 ? val | 4294901760 : val;
   };
-  Buffer.prototype.readInt16BE = function readInt16BE(offset, noAssert) {
+  Buffer2.prototype.readInt16BE = function readInt16BE(offset, noAssert) {
     offset = offset >>> 0;
     if (!noAssert) checkOffset(offset, 2, this.length);
     const val = this[offset + 1] | this[offset] << 8;
     return val & 32768 ? val | 4294901760 : val;
   };
-  Buffer.prototype.readInt32LE = function readInt32LE(offset, noAssert) {
+  Buffer2.prototype.readInt32LE = function readInt32LE(offset, noAssert) {
     offset = offset >>> 0;
     if (!noAssert) checkOffset(offset, 4, this.length);
     return this[offset] | this[offset + 1] << 8 | this[offset + 2] << 16 | this[offset + 3] << 24;
   };
-  Buffer.prototype.readInt32BE = function readInt32BE(offset, noAssert) {
+  Buffer2.prototype.readInt32BE = function readInt32BE(offset, noAssert) {
     offset = offset >>> 0;
     if (!noAssert) checkOffset(offset, 4, this.length);
     return this[offset] << 24 | this[offset + 1] << 16 | this[offset + 2] << 8 | this[offset + 3];
   };
-  Buffer.prototype.readBigInt64LE = defineBigIntMethod(function readBigInt64LE(offset) {
+  Buffer2.prototype.readBigInt64LE = defineBigIntMethod(function readBigInt64LE(offset) {
     offset = offset >>> 0;
     validateNumber(offset, "offset");
     const first = this[offset];
@@ -18274,7 +19623,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     const val = this[offset + 4] + this[offset + 5] * 2 ** 8 + this[offset + 6] * 2 ** 16 + (last << 24);
     return (BigInt(val) << BigInt(32)) + BigInt(first + this[++offset] * 2 ** 8 + this[++offset] * 2 ** 16 + this[++offset] * 2 ** 24);
   });
-  Buffer.prototype.readBigInt64BE = defineBigIntMethod(function readBigInt64BE(offset) {
+  Buffer2.prototype.readBigInt64BE = defineBigIntMethod(function readBigInt64BE(offset) {
     offset = offset >>> 0;
     validateNumber(offset, "offset");
     const first = this[offset];
@@ -18286,32 +19635,32 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     this[++offset] * 2 ** 16 + this[++offset] * 2 ** 8 + this[++offset];
     return (BigInt(val) << BigInt(32)) + BigInt(this[++offset] * 2 ** 24 + this[++offset] * 2 ** 16 + this[++offset] * 2 ** 8 + last);
   });
-  Buffer.prototype.readFloatLE = function readFloatLE(offset, noAssert) {
+  Buffer2.prototype.readFloatLE = function readFloatLE(offset, noAssert) {
     offset = offset >>> 0;
     if (!noAssert) checkOffset(offset, 4, this.length);
     return ieee754$1.read(this, offset, true, 23, 4);
   };
-  Buffer.prototype.readFloatBE = function readFloatBE(offset, noAssert) {
+  Buffer2.prototype.readFloatBE = function readFloatBE(offset, noAssert) {
     offset = offset >>> 0;
     if (!noAssert) checkOffset(offset, 4, this.length);
     return ieee754$1.read(this, offset, false, 23, 4);
   };
-  Buffer.prototype.readDoubleLE = function readDoubleLE(offset, noAssert) {
+  Buffer2.prototype.readDoubleLE = function readDoubleLE(offset, noAssert) {
     offset = offset >>> 0;
     if (!noAssert) checkOffset(offset, 8, this.length);
     return ieee754$1.read(this, offset, true, 52, 8);
   };
-  Buffer.prototype.readDoubleBE = function readDoubleBE(offset, noAssert) {
+  Buffer2.prototype.readDoubleBE = function readDoubleBE(offset, noAssert) {
     offset = offset >>> 0;
     if (!noAssert) checkOffset(offset, 8, this.length);
     return ieee754$1.read(this, offset, false, 52, 8);
   };
   function checkInt(buf, value, offset, ext, max, min) {
-    if (!Buffer.isBuffer(buf)) throw new TypeError('"buffer" argument must be a Buffer instance');
+    if (!Buffer2.isBuffer(buf)) throw new TypeError('"buffer" argument must be a Buffer instance');
     if (value > max || value < min) throw new RangeError('"value" argument is out of bounds');
     if (offset + ext > buf.length) throw new RangeError("Index out of range");
   }
-  Buffer.prototype.writeUintLE = Buffer.prototype.writeUIntLE = function writeUIntLE(value, offset, byteLength3, noAssert) {
+  Buffer2.prototype.writeUintLE = Buffer2.prototype.writeUIntLE = function writeUIntLE(value, offset, byteLength3, noAssert) {
     value = +value;
     offset = offset >>> 0;
     byteLength3 = byteLength3 >>> 0;
@@ -18327,7 +19676,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     }
     return offset + byteLength3;
   };
-  Buffer.prototype.writeUintBE = Buffer.prototype.writeUIntBE = function writeUIntBE(value, offset, byteLength3, noAssert) {
+  Buffer2.prototype.writeUintBE = Buffer2.prototype.writeUIntBE = function writeUIntBE(value, offset, byteLength3, noAssert) {
     value = +value;
     offset = offset >>> 0;
     byteLength3 = byteLength3 >>> 0;
@@ -18343,14 +19692,14 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     }
     return offset + byteLength3;
   };
-  Buffer.prototype.writeUint8 = Buffer.prototype.writeUInt8 = function writeUInt8(value, offset, noAssert) {
+  Buffer2.prototype.writeUint8 = Buffer2.prototype.writeUInt8 = function writeUInt8(value, offset, noAssert) {
     value = +value;
     offset = offset >>> 0;
     if (!noAssert) checkInt(this, value, offset, 1, 255, 0);
     this[offset] = value & 255;
     return offset + 1;
   };
-  Buffer.prototype.writeUint16LE = Buffer.prototype.writeUInt16LE = function writeUInt16LE(value, offset, noAssert) {
+  Buffer2.prototype.writeUint16LE = Buffer2.prototype.writeUInt16LE = function writeUInt16LE(value, offset, noAssert) {
     value = +value;
     offset = offset >>> 0;
     if (!noAssert) checkInt(this, value, offset, 2, 65535, 0);
@@ -18358,7 +19707,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     this[offset + 1] = value >>> 8;
     return offset + 2;
   };
-  Buffer.prototype.writeUint16BE = Buffer.prototype.writeUInt16BE = function writeUInt16BE(value, offset, noAssert) {
+  Buffer2.prototype.writeUint16BE = Buffer2.prototype.writeUInt16BE = function writeUInt16BE(value, offset, noAssert) {
     value = +value;
     offset = offset >>> 0;
     if (!noAssert) checkInt(this, value, offset, 2, 65535, 0);
@@ -18366,7 +19715,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     this[offset + 1] = value & 255;
     return offset + 2;
   };
-  Buffer.prototype.writeUint32LE = Buffer.prototype.writeUInt32LE = function writeUInt32LE(value, offset, noAssert) {
+  Buffer2.prototype.writeUint32LE = Buffer2.prototype.writeUInt32LE = function writeUInt32LE(value, offset, noAssert) {
     value = +value;
     offset = offset >>> 0;
     if (!noAssert) checkInt(this, value, offset, 4, 4294967295, 0);
@@ -18376,7 +19725,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     this[offset] = value & 255;
     return offset + 4;
   };
-  Buffer.prototype.writeUint32BE = Buffer.prototype.writeUInt32BE = function writeUInt32BE(value, offset, noAssert) {
+  Buffer2.prototype.writeUint32BE = Buffer2.prototype.writeUInt32BE = function writeUInt32BE(value, offset, noAssert) {
     value = +value;
     offset = offset >>> 0;
     if (!noAssert) checkInt(this, value, offset, 4, 4294967295, 0);
@@ -18426,13 +19775,13 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     buf[offset] = hi2;
     return offset + 8;
   }
-  Buffer.prototype.writeBigUInt64LE = defineBigIntMethod(function writeBigUInt64LE(value, offset = 0) {
+  Buffer2.prototype.writeBigUInt64LE = defineBigIntMethod(function writeBigUInt64LE(value, offset = 0) {
     return wrtBigUInt64LE(this, value, offset, BigInt(0), BigInt("0xffffffffffffffff"));
   });
-  Buffer.prototype.writeBigUInt64BE = defineBigIntMethod(function writeBigUInt64BE(value, offset = 0) {
+  Buffer2.prototype.writeBigUInt64BE = defineBigIntMethod(function writeBigUInt64BE(value, offset = 0) {
     return wrtBigUInt64BE(this, value, offset, BigInt(0), BigInt("0xffffffffffffffff"));
   });
-  Buffer.prototype.writeIntLE = function writeIntLE(value, offset, byteLength3, noAssert) {
+  Buffer2.prototype.writeIntLE = function writeIntLE(value, offset, byteLength3, noAssert) {
     value = +value;
     offset = offset >>> 0;
     if (!noAssert) {
@@ -18451,7 +19800,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     }
     return offset + byteLength3;
   };
-  Buffer.prototype.writeIntBE = function writeIntBE(value, offset, byteLength3, noAssert) {
+  Buffer2.prototype.writeIntBE = function writeIntBE(value, offset, byteLength3, noAssert) {
     value = +value;
     offset = offset >>> 0;
     if (!noAssert) {
@@ -18470,7 +19819,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     }
     return offset + byteLength3;
   };
-  Buffer.prototype.writeInt8 = function writeInt8(value, offset, noAssert) {
+  Buffer2.prototype.writeInt8 = function writeInt8(value, offset, noAssert) {
     value = +value;
     offset = offset >>> 0;
     if (!noAssert) checkInt(this, value, offset, 1, 127, -128);
@@ -18478,7 +19827,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     this[offset] = value & 255;
     return offset + 1;
   };
-  Buffer.prototype.writeInt16LE = function writeInt16LE(value, offset, noAssert) {
+  Buffer2.prototype.writeInt16LE = function writeInt16LE(value, offset, noAssert) {
     value = +value;
     offset = offset >>> 0;
     if (!noAssert) checkInt(this, value, offset, 2, 32767, -32768);
@@ -18486,7 +19835,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     this[offset + 1] = value >>> 8;
     return offset + 2;
   };
-  Buffer.prototype.writeInt16BE = function writeInt16BE(value, offset, noAssert) {
+  Buffer2.prototype.writeInt16BE = function writeInt16BE(value, offset, noAssert) {
     value = +value;
     offset = offset >>> 0;
     if (!noAssert) checkInt(this, value, offset, 2, 32767, -32768);
@@ -18494,7 +19843,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     this[offset + 1] = value & 255;
     return offset + 2;
   };
-  Buffer.prototype.writeInt32LE = function writeInt32LE(value, offset, noAssert) {
+  Buffer2.prototype.writeInt32LE = function writeInt32LE(value, offset, noAssert) {
     value = +value;
     offset = offset >>> 0;
     if (!noAssert) checkInt(this, value, offset, 4, 2147483647, -2147483648);
@@ -18504,7 +19853,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     this[offset + 3] = value >>> 24;
     return offset + 4;
   };
-  Buffer.prototype.writeInt32BE = function writeInt32BE(value, offset, noAssert) {
+  Buffer2.prototype.writeInt32BE = function writeInt32BE(value, offset, noAssert) {
     value = +value;
     offset = offset >>> 0;
     if (!noAssert) checkInt(this, value, offset, 4, 2147483647, -2147483648);
@@ -18515,10 +19864,10 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     this[offset + 3] = value & 255;
     return offset + 4;
   };
-  Buffer.prototype.writeBigInt64LE = defineBigIntMethod(function writeBigInt64LE(value, offset = 0) {
+  Buffer2.prototype.writeBigInt64LE = defineBigIntMethod(function writeBigInt64LE(value, offset = 0) {
     return wrtBigUInt64LE(this, value, offset, -BigInt("0x8000000000000000"), BigInt("0x7fffffffffffffff"));
   });
-  Buffer.prototype.writeBigInt64BE = defineBigIntMethod(function writeBigInt64BE(value, offset = 0) {
+  Buffer2.prototype.writeBigInt64BE = defineBigIntMethod(function writeBigInt64BE(value, offset = 0) {
     return wrtBigUInt64BE(this, value, offset, -BigInt("0x8000000000000000"), BigInt("0x7fffffffffffffff"));
   });
   function checkIEEE754(buf, value, offset, ext, max, min) {
@@ -18534,10 +19883,10 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     ieee754$1.write(buf, value, offset, littleEndian, 23, 4);
     return offset + 4;
   }
-  Buffer.prototype.writeFloatLE = function writeFloatLE(value, offset, noAssert) {
+  Buffer2.prototype.writeFloatLE = function writeFloatLE(value, offset, noAssert) {
     return writeFloat(this, value, offset, true, noAssert);
   };
-  Buffer.prototype.writeFloatBE = function writeFloatBE(value, offset, noAssert) {
+  Buffer2.prototype.writeFloatBE = function writeFloatBE(value, offset, noAssert) {
     return writeFloat(this, value, offset, false, noAssert);
   };
   function writeDouble(buf, value, offset, littleEndian, noAssert) {
@@ -18549,14 +19898,14 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     ieee754$1.write(buf, value, offset, littleEndian, 52, 8);
     return offset + 8;
   }
-  Buffer.prototype.writeDoubleLE = function writeDoubleLE(value, offset, noAssert) {
+  Buffer2.prototype.writeDoubleLE = function writeDoubleLE(value, offset, noAssert) {
     return writeDouble(this, value, offset, true, noAssert);
   };
-  Buffer.prototype.writeDoubleBE = function writeDoubleBE(value, offset, noAssert) {
+  Buffer2.prototype.writeDoubleBE = function writeDoubleBE(value, offset, noAssert) {
     return writeDouble(this, value, offset, false, noAssert);
   };
-  Buffer.prototype.copy = function copy(target, targetStart, start, end) {
-    if (!Buffer.isBuffer(target)) throw new TypeError("argument should be a Buffer");
+  Buffer2.prototype.copy = function copy(target, targetStart, start, end) {
+    if (!Buffer2.isBuffer(target)) throw new TypeError("argument should be a Buffer");
     if (!start) start = 0;
     if (!end && end !== 0) end = this.length;
     if (targetStart >= target.length) targetStart = target.length;
@@ -18585,7 +19934,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
     }
     return len;
   };
-  Buffer.prototype.fill = function fill(val, start, end, encoding) {
+  Buffer2.prototype.fill = function fill(val, start, end, encoding) {
     if (typeof val === "string") {
       if (typeof start === "string") {
         encoding = start;
@@ -18598,7 +19947,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
       if (encoding !== void 0 && typeof encoding !== "string") {
         throw new TypeError("encoding must be a string");
       }
-      if (typeof encoding === "string" && !Buffer.isEncoding(encoding)) {
+      if (typeof encoding === "string" && !Buffer2.isEncoding(encoding)) {
         throw new TypeError("Unknown encoding: " + encoding);
       }
       if (val.length === 1) {
@@ -18627,7 +19976,7 @@ ieee754.write = function(buffer2, value, offset, isLE, mLen, nBytes) {
         this[i] = val;
       }
     } else {
-      const bytes = Buffer.isBuffer(val) ? val : Buffer.from(val, encoding);
+      const bytes = Buffer2.isBuffer(val) ? val : Buffer2.from(val, encoding);
       const len = bytes.length;
       if (len === 0) {
         throw new TypeError('The value "' + val + '" is invalid for argument "value"');
@@ -19890,8 +21239,8 @@ function HardwareWallet({ onComplete, onBack, isFirstWallet = false, existingWal
     if (selectedAccounts.length === 1) {
       const account = selectedAccounts[0];
       onComplete({
-        type: "ledger",
-        name: walletName || `Ledger ${account.label}`,
+        type: deviceType,
+        name: walletName || `${deviceType === "trezor" ? "Trezor" : "Ledger"} ${account.label}`,
         publicKey: account.address,
         derivationPath: account.path,
         derivationScheme: account.scheme || selectedScheme,
@@ -19900,8 +21249,8 @@ function HardwareWallet({ onComplete, onBack, isFirstWallet = false, existingWal
       });
     } else {
       const walletsToAdd = selectedAccounts.map((account, idx) => ({
-        type: "ledger",
-        name: `Ledger ${account.label}`,
+        type: deviceType,
+        name: `${deviceType === "trezor" ? "Trezor" : "Ledger"} ${account.label}`,
         publicKey: account.address,
         derivationPath: account.path,
         derivationScheme: account.scheme || selectedScheme,
@@ -19935,8 +21284,8 @@ function HardwareWallet({ onComplete, onBack, isFirstWallet = false, existingWal
     if (selectedAccounts.length === 1) {
       const account = selectedAccounts[0];
       onComplete({
-        type: "ledger",
-        name: walletName || `Ledger ${account.label}`,
+        type: deviceType,
+        name: walletName || `${deviceType === "trezor" ? "Trezor" : "Ledger"} ${account.label}`,
         publicKey: account.address,
         derivationPath: account.path,
         derivationScheme: account.scheme || selectedScheme,
@@ -19947,8 +21296,8 @@ function HardwareWallet({ onComplete, onBack, isFirstWallet = false, existingWal
       });
     } else {
       const walletsToAdd = selectedAccounts.map((account, idx) => ({
-        type: "ledger",
-        name: `Ledger ${account.label}`,
+        type: deviceType,
+        name: `${deviceType === "trezor" ? "Trezor" : "Ledger"} ${account.label}`,
         publicKey: account.address,
         derivationPath: account.path,
         derivationScheme: account.scheme || selectedScheme,
@@ -20010,7 +21359,7 @@ function HardwareWallet({ onComplete, onBack, isFirstWallet = false, existingWal
           ] }) }),
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "hardware-option-text", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hardware-option-title", children: "Trezor" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hardware-option-desc", children: "Model T, Model One, Safe 3" })
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hardware-option-desc", children: "Model T, Safe 3, Safe 5" })
           ] }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M9 18l6-6-6-6" }) })
         ] })
@@ -20467,14 +21816,14 @@ function HardwareWallet({ onComplete, onBack, isFirstWallet = false, existingWal
           className: "form-input",
           value: walletName,
           onChange: (e) => setWalletName(e.target.value),
-          placeholder: `Ledger ${(selectedAccount == null ? void 0 : selectedAccount.label) || "Wallet"}`,
+          placeholder: `${deviceType === "trezor" ? "Trezor" : "Ledger"} ${(selectedAccount == null ? void 0 : selectedAccount.label) || "Wallet"}`,
           autoFocus: true
         }
       ) }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "hardware-summary", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "hardware-summary-item", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hardware-summary-label", children: "Device" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hardware-summary-value", children: "Ledger" })
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hardware-summary-value", children: deviceType === "trezor" ? "Trezor" : "Ledger" })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "hardware-summary-item", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hardware-summary-label", children: "Connection" }),
@@ -20508,7 +21857,9 @@ function HardwareWallet({ onComplete, onBack, isFirstWallet = false, existingWal
         /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "none", stroke: "var(--warning)", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" }) }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Blind Signing Warning:" }),
-          " Some transactions may not display full details on your Ledger screen. Always verify transaction details in the wallet before confirming on your device. If you can't verify the full transaction on your Ledger, consider enabling blind signing only for trusted dApps."
+          " Some transactions may not display full details on your ",
+          deviceType === "trezor" ? "Trezor" : "Ledger",
+          " screen. Always verify transaction details in the wallet before confirming on your device. If you can't verify the full transaction on your device, consider enabling blind signing only for trusted dApps."
         ] })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", onClick: handleComplete, style: { marginTop: 24, marginBottom: 24 }, children: isFirstWallet ? "Continue" : "Import Wallet" })
@@ -20614,7 +21965,11 @@ function HardwareWallet({ onComplete, onBack, isFirstWallet = false, existingWal
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "warning-box", style: { marginTop: 24 }, children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "none", stroke: "var(--warning)", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" }) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "This password protects the wallet app. Your Ledger device remains your primary security - transactions still require physical confirmation on your device." })
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+          "This password protects the wallet app. Your ",
+          deviceType === "trezor" ? "Trezor" : "Ledger",
+          " device remains your primary security - transactions still require physical confirmation on your device."
+        ] })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsx(
         "button",
@@ -20697,17 +22052,60 @@ function X1Logo({ size = 40, className = "" }) {
   );
 }
 const imageCache$1 = /* @__PURE__ */ new Map();
+const pendingFetches = /* @__PURE__ */ new Map();
+const lastFetchTime = /* @__PURE__ */ new Map();
+const FETCH_DEBOUNCE_MS = 2e3;
+function getFetchCacheKey(walletAddress, network) {
+  return `${walletAddress}:${network}`;
+}
 const TOKEN_CACHE_KEY = "x1wallet_token_cache";
+const BALANCE_CACHE_KEY = "x1wallet_balance_cache";
+function getCachedBalance(walletAddress, network) {
+  try {
+    const cache = JSON.parse(localStorage.getItem(BALANCE_CACHE_KEY) || "{}");
+    const key = `${walletAddress}:${network}`;
+    const entry = cache[key];
+    if (entry && entry.balance !== void 0) {
+      return entry.balance;
+    }
+  } catch (e) {
+  }
+  return null;
+}
+function setCachedBalance(walletAddress, network, balance) {
+  try {
+    const cache = JSON.parse(localStorage.getItem(BALANCE_CACHE_KEY) || "{}");
+    const key = `${walletAddress}:${network}`;
+    cache[key] = { balance, timestamp: Date.now() };
+    const keys = Object.keys(cache);
+    if (keys.length > 10) {
+      const oldest = keys.sort((a, b) => {
+        var _a2, _b2;
+        return (((_a2 = cache[a]) == null ? void 0 : _a2.timestamp) || 0) - (((_b2 = cache[b]) == null ? void 0 : _b2.timestamp) || 0);
+      })[0];
+      delete cache[oldest];
+    }
+    localStorage.setItem(BALANCE_CACHE_KEY, JSON.stringify(cache));
+  } catch (e) {
+  }
+}
 function getTokenCacheKey(walletAddress, network) {
   return `${walletAddress}:${network}`;
 }
+const sessionTokenCache = /* @__PURE__ */ new Map();
 function getCachedTokens(walletAddress, network) {
   try {
-    const cache = JSON.parse(localStorage.getItem(TOKEN_CACHE_KEY) || "{}");
     const key = getTokenCacheKey(walletAddress, network);
+    if (sessionTokenCache.has(key)) {
+      const entry2 = sessionTokenCache.get(key);
+      logger$1.log("[TokenCache] Memory hit:", entry2.tokens.length, "tokens");
+      return entry2.tokens;
+    }
+    const cache = JSON.parse(localStorage.getItem(TOKEN_CACHE_KEY) || "{}");
     const entry = cache[key];
     if (entry && entry.tokens && entry.timestamp) {
-      logger$1.log("[TokenCache] Found cached tokens for", key, "- count:", entry.tokens.length);
+      sessionTokenCache.set(key, entry);
+      logger$1.log("[TokenCache] LocalStorage hit:", entry.tokens.length, "tokens");
       return entry.tokens;
     }
   } catch (e) {
@@ -20715,14 +22113,13 @@ function getCachedTokens(walletAddress, network) {
   }
   return null;
 }
-function setCachedTokens(walletAddress, network, tokens) {
+function setCachedTokens(walletAddress, network, tokens2) {
   try {
-    const cache = JSON.parse(localStorage.getItem(TOKEN_CACHE_KEY) || "{}");
     const key = getTokenCacheKey(walletAddress, network);
-    cache[key] = {
-      tokens,
-      timestamp: Date.now()
-    };
+    const entry = { tokens: tokens2, timestamp: Date.now() };
+    sessionTokenCache.set(key, entry);
+    const cache = JSON.parse(localStorage.getItem(TOKEN_CACHE_KEY) || "{}");
+    cache[key] = entry;
     const keys = Object.keys(cache);
     if (keys.length > 10) {
       const oldest = keys.sort((a, b) => {
@@ -20732,42 +22129,30 @@ function setCachedTokens(walletAddress, network, tokens) {
       delete cache[oldest];
     }
     localStorage.setItem(TOKEN_CACHE_KEY, JSON.stringify(cache));
-    logger$1.log("[TokenCache] Saved", tokens.length, "tokens for", key);
+    logger$1.log("[TokenCache] Saved", tokens2.length, "tokens for", key);
   } catch (e) {
     logger$1.warn("[TokenCache] Error saving cache:", e);
   }
 }
-function tokensNeedUpdate(oldTokens, newTokens) {
-  if (!oldTokens || !newTokens) return true;
-  if (oldTokens.length !== newTokens.length) return true;
-  const oldMap = /* @__PURE__ */ new Map();
-  oldTokens.forEach((t2) => {
-    const key = t2.mint || "native";
-    oldMap.set(key, t2);
-  });
-  for (const newToken of newTokens) {
-    const key = newToken.mint || "native";
-    const oldToken = oldMap.get(key);
-    if (!oldToken) return true;
-    const oldBal = parseFloat(oldToken.uiAmount || oldToken.balance || 0);
-    const newBal = parseFloat(newToken.uiAmount || newToken.balance || 0);
-    if (oldBal === 0 && newBal === 0) continue;
-    if (oldBal === 0 || newBal === 0) return true;
-    const diff = Math.abs(newBal - oldBal) / Math.max(oldBal, newBal);
-    if (diff > 1e-4) return true;
-  }
-  return false;
-}
+const XLP_ICON_PATH = "/icons/48-xlp.png";
 function preloadImage$1(url) {
   if (!url || imageCache$1.has(url)) return;
   const img = new Image();
   img.src = url;
   imageCache$1.set(url, img);
 }
-function preloadTokenImages(tokens) {
-  if (!tokens) return;
-  tokens.forEach((token) => {
-    if (token.logoURI) preloadImage$1(token.logoURI);
+preloadImage$1(XLP_ICON_PATH);
+function preloadTokenImages(tokens2) {
+  if (!tokens2) return;
+  tokens2.forEach((token) => {
+    const tokenName = (token.name || "").toLowerCase();
+    const tokenSymbol = (token.symbol || "").toUpperCase();
+    const isLP = token.isLPToken || tokenSymbol === "XLP" || tokenSymbol === "SLP" || tokenSymbol.includes("XLP") || tokenSymbol.includes("SLP") || tokenName.includes("xlp") || tokenName.includes(" lp") || tokenName.includes("lp token") || tokenName.includes("/") || tokenName.includes("xdex") && tokenName.includes("lp");
+    if (isLP) {
+      preloadImage$1(XLP_ICON_PATH);
+    } else if (token.logoURI) {
+      preloadImage$1(token.logoURI);
+    }
   });
 }
 async function fetchRpcWithRetry(rpcUrl, body, maxRetries = 5) {
@@ -21544,7 +22929,7 @@ function NFTsTab({ wallet, networkConfig }) {
                   logger$1.warn("[NFT] DAS getAsset failed for", nft.mint, dasErr);
                 }
               }
-              const METADATA_PROGRAM_ID = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
+              const METADATA_PROGRAM_ID2 = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
               const controller = new AbortController();
               const timeout = setTimeout(() => controller.abort(), 5e3);
               const pdaResponse = await fetch(rpcUrl, {
@@ -21555,7 +22940,7 @@ function NFTsTab({ wallet, networkConfig }) {
                   id: 1,
                   method: "getProgramAccounts",
                   params: [
-                    METADATA_PROGRAM_ID,
+                    METADATA_PROGRAM_ID2,
                     {
                       encoding: "base64",
                       filters: [
@@ -21951,7 +23336,7 @@ function NFTsTab({ wallet, networkConfig }) {
     }) })
   ] });
 }
-function DefiTab({ wallet, tokens, isSolana, onStake }) {
+function DefiTab({ wallet, tokens: tokens2, isSolana, onStake }) {
   var _a2;
   const [xpBalance, setXpBalance] = reactExports.useState(null);
   const [xpLoading, setXpLoading] = reactExports.useState(true);
@@ -21975,10 +23360,10 @@ function DefiTab({ wallet, tokens, isSolana, onStake }) {
     };
     fetchXP();
   }, [(_a2 = wallet.wallet) == null ? void 0 : _a2.publicKey, wallet.network]);
-  const pxntToken = tokens.find((t2) => t2.symbol === "pXNT");
+  const pxntToken = tokens2.find((t2) => t2.symbol === "pXNT");
   const pxntBalance = parseFloat((pxntToken == null ? void 0 : pxntToken.balance) || (pxntToken == null ? void 0 : pxntToken.uiAmount) || 0);
   const hasPxnt = pxntBalance > 0;
-  const xlpTokens = tokens.filter(
+  const xlpTokens = tokens2.filter(
     (t2) => {
       var _a3, _b2, _c;
       return ((_a3 = t2.symbol) == null ? void 0 : _a3.includes("XLP")) || ((_b2 = t2.symbol) == null ? void 0 : _b2.includes("LP")) || ((_c = t2.name) == null ? void 0 : _c.toLowerCase().includes("liquidity"));
@@ -23198,7 +24583,7 @@ function BrowserScreen({ wallet, onBack }) {
   ] });
 }
 function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, onSend, onReceive, onSwap, onBridge, onStake, onSettings, onCreateWallet, onImportWallet, onHardwareWallet, activityRefreshKey: externalRefreshKey = 0, balanceRefreshKey = 0, onTokenClick }) {
-  var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+  var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
   const [activeTab, setActiveTab] = reactExports.useState("tokens");
   const [bottomNav, setBottomNav] = reactExports.useState("assets");
   const [showNetworkPanel, setShowNetworkPanel] = reactExports.useState(false);
@@ -23211,7 +24596,7 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
   const [showRecoveryFor, setShowRecoveryFor] = reactExports.useState(null);
   const [isRefreshing, setIsRefreshing] = reactExports.useState(false);
   const [lastRefresh, setLastRefresh] = reactExports.useState(Date.now());
-  const [tokens, setTokens] = reactExports.useState(() => {
+  const [tokens2, setTokens] = reactExports.useState(() => {
     var _a3;
     if ((_a3 = wallet.wallet) == null ? void 0 : _a3.publicKey) {
       const cached = getCachedTokens(wallet.wallet.publicKey, wallet.network);
@@ -23231,17 +24616,33 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
     return initialTokens.length === 0;
   });
   const [copiedTokenMint, setCopiedTokenMint] = reactExports.useState(null);
+  const [showHiddenTokens, setShowHiddenTokens] = reactExports.useState(false);
+  const [hiddenTokens, setHiddenTokens] = reactExports.useState(() => {
+    try {
+      const saved = localStorage.getItem("x1wallet_hidden_tokens");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
   const [internalRefreshKey, setInternalRefreshKey] = reactExports.useState(0);
+  const [tokenRefreshKey, setTokenRefreshKey] = reactExports.useState(0);
   const [prevBalanceRefreshKey, setPrevBalanceRefreshKey] = reactExports.useState(0);
   const lastManualRefresh = reactExports.useRef(0);
   const currentWalletRef = reactExports.useRef((_a2 = wallet.wallet) == null ? void 0 : _a2.publicKey);
   const currentNetworkRef = reactExports.useRef(wallet.network);
   reactExports.useEffect(() => {
-    if (initialTokens.length > 0 && tokens.length === 0) {
+    if (initialTokens.length > 0 && tokens2.length === 0) {
       setTokens(initialTokens);
       setTokensLoading(false);
     }
   }, [initialTokens]);
+  reactExports.useEffect(() => {
+    var _a3;
+    if (((_a3 = wallet.wallet) == null ? void 0 : _a3.publicKey) && wallet.balance !== void 0 && wallet.balance !== null) {
+      setCachedBalance(wallet.wallet.publicKey, wallet.network, wallet.balance);
+    }
+  }, [wallet.balance, (_b2 = wallet.wallet) == null ? void 0 : _b2.publicKey, wallet.network]);
   reactExports.useEffect(() => {
     const shouldOpenNetwork = sessionStorage.getItem("openNetworkPanel");
     if (shouldOpenNetwork === "true") {
@@ -23251,8 +24652,8 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
   }, []);
   const activityRefreshKey = internalRefreshKey + externalRefreshKey;
   const networkConfig = getNetworkConfig(wallet.network) || NETWORKS["X1 Mainnet"];
-  const isSolana = (_b2 = wallet.network) == null ? void 0 : _b2.includes("Solana");
-  const tokensUsdValue = tokens.reduce((total, token) => {
+  const isSolana = (_c = wallet.network) == null ? void 0 : _c.includes("Solana");
+  const tokensUsdValue = tokens2.reduce((total, token) => {
     let price = token.price || 0;
     if (token.symbol === "USDC" || token.symbol === "USDT" || token.symbol === "USDC.X") {
       price = 1;
@@ -23265,8 +24666,21 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
     logger$1.log("[Portfolio] Token:", token.symbol, "uiAmount:", token.uiAmount, "price:", price, "value:", tokenValue);
     return total + tokenValue;
   }, 0);
+  const displayBalance = (() => {
+    var _a3;
+    if (wallet.balance !== void 0 && wallet.balance !== null && wallet.balance > 0) {
+      return wallet.balance;
+    }
+    if ((_a3 = wallet.wallet) == null ? void 0 : _a3.publicKey) {
+      const cached = getCachedBalance(wallet.wallet.publicKey, wallet.network);
+      if (cached !== null) {
+        return cached;
+      }
+    }
+    return wallet.balance || 0;
+  })();
   const nativePrice = isSolana ? 150 : 1;
-  const nativeUsdValue = (wallet.balance || 0) * nativePrice;
+  const nativeUsdValue = displayBalance * nativePrice;
   const totalPortfolioUsd = tokensUsdValue + nativeUsdValue;
   logger$1.log("[Portfolio] Total USD:", totalPortfolioUsd, "tokens:", tokensUsdValue, "native:", nativeUsdValue);
   const formatUsd = (value) => {
@@ -23284,8 +24698,15 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
     const fixed = balance.toFixed(maxDecimals);
     return parseFloat(fixed).toString();
   };
-  const editingWallet = editingWalletId ? (_c = wallet.wallets) == null ? void 0 : _c.find((w2) => w2.id === editingWalletId) : null;
-  const fetchTokens = async (isInitialLoad = false) => {
+  const toggleHiddenToken = (tokenMint) => {
+    setHiddenTokens((prev) => {
+      const newHidden = prev.includes(tokenMint) ? prev.filter((m2) => m2 !== tokenMint) : [...prev, tokenMint];
+      localStorage.setItem("x1wallet_hidden_tokens", JSON.stringify(newHidden));
+      return newHidden;
+    });
+  };
+  const editingWallet = editingWalletId ? (_d = wallet.wallets) == null ? void 0 : _d.find((w2) => w2.id === editingWalletId) : null;
+  const fetchTokens = async (isInitialLoad = false, forceRefresh = false, mode = null) => {
     var _a3, _b3;
     if (!((_a3 = wallet.wallet) == null ? void 0 : _a3.publicKey) || !(networkConfig == null ? void 0 : networkConfig.rpcUrl)) {
       logger$1.log("[WalletMain] Cannot fetch tokens - missing:", {
@@ -23295,65 +24716,79 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
       });
       return;
     }
+    const fetchMode = mode || (isInitialLoad ? "import" : "refresh");
     const fetchWallet = wallet.wallet.publicKey;
     const fetchNetwork = wallet.network;
-    logger$1.log("[WalletMain] Fetching tokens for:", fetchWallet, "on", fetchNetwork, "RPC:", networkConfig.rpcUrl);
-    if (isInitialLoad && tokens.length === 0) {
+    const cacheKey = getFetchCacheKey(fetchWallet, fetchNetwork);
+    if (!forceRefresh && !isInitialLoad) {
+      const lastFetch = lastFetchTime.get(cacheKey);
+      if (lastFetch && Date.now() - lastFetch < FETCH_DEBOUNCE_MS) {
+        logger$1.log("[WalletMain] Skipping fetch - too recent:", Date.now() - lastFetch, "ms ago");
+        return;
+      }
+    }
+    if (pendingFetches.has(cacheKey)) {
+      logger$1.log("[WalletMain] Reusing pending fetch for:", cacheKey);
+      return pendingFetches.get(cacheKey);
+    }
+    logger$1.log("[WalletMain] Fetching tokens for:", fetchWallet, "on", fetchNetwork, "mode:", fetchMode);
+    if (isInitialLoad && tokens2.length === 0) {
       setTokensLoading(true);
     }
-    try {
-      const { fetchTokenAccounts } = await __vitePreload(async () => {
-        const { fetchTokenAccounts: fetchTokenAccounts2 } = await import("./tokens.js");
-        return { fetchTokenAccounts: fetchTokenAccounts2 };
-      }, true ? [] : void 0);
-      const handleTokenUpdate = (updatedTokens) => {
-        if (currentWalletRef.current !== fetchWallet || currentNetworkRef.current !== fetchNetwork) {
-          logger$1.log("[WalletMain] Ignoring stale background update - wallet/network changed");
-          return;
-        }
-        const tokenList2 = updatedTokens.filter((token) => {
-          const isNFT = token.decimals === 0 && token.uiAmount === 1;
-          return !isNFT;
-        });
-        if (tokensNeedUpdate(tokens, tokenList2)) {
+    const fetchPromise = (async () => {
+      try {
+        const handleTokenUpdate = (updatedTokens) => {
+          if (currentWalletRef.current !== fetchWallet || currentNetworkRef.current !== fetchNetwork) {
+            logger$1.log("[WalletMain] Ignoring stale background update");
+            return;
+          }
+          const tokenList2 = updatedTokens.filter((token) => {
+            const isNFT = token.decimals === 0 && token.uiAmount === 1;
+            return !isNFT;
+          });
           logger$1.log("[WalletMain] Background token update:", tokenList2.length, "tokens");
           setTokens(tokenList2);
           setCachedTokens(fetchWallet, fetchNetwork, tokenList2);
           if (onTokensUpdate) onTokensUpdate(tokenList2);
-        } else {
-          logger$1.log("[WalletMain] Background update skipped - no meaningful changes");
+        };
+        const allTokens = await fetchTokenAccounts(networkConfig.rpcUrl, fetchWallet, fetchNetwork, handleTokenUpdate, { mode: fetchMode, forceRefresh });
+        lastFetchTime.set(cacheKey, Date.now());
+        if (currentWalletRef.current !== fetchWallet || currentNetworkRef.current !== fetchNetwork) {
+          logger$1.log("[WalletMain] Ignoring stale fetch result");
+          return;
         }
-      };
-      const allTokens = await fetchTokenAccounts(networkConfig.rpcUrl, fetchWallet, fetchNetwork, handleTokenUpdate);
-      if (currentWalletRef.current !== fetchWallet || currentNetworkRef.current !== fetchNetwork) {
-        logger$1.log("[WalletMain] Ignoring stale fetch result - wallet/network changed");
-        return;
-      }
-      const tokenList = allTokens.filter((token) => {
-        var _a4;
-        const isNFT = token.decimals === 0 && token.uiAmount === 1;
-        if (isNFT) {
-          logger$1.log("[WalletMain] Filtering out NFT from token list:", token.symbol || ((_a4 = token.mint) == null ? void 0 : _a4.slice(0, 8)));
-        }
-        return !isNFT;
-      });
-      if (tokensNeedUpdate(tokens, tokenList)) {
-        logger$1.log("[WalletMain] Fetched tokens:", tokenList.length, "(filtered", allTokens.length - tokenList.length, "NFTs)");
+        const tokenList = allTokens.filter((token) => {
+          const isNFT = token.decimals === 0 && token.uiAmount === 1;
+          return !isNFT;
+        });
+        logger$1.log("[WalletMain] Fetched tokens:", tokenList.length);
         setTokens(tokenList);
         setCachedTokens(fetchWallet, fetchNetwork, tokenList);
         preloadTokenImages(tokenList);
         if (onTokensUpdate) onTokensUpdate(tokenList);
-      } else {
-        logger$1.log("[WalletMain] Token fetch complete - no meaningful changes, skipping update");
+      } catch (err) {
+        logger$1.error("[WalletMain] Failed to fetch tokens:", err);
+      } finally {
+        pendingFetches.delete(cacheKey);
+        if (currentWalletRef.current === fetchWallet && currentNetworkRef.current === fetchNetwork) {
+          setTokensLoading(false);
+        }
       }
-    } catch (err) {
-      logger$1.error("[WalletMain] Failed to fetch tokens:", err);
-    } finally {
-      if (currentWalletRef.current === fetchWallet && currentNetworkRef.current === fetchNetwork) {
-        setTokensLoading(false);
+    })();
+    pendingFetches.set(cacheKey, fetchPromise);
+    return fetchPromise;
+  };
+  const prevTokenRefreshKeyRef = reactExports.useRef(0);
+  reactExports.useEffect(() => {
+    var _a3;
+    if (tokenRefreshKey > prevTokenRefreshKeyRef.current) {
+      prevTokenRefreshKeyRef.current = tokenRefreshKey;
+      logger$1.log("[WalletMain] Token refresh triggered by key change:", tokenRefreshKey);
+      if (((_a3 = wallet.wallet) == null ? void 0 : _a3.publicKey) && (networkConfig == null ? void 0 : networkConfig.rpcUrl)) {
+        fetchTokens(false, true);
       }
     }
-  };
+  }, [tokenRefreshKey, (_e = wallet.wallet) == null ? void 0 : _e.publicKey, networkConfig == null ? void 0 : networkConfig.rpcUrl]);
   reactExports.useEffect(() => {
     var _a3;
     if (balanceRefreshKey > prevBalanceRefreshKey) {
@@ -23361,15 +24796,96 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
       setPrevBalanceRefreshKey(balanceRefreshKey);
       lastManualRefresh.current = Date.now();
       if ((_a3 = wallet.wallet) == null ? void 0 : _a3.publicKey) {
+        invalidateRPCCache(wallet.wallet.publicKey);
         wallet.refreshBalance();
-        fetchTokens();
+        fetchTokens(false, true);
       }
     }
-  }, [balanceRefreshKey, prevBalanceRefreshKey, (_d = wallet.wallet) == null ? void 0 : _d.publicKey]);
+  }, [balanceRefreshKey, prevBalanceRefreshKey, (_f = wallet.wallet) == null ? void 0 : _f.publicKey]);
   const prevNetworkRef = reactExports.useRef(wallet.network);
-  const prevWalletRef = reactExports.useRef((_e = wallet.wallet) == null ? void 0 : _e.publicKey);
+  const prevWalletRef = reactExports.useRef((_g = wallet.wallet) == null ? void 0 : _g.publicKey);
+  const lastTxRefreshRef = reactExports.useRef(0);
+  const lastKnownTxTimeRef = reactExports.useRef(0);
   reactExports.useEffect(() => {
-    var _a3, _b3, _c2, _d2;
+    const handleRuntimeMessage = (message) => {
+      var _a3;
+      if (message.type === "balance-refresh-needed") {
+        const now = Date.now();
+        if (now - lastTxRefreshRef.current < 1500) {
+          logger$1.log("[WalletMain] Skipping duplicate refresh signal");
+          return;
+        }
+        lastTxRefreshRef.current = now;
+        logger$1.log("[WalletMain] Received balance-refresh-needed signal - refreshing immediately");
+        if ((_a3 = wallet.wallet) == null ? void 0 : _a3.publicKey) {
+          invalidateRPCCache(wallet.wallet.publicKey);
+          wallet.refreshBalance();
+          setTokenRefreshKey((prev) => prev + 1);
+          setInternalRefreshKey((prev) => prev + 1);
+        }
+      }
+    };
+    const handleStorageChange = (changes, areaName) => {
+      var _a3;
+      if (areaName === "local" && changes.x1wallet_last_tx_time) {
+        const newTxTime = changes.x1wallet_last_tx_time.newValue;
+        if (newTxTime && newTxTime > lastKnownTxTimeRef.current) {
+          lastKnownTxTimeRef.current = newTxTime;
+          const now = Date.now();
+          if (now - lastTxRefreshRef.current < 1500) {
+            return;
+          }
+          lastTxRefreshRef.current = now;
+          logger$1.log("[WalletMain] Detected transaction via storage change - refreshing");
+          if ((_a3 = wallet.wallet) == null ? void 0 : _a3.publicKey) {
+            invalidateRPCCache(wallet.wallet.publicKey);
+            wallet.refreshBalance();
+            setTokenRefreshKey((prev) => prev + 1);
+            setInternalRefreshKey((prev) => prev + 1);
+          }
+        }
+      }
+    };
+    const checkForMissedTransactions = async () => {
+      var _a3;
+      if (typeof chrome !== "undefined" && chrome.storage) {
+        try {
+          const result = await chrome.storage.local.get("x1wallet_last_tx_time");
+          const lastTxTime = result.x1wallet_last_tx_time || 0;
+          if (lastTxTime > lastKnownTxTimeRef.current) {
+            logger$1.log("[WalletMain] Found missed transaction, triggering refresh");
+            lastKnownTxTimeRef.current = lastTxTime;
+            if ((_a3 = wallet.wallet) == null ? void 0 : _a3.publicKey) {
+              invalidateRPCCache(wallet.wallet.publicKey);
+              wallet.refreshBalance();
+              setTokenRefreshKey((prev) => prev + 1);
+              setInternalRefreshKey((prev) => prev + 1);
+            }
+          }
+        } catch (e) {
+        }
+      }
+    };
+    checkForMissedTransactions();
+    const pollInterval = setInterval(checkForMissedTransactions, 2e3);
+    if (typeof chrome !== "undefined" && chrome.runtime) {
+      chrome.runtime.onMessage.addListener(handleRuntimeMessage);
+    }
+    if (typeof chrome !== "undefined" && chrome.storage) {
+      chrome.storage.onChanged.addListener(handleStorageChange);
+    }
+    return () => {
+      clearInterval(pollInterval);
+      if (typeof chrome !== "undefined" && chrome.runtime) {
+        chrome.runtime.onMessage.removeListener(handleRuntimeMessage);
+      }
+      if (typeof chrome !== "undefined" && chrome.storage) {
+        chrome.storage.onChanged.removeListener(handleStorageChange);
+      }
+    };
+  }, [(_h = wallet.wallet) == null ? void 0 : _h.publicKey, wallet.refreshBalance]);
+  reactExports.useEffect(() => {
+    var _a3, _b3, _c2, _d2, _e2;
     const networkChanged = prevNetworkRef.current !== wallet.network;
     const walletChanged = prevWalletRef.current !== ((_a3 = wallet.wallet) == null ? void 0 : _a3.publicKey);
     prevNetworkRef.current = wallet.network;
@@ -23378,7 +24894,9 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
     currentNetworkRef.current = wallet.network;
     if (walletChanged || networkChanged) {
       logger$1.log("[WalletMain] Wallet/network changed - network:", networkChanged, "wallet:", walletChanged);
-      if ((_d2 = wallet.wallet) == null ? void 0 : _d2.publicKey) {
+      const newCacheKey = getFetchCacheKey((_d2 = wallet.wallet) == null ? void 0 : _d2.publicKey, wallet.network);
+      lastFetchTime.delete(newCacheKey);
+      if ((_e2 = wallet.wallet) == null ? void 0 : _e2.publicKey) {
         const cachedTokens = getCachedTokens(wallet.wallet.publicKey, wallet.network);
         if (cachedTokens && cachedTokens.length > 0) {
           logger$1.log("[WalletMain] Using cached tokens:", cachedTokens.length);
@@ -23392,8 +24910,8 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
         logger$1.log("[WalletMain] Fetching fresh data in background");
         Promise.all([
           wallet.refreshBalance(),
-          fetchTokens((cachedTokens == null ? void 0 : cachedTokens.length) === 0)
-          // Only show loading if no cache
+          fetchTokens((cachedTokens == null ? void 0 : cachedTokens.length) === 0, true)
+          // forceRefresh=true for new wallet/network
         ]).catch(logger$1.error);
         setInternalRefreshKey((prev) => prev + 1);
       } else {
@@ -23403,19 +24921,20 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
     }
     const tokenInterval = setInterval(() => {
       var _a4;
-      if (Date.now() - lastManualRefresh.current < 1e4) {
+      if (Date.now() - lastManualRefresh.current < 8e3) {
         logger$1.log("[WalletMain] Skipping interval refresh - manual refresh was recent");
         return;
       }
       if ((_a4 = wallet.wallet) == null ? void 0 : _a4.publicKey) {
         Promise.all([
           wallet.refreshBalance().catch(logger$1.error),
-          fetchTokens().catch(logger$1.error)
+          fetchTokens(false, true)
+          // forceRefresh=true to bypass debounce and get fresh data
         ]).then(() => {
           setLastRefresh(Date.now());
         });
       }
-    }, 5e3);
+    }, 1e4);
     const activityInterval = setInterval(() => {
       var _a4;
       if ((_a4 = wallet.wallet) == null ? void 0 : _a4.publicKey) {
@@ -23426,7 +24945,7 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
       clearInterval(tokenInterval);
       clearInterval(activityInterval);
     };
-  }, [(_f = wallet.wallet) == null ? void 0 : _f.publicKey, wallet.network]);
+  }, [(_i = wallet.wallet) == null ? void 0 : _i.publicKey, wallet.network]);
   const copyAddress = () => {
     var _a3;
     navigator.clipboard.writeText(((_a3 = wallet.wallet) == null ? void 0 : _a3.publicKey) || "");
@@ -23436,8 +24955,8 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
   if (bottomNav === "browser") {
     return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "screen main-screen", children: /* @__PURE__ */ jsxRuntimeExports.jsx(BrowserScreen, { wallet, onBack: () => setBottomNav("assets") }) });
   }
-  ((_h = (_g = wallet.wallet) == null ? void 0 : _g.publicKey) == null ? void 0 : _h.slice(-5)) || "";
-  ((_i = wallet.wallet) == null ? void 0 : _i.avatar) && wallet.wallet.avatar.startsWith("data:image");
+  ((_k = (_j = wallet.wallet) == null ? void 0 : _j.publicKey) == null ? void 0 : _k.slice(-5)) || "";
+  ((_l = wallet.wallet) == null ? void 0 : _l.avatar) && wallet.wallet.avatar.startsWith("data:image");
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen main-screen", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "main-header", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-brand", children: /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: "/icons/48-x1.png", alt: "X1 Wallet", style: { width: 32, height: 32, objectFit: "contain" } }) }),
@@ -23461,7 +24980,7 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
           }
         ),
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-divider" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "wallet-selector-name", children: ((_j = wallet.wallet) == null ? void 0 : _j.name) || "Wallet" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "wallet-selector-name", children: ((_m = wallet.wallet) == null ? void 0 : _m.name) || "Wallet" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "10", height: "10", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2.5", className: "selector-arrow", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M6 9l6 6 6-6" }) }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-divider" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -23509,7 +25028,7 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
     activeTab === "tokens" && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "balance-section", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "balance-row", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "balance-amount", children: formatUsd(totalPortfolioUsd) }) }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "balance-usd", children: [
-        formatBalance2(wallet.balance),
+        formatBalance2(displayBalance),
         " ",
         networkConfig.symbol
       ] })
@@ -23569,8 +25088,8 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
             onClick: () => onTokenClick ? onTokenClick({
               symbol: networkConfig.symbol,
               name: isSolana ? "Solana" : "X1 Native Token",
-              balance: wallet.balance,
-              uiAmount: wallet.balance,
+              balance: displayBalance,
+              uiAmount: displayBalance,
               mint: null,
               isNative: true,
               logoURI: null,
@@ -23581,7 +25100,7 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
               /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "token-info", children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "token-name", children: isSolana ? "Solana" : "X1 Native Token" }),
                 /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "token-amount-sub", children: [
-                  formatBalance2(wallet.balance),
+                  formatBalance2(displayBalance),
                   " ",
                   networkConfig.symbol
                 ] })
@@ -23593,37 +25112,62 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
             ]
           }
         ),
-        tokensLoading && tokens.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "token-loading", children: [
+        tokensLoading && tokens2.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "token-loading", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "spinner-small" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Loading tokens..." })
         ] }),
-        tokens.map((token) => {
+        tokens2.filter((token) => showHiddenTokens || !hiddenTokens.includes(token.mint)).map((token) => {
           var _a3;
+          const isHidden = hiddenTokens.includes(token.mint);
+          const tokenName = (token.name || "").toLowerCase();
+          const tokenSymbol = (token.symbol || "").toUpperCase();
+          const isLP = token.isLPToken === true || tokenSymbol === "XLP" || tokenSymbol === "SLP" || tokenSymbol.includes("XLP") || // NEW: catches "WXNT-USDC.X XLP" symbol
+          tokenSymbol.includes("SLP") || // NEW: catches SLP variants
+          tokenName.includes("xlp") || // NEW: catches "wxnt-usdc.x xlp"
+          tokenName.includes(" lp") || tokenName.includes("lp token") || tokenName.includes("/") || tokenName.includes("xdex") && tokenName.includes("lp");
+          const effectiveLogoUrl = isLP ? XLP_ICON_PATH : token.logoURI;
+          const hasLogo = effectiveLogoUrl && (effectiveLogoUrl.startsWith("http") || effectiveLogoUrl.startsWith("/"));
+          if (isLP || tokenName.includes("lp") || tokenName.includes("xlp") || tokenSymbol.includes("XLP")) {
+            console.log("[LP Check]", {
+              name: token.name,
+              symbol: token.symbol,
+              isLPToken: token.isLPToken,
+              detected: isLP,
+              effectiveLogoUrl,
+              hasLogo
+            });
+          }
           return /* @__PURE__ */ jsxRuntimeExports.jsxs(
             "div",
             {
-              className: "token-item clickable",
+              className: `token-item clickable${isHidden ? " token-hidden" : ""}`,
               onClick: () => onTokenClick ? onTokenClick(token) : onSend(token),
               children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "token-icon", children: [
-                  token.logoURI ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  hasLogo ? /* @__PURE__ */ jsxRuntimeExports.jsx(
                     "img",
                     {
-                      src: token.logoURI,
+                      src: effectiveLogoUrl,
                       alt: token.symbol,
                       className: "token-logo",
                       onError: (e) => {
+                        console.error("[Image Load Failed]", effectiveLogoUrl, "for", token.name);
                         e.target.style.display = "none";
-                        e.target.nextSibling.style.display = "flex";
+                        if (e.target.nextSibling) {
+                          e.target.nextSibling.style.display = "flex";
+                        }
+                      },
+                      onLoad: () => {
+                        if (isLP) console.log("[LP Icon Loaded]", effectiveLogoUrl);
                       }
                     }
                   ) : null,
                   /* @__PURE__ */ jsxRuntimeExports.jsx(
                     "div",
                     {
-                      className: `token-logo-fallback ${token.symbol === "pXNT" ? "pxnt" : ""}`,
-                      style: { display: token.logoURI ? "none" : "flex" },
-                      children: token.symbol === "pXNT" ? "pXNT" : ((_a3 = token.symbol) == null ? void 0 : _a3.charAt(0)) || "?"
+                      className: `token-logo-fallback ${token.symbol === "pXNT" ? "pxnt" : ""} ${isLP ? "lp-token" : ""}`,
+                      style: { display: hasLogo ? "none" : "flex" },
+                      children: isLP ? "LP" : token.symbol === "pXNT" ? "pXNT" : ((_a3 = token.symbol) == null ? void 0 : _a3.charAt(0)) || "?"
                     }
                   )
                 ] }),
@@ -23644,6 +25188,24 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
                         children: copiedTokenMint === token.mint ? /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "var(--success)", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("polyline", { points: "20 6 9 17 4 12" }) }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "var(--text-muted)", strokeWidth: "2", children: [
                           /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "9", y: "9", width: "13", height: "13", rx: "2", ry: "2" }),
                           /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" })
+                        ] })
+                      }
+                    ),
+                    /* @__PURE__ */ jsxRuntimeExports.jsx(
+                      "button",
+                      {
+                        className: "token-hide-btn",
+                        onClick: (e) => {
+                          e.stopPropagation();
+                          toggleHiddenToken(token.mint);
+                        },
+                        title: isHidden ? "Show token" : "Hide token",
+                        children: isHidden ? /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "var(--text-muted)", strokeWidth: "2", children: [
+                          /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" }),
+                          /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "1", y1: "1", x2: "23", y2: "23" })
+                        ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "var(--text-muted)", strokeWidth: "2", children: [
+                          /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" }),
+                          /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "3" })
                         ] })
                       }
                     )
@@ -23676,14 +25238,35 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
             },
             token.address
           );
-        })
+        }),
+        hiddenTokens.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "button",
+          {
+            className: "show-hidden-tokens-btn",
+            onClick: () => setShowHiddenTokens(!showHiddenTokens),
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: showHiddenTokens ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "3" })
+              ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "1", y1: "1", x2: "23", y2: "23" })
+              ] }) }),
+              showHiddenTokens ? "Hide" : "Show",
+              " ",
+              hiddenTokens.length,
+              " hidden token",
+              hiddenTokens.length !== 1 ? "s" : ""
+            ]
+          }
+        )
       ] }),
       activeTab === "nfts" && /* @__PURE__ */ jsxRuntimeExports.jsx(NFTsTab, { wallet, networkConfig }),
       activeTab === "defi" && /* @__PURE__ */ jsxRuntimeExports.jsx(
         DefiTab,
         {
           wallet,
-          tokens,
+          tokens: tokens2,
           isSolana,
           onStake
         }
@@ -23691,7 +25274,7 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
       activeTab === "activity" && /* @__PURE__ */ jsxRuntimeExports.jsx(
         ActivityList,
         {
-          walletAddress: (_k = wallet.wallet) == null ? void 0 : _k.publicKey,
+          walletAddress: (_n = wallet.wallet) == null ? void 0 : _n.publicKey,
           network: wallet.network,
           networkConfig,
           refreshKey: activityRefreshKey
@@ -27068,9 +28651,9 @@ function preloadImage(url) {
   img.src = url;
   imageCache.set(url, img);
 }
-function preloadImages(tokens) {
-  if (!tokens) return;
-  tokens.forEach((token) => {
+function preloadImages(tokens2) {
+  if (!tokens2) return;
+  tokens2.forEach((token) => {
     if (token.logoURI) preloadImage(token.logoURI);
   });
 }
@@ -27081,10 +28664,10 @@ function loadCustomTokens(network) {
     logger$1.log("[CustomTokens] Loading for network:", network, "Raw stored:", stored);
     if (stored) {
       const all = JSON.parse(stored);
-      const tokens = all[network] || [];
-      logger$1.log("[CustomTokens] Found tokens for network:", tokens.length, tokens);
+      const tokens2 = all[network] || [];
+      logger$1.log("[CustomTokens] Found tokens for network:", tokens2.length, tokens2);
       const seen2 = /* @__PURE__ */ new Set();
-      const deduplicated = tokens.filter((t2) => {
+      const deduplicated = tokens2.filter((t2) => {
         const key = t2.mint || t2.symbol;
         if (seen2.has(key) || seen2.has(t2.symbol)) {
           return false;
@@ -27093,7 +28676,7 @@ function loadCustomTokens(network) {
         seen2.add(t2.symbol);
         return true;
       });
-      if (deduplicated.length !== tokens.length) {
+      if (deduplicated.length !== tokens2.length) {
         all[network] = deduplicated;
         localStorage.setItem(CUSTOM_TOKENS_KEY, JSON.stringify(all));
         logger$1.log("[CustomTokens] Deduplicated and saved:", deduplicated.length);
@@ -27105,12 +28688,12 @@ function loadCustomTokens(network) {
   }
   return [];
 }
-function saveCustomTokens(network, tokens) {
+function saveCustomTokens(network, tokens2) {
   try {
-    logger$1.log("[CustomTokens] Saving for network:", network, "Tokens:", tokens);
+    logger$1.log("[CustomTokens] Saving for network:", network, "Tokens:", tokens2);
     const stored = localStorage.getItem(CUSTOM_TOKENS_KEY);
     const all = stored ? JSON.parse(stored) : {};
-    all[network] = tokens;
+    all[network] = tokens2;
     localStorage.setItem(CUSTOM_TOKENS_KEY, JSON.stringify(all));
     logger$1.log("[CustomTokens] Saved. New stored:", localStorage.getItem(CUSTOM_TOKENS_KEY));
   } catch (e) {
@@ -27159,7 +28742,7 @@ function isTokenAddress(str) {
 }
 function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFromToken = null }) {
   var _a2, _b2, _c, _d;
-  const [tokens, setTokens] = reactExports.useState([]);
+  const [tokens$1, setTokens] = reactExports.useState([]);
   const [fromToken, setFromToken] = reactExports.useState(null);
   const [toToken, setToToken] = reactExports.useState(null);
   const [fromAmount, setFromAmount] = reactExports.useState("");
@@ -27230,9 +28813,9 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
   const isSolana = isSolanaNetwork(currentNetwork2);
   const walletBalance = (wallet == null ? void 0 : wallet.balance) ?? 0;
   reactExports.useEffect(() => {
-    if (initialFromToken && !initialTokenSet && tokens.length > 0) {
+    if (initialFromToken && !initialTokenSet && tokens$1.length > 0) {
       logger$1.log("[SwapScreen] Setting initial from token:", initialFromToken.symbol);
-      const matchedToken = tokens.find(
+      const matchedToken = tokens$1.find(
         (t2) => t2.mint === initialFromToken.mint || t2.address === initialFromToken.address || t2.symbol === initialFromToken.symbol && t2.isNative === initialFromToken.isNative
       );
       if (matchedToken) {
@@ -27252,7 +28835,7 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
         setInitialTokenSet(true);
       }
     }
-  }, [initialFromToken, tokens, initialTokenSet, nativeSymbol, networkConfig, walletBalance]);
+  }, [initialFromToken, tokens$1, initialTokenSet, nativeSymbol, networkConfig, walletBalance]);
   reactExports.useEffect(() => {
     logger$1.log("[SwapScreen] userTokens prop changed:", userTokens == null ? void 0 : userTokens.length, userTokens == null ? void 0 : userTokens.map((t2) => {
       var _a3;
@@ -27293,11 +28876,11 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
       logger$1.log("[SwapScreen] Fetching token balances directly (userTokens empty)");
       setFetchingLocalTokens(true);
       try {
-        const { fetchTokenAccounts } = await __vitePreload(async () => {
-          const { fetchTokenAccounts: fetchTokenAccounts2 } = await import("./tokens.js");
-          return { fetchTokenAccounts: fetchTokenAccounts2 };
-        }, true ? [] : void 0);
-        const allTokens = await fetchTokenAccounts(
+        const { fetchTokenAccounts: fetchTokenAccounts2 } = await __vitePreload(async () => {
+          const { fetchTokenAccounts: fetchTokenAccounts3 } = await Promise.resolve().then(() => tokens);
+          return { fetchTokenAccounts: fetchTokenAccounts3 };
+        }, true ? void 0 : void 0);
+        const allTokens = await fetchTokenAccounts2(
           networkConfig.rpcUrl,
           wallet.wallet.publicKey,
           currentNetwork2
@@ -27548,19 +29131,19 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
     if (Date.now() - lastOptimisticUpdate.current < 5e3) {
       return;
     }
-    if (fromToken && tokens.length > 0) {
-      const updatedFrom = tokens.find((t2) => t2.mint === fromToken.mint || t2.symbol === fromToken.symbol);
+    if (fromToken && tokens$1.length > 0) {
+      const updatedFrom = tokens$1.find((t2) => t2.mint === fromToken.mint || t2.symbol === fromToken.symbol);
       if (updatedFrom && updatedFrom.balance !== fromToken.balance) {
         setFromToken((prev) => ({ ...prev, balance: updatedFrom.balance }));
       }
     }
-    if (toToken && tokens.length > 0) {
-      const updatedTo = tokens.find((t2) => t2.mint === toToken.mint || t2.symbol === toToken.symbol);
+    if (toToken && tokens$1.length > 0) {
+      const updatedTo = tokens$1.find((t2) => t2.mint === toToken.mint || t2.symbol === toToken.symbol);
       if (updatedTo && updatedTo.balance !== toToken.balance) {
         setToToken((prev) => ({ ...prev, balance: updatedTo.balance }));
       }
     }
-  }, [tokens]);
+  }, [tokens$1]);
   reactExports.useEffect(() => {
     if (Date.now() - lastOptimisticUpdate.current < 5e3) {
       return;
@@ -27632,7 +29215,7 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
         };
         if (isTokenAddress(tokenSearchQuery)) {
           logger$1.log("[Swap] Searching by address:", tokenSearchQuery, "on", currentNetwork2);
-          const existingToken = tokens.find((t2) => t2.mint === tokenSearchQuery);
+          const existingToken = tokens$1.find((t2) => t2.mint === tokenSearchQuery);
           if (existingToken) {
             setSearchResults([existingToken]);
             setSearching(false);
@@ -27671,7 +29254,7 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
         const query = tokenSearchQuery.toLowerCase();
         const seen2 = /* @__PURE__ */ new Set();
         const localResults = [];
-        for (const t2 of tokens) {
+        for (const t2 of tokens$1) {
           if ((((_a3 = t2.symbol) == null ? void 0 : _a3.toLowerCase().includes(query)) || ((_b3 = t2.name) == null ? void 0 : _b3.toLowerCase().includes(query))) && !seen2.has(t2.mint)) {
             seen2.add(t2.mint);
             localResults.push(enrichWithUserData(t2));
@@ -27698,7 +29281,7 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
     };
     const timeoutId = setTimeout(searchTokens2, 300);
     return () => clearTimeout(timeoutId);
-  }, [tokenSearchQuery, currentNetwork2, networkConfig.rpcUrl, isSolana, filteredUserTokens, tokens, poolTokens]);
+  }, [tokenSearchQuery, currentNetwork2, networkConfig.rpcUrl, isSolana, filteredUserTokens, tokens$1, poolTokens]);
   const isWrapUnwrap = (from, to) => {
     if (!from || !to) return false;
     const isFromNativeXNT = from.symbol === "XNT" && (from.isNative || !from.mint || from.mint === "native");
@@ -27827,7 +29410,7 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
       if (userToken) {
         return parseFloat(userToken.balance || userToken.uiAmount) || 0;
       }
-      const tokenInList = tokens.find((lt) => lt.mint === t2.mint || lt.symbol === t2.symbol);
+      const tokenInList = tokens$1.find((lt) => lt.mint === t2.mint || lt.symbol === t2.symbol);
       if (tokenInList == null ? void 0 : tokenInList.balance) {
         return tokenInList.balance;
       }
@@ -27862,7 +29445,7 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
       if (customTokens.find((t2) => t2.mint === mintAddress)) {
         throw new Error("Token already added");
       }
-      if (tokens.find((t2) => t2.mint === mintAddress)) {
+      if (tokens$1.find((t2) => t2.mint === mintAddress)) {
         throw new Error("Token already exists in list");
       }
       logger$1.log("[AddToken] Fetching metadata for:", mintAddress);
@@ -27929,7 +29512,7 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
         }
       }
       if (tokenInfo.symbol && tokenInfo.symbol.length < 10) {
-        const existsBySymbol = tokens.find((t2) => t2.symbol === tokenInfo.symbol && t2.mint !== mintAddress) || customTokens.find((t2) => t2.symbol === tokenInfo.symbol && t2.mint !== mintAddress);
+        const existsBySymbol = tokens$1.find((t2) => t2.symbol === tokenInfo.symbol && t2.mint !== mintAddress) || customTokens.find((t2) => t2.symbol === tokenInfo.symbol && t2.mint !== mintAddress);
         if (existsBySymbol) {
           throw new Error(`Token ${tokenInfo.symbol} already exists in list`);
         }
@@ -28481,7 +30064,7 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
       flexShrink: 0
     }, children: ((_a3 = token.symbol) == null ? void 0 : _a3[0]) || "?" });
   };
-  const filteredTokens = tokens.filter((t2) => {
+  const filteredTokens = tokens$1.filter((t2) => {
     var _a3, _b3;
     if (!tokenSearchQuery) return true;
     const q2 = tokenSearchQuery.toLowerCase();
@@ -28724,7 +30307,7 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
     }
     const handleSelectToken = (token) => {
       const isFromSearch = searchResults.find((t2) => t2.mint === token.mint);
-      const existsInTokens = tokens.find((t2) => t2.mint === token.mint || t2.symbol === token.symbol);
+      const existsInTokens = tokens$1.find((t2) => t2.mint === token.mint || t2.symbol === token.symbol);
       const existsInCustom = customTokens.find((t2) => t2.mint === token.mint || t2.symbol === token.symbol);
       if (isFromSearch && !existsInTokens && !existsInCustom) {
         const newCustomTokens = [...customTokens, { ...token, isCustom: true }];
@@ -28742,7 +30325,7 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
         if (userToken) {
           return parseFloat(userToken.balance || userToken.uiAmount) || 0;
         }
-        const tokenInList = tokens.find((lt) => lt.mint === t2.mint || lt.symbol === t2.symbol);
+        const tokenInList = tokens$1.find((lt) => lt.mint === t2.mint || lt.symbol === t2.symbol);
         if (tokenInList == null ? void 0 : tokenInList.balance) {
           return tokenInList.balance;
         }
@@ -31275,6 +32858,7 @@ function StakeScreen({ wallet, onBack, onRefreshBalance }) {
 }
 const JUPITER_PRICE_API = "https://price.jup.ag/v6/price";
 const COINGECKO_API = "https://api.coingecko.com/api/v3/simple/price";
+const XDEX_API = "https://api.xdex.xyz/api/xendex";
 const XNT_PEGGED_PRICE = 1;
 const getXNTPrice = () => {
   return XNT_PEGGED_PRICE;
@@ -31321,22 +32905,28 @@ function TokenDetail({
       setLoading(false);
     };
     fetchData();
-  }, [mint, symbol, network]);
+  }, [mint, symbol, network, token == null ? void 0 : token.price]);
   const fetchSolanaPrice = async () => {
     const tokenAddress = mint || "So11111111111111111111111111111111111111112";
     const isNativeSOL = !mint || tokenAddress === "So11111111111111111111111111111111111111112";
     let price = null;
-    try {
-      const response = await fetch(`${JUPITER_PRICE_API}?ids=${tokenAddress}`);
-      if (response.ok) {
-        const data = await response.json();
-        logger$1.log("[TokenDetail] Jupiter response:", data);
-        if (data.data && data.data[tokenAddress]) {
-          price = data.data[tokenAddress].price;
+    if ((token == null ? void 0 : token.price) !== void 0 && (token == null ? void 0 : token.price) !== null && !isNaN(token.price)) {
+      price = parseFloat(token.price);
+      logger$1.log("[TokenDetail] Using existing token.price for Solana:", price, "for", symbol);
+    }
+    if (!price) {
+      try {
+        const response = await fetch(`${JUPITER_PRICE_API}?ids=${tokenAddress}`);
+        if (response.ok) {
+          const data = await response.json();
+          logger$1.log("[TokenDetail] Jupiter response:", data);
+          if (data.data && data.data[tokenAddress]) {
+            price = data.data[tokenAddress].price;
+          }
         }
+      } catch (e) {
+        logger$1.warn("[TokenDetail] Jupiter fetch failed:", e.message);
       }
-    } catch (e) {
-      logger$1.warn("[TokenDetail] Jupiter fetch failed:", e.message);
     }
     if (!price && isNativeSOL) {
       try {
@@ -31387,7 +32977,10 @@ function TokenDetail({
     var _a2;
     try {
       let price = null;
-      if (isNative) {
+      if ((token == null ? void 0 : token.price) !== void 0 && (token == null ? void 0 : token.price) !== null && !isNaN(token.price)) {
+        price = parseFloat(token.price);
+        logger$1.log("[TokenDetail] Using existing token.price:", price, "for", symbol);
+      } else if (isNative) {
         price = getXNTPrice();
       } else if (symbol === "USDC.X" || symbol === "USDC" || symbol === "USDT") {
         price = 1;
@@ -31396,23 +32989,47 @@ function TokenDetail({
       } else if (symbol === "WXNT") {
         price = getXNTPrice();
       } else if (mint) {
-        const response = await fetch(`${XDEX_API}/pools`);
-        if (response.ok) {
-          const pools = await response.json();
-          logger$1.log("[TokenDetail] XDEX pools:", (pools == null ? void 0 : pools.length) || 0);
-          const tokenPool = pools.find(
-            (p2) => {
-              var _a3, _b2;
-              return ((_a3 = p2.tokenA) == null ? void 0 : _a3.mint) === mint || ((_b2 = p2.tokenB) == null ? void 0 : _b2.mint) === mint;
+        try {
+          const tokenResponse = await fetch(`${XDEX_API}/tokens/${mint}`, {
+            signal: AbortSignal.timeout(3e3)
+          });
+          if (tokenResponse.ok) {
+            const tokenData = await tokenResponse.json();
+            logger$1.log("[TokenDetail] XDEX token data for", symbol, ":", tokenData);
+            const tokenPrice = tokenData.price ?? tokenData.priceUsd ?? tokenData.price_usd;
+            if (tokenPrice !== void 0 && tokenPrice !== null) {
+              price = parseFloat(tokenPrice);
+              logger$1.log("[TokenDetail] Got price from XDEX token endpoint:", price);
             }
-          );
-          if (tokenPool) {
-            const isTokenA = ((_a2 = tokenPool.tokenA) == null ? void 0 : _a2.mint) === mint;
-            const reserveToken = parseFloat(isTokenA ? tokenPool.reserveA : tokenPool.reserveB) || 0;
-            const reserveOther = parseFloat(isTokenA ? tokenPool.reserveB : tokenPool.reserveA) || 0;
-            if (reserveToken > 0 && reserveOther > 0) {
-              price = reserveOther / reserveToken;
+          }
+        } catch (e) {
+          logger$1.log("[TokenDetail] XDEX token endpoint failed:", e.message);
+        }
+        if (!price) {
+          try {
+            const response = await fetch(`${XDEX_API}/pools`, {
+              signal: AbortSignal.timeout(3e3)
+            });
+            if (response.ok) {
+              const pools = await response.json();
+              logger$1.log("[TokenDetail] XDEX pools:", (pools == null ? void 0 : pools.length) || 0);
+              const tokenPool = pools.find(
+                (p2) => {
+                  var _a3, _b2;
+                  return ((_a3 = p2.tokenA) == null ? void 0 : _a3.mint) === mint || ((_b2 = p2.tokenB) == null ? void 0 : _b2.mint) === mint;
+                }
+              );
+              if (tokenPool) {
+                const isTokenA = ((_a2 = tokenPool.tokenA) == null ? void 0 : _a2.mint) === mint;
+                const reserveToken = parseFloat(isTokenA ? tokenPool.reserveA : tokenPool.reserveB) || 0;
+                const reserveOther = parseFloat(isTokenA ? tokenPool.reserveB : tokenPool.reserveA) || 0;
+                if (reserveToken > 0 && reserveOther > 0) {
+                  price = reserveOther / reserveToken;
+                }
+              }
             }
+          } catch (e) {
+            logger$1.log("[TokenDetail] XDEX pools endpoint failed:", e.message);
           }
         }
       }
@@ -33020,6 +34637,98 @@ function DAppApproval({ wallet, onComplete }) {
     ] })
   ] }) });
 }
+class ErrorBoundary extends reactExports.Component {
+  constructor(props) {
+    super(props);
+    __publicField(this, "handleReload", () => {
+      window.location.reload();
+    });
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, errorInfo) {
+    console.error("[ErrorBoundary] Caught error:", error);
+    console.error("[ErrorBoundary] Error info:", errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app", style: {
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 24,
+        textAlign: "center",
+        minHeight: "100vh",
+        background: "var(--bg-primary)"
+      }, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: {
+          width: 64,
+          height: 64,
+          borderRadius: "50%",
+          background: "rgba(255, 107, 107, 0.1)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          marginBottom: 16
+        }, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "32", height: "32", viewBox: "0 0 24 24", fill: "none", stroke: "#ff6b6b", strokeWidth: "2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "10" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "12", y1: "8", x2: "12", y2: "12" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "12", y1: "16", x2: "12.01", y2: "16" })
+        ] }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { style: { color: "var(--text-primary)", marginBottom: 8 }, children: "Something went wrong" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { style: { color: "var(--text-muted)", marginBottom: 24, fontSize: 14 }, children: "The wallet encountered an error. Please reload to continue." }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            onClick: this.handleReload,
+            style: {
+              background: "var(--x1-blue)",
+              color: "white",
+              border: "none",
+              padding: "12px 32px",
+              borderRadius: 12,
+              cursor: "pointer",
+              fontWeight: 600,
+              fontSize: 14
+            },
+            children: "Reload Wallet"
+          }
+        )
+      ] });
+    }
+    return this.props.children;
+  }
+}
+function isExtensionContextValid() {
+  try {
+    if (typeof chrome === "undefined" || !chrome.runtime) {
+      return false;
+    }
+    const id2 = chrome.runtime.id;
+    return !!id2;
+  } catch (e) {
+    return false;
+  }
+}
+async function safeSendMessage(message) {
+  var _a2;
+  if (!isExtensionContextValid()) {
+    console.warn("[App] Extension context invalid, cannot send message");
+    return null;
+  }
+  try {
+    return await chrome.runtime.sendMessage(message);
+  } catch (e) {
+    if ((_a2 = e.message) == null ? void 0 : _a2.includes("Extension context invalidated")) {
+      console.warn("[App] Extension context invalidated");
+      return null;
+    }
+    throw e;
+  }
+}
 const storage = {
   get: (key, defaultValue) => {
     try {
@@ -33030,7 +34739,7 @@ const storage = {
   },
   set: (key, value) => {
     localStorage.setItem(`x1wallet_${key}`, JSON.stringify(value));
-    if (typeof chrome !== "undefined" && chrome.storage) {
+    if (isExtensionContextValid() && chrome.storage) {
       chrome.storage.local.set({ [`x1wallet_${key}`]: value }).catch(() => {
       });
     }
@@ -33223,53 +34932,61 @@ function App() {
   }, []);
   reactExports.useEffect(() => {
     let port = null;
+    let isApprovalWindow = false;
     const checkDAppRequest = async () => {
+      var _a3;
       try {
-        const urlParams = new URLSearchParams(window.location.search);
-        const isApprovalWindow = urlParams.has("request");
+        if (!isExtensionContextValid()) {
+          logger$1.log("[App] Extension context invalid, skipping dApp request check");
+          return;
+        }
+        const urlParams2 = new URLSearchParams(window.location.search);
+        isApprovalWindow = urlParams2.has("request");
         if (isApprovalWindow) {
-          if (typeof chrome !== "undefined" && chrome.runtime) {
-            const response = await chrome.runtime.sendMessage({ type: "get-pending-request" });
+          const response = await safeSendMessage({ type: "get-pending-request" });
+          if (response) {
             const pendingReq = (response == null ? void 0 : response.request) || response;
             setHasDAppRequest(pendingReq && pendingReq.type ? true : false);
           }
           return;
         }
-        if (typeof chrome !== "undefined" && chrome.runtime) {
-          const response = await chrome.runtime.sendMessage({ type: "get-pending-request" });
-          const pendingReq = (response == null ? void 0 : response.request) || response;
-          if (pendingReq && pendingReq.type) {
-            setHasDAppRequest(true);
-          }
-        }
       } catch (err) {
+        if (!((_a3 = err.message) == null ? void 0 : _a3.includes("Extension context invalidated"))) {
+          logger$1.log("[App] Error checking dApp request:", err.message);
+        }
       }
     };
     const connectPort = () => {
-      if (typeof chrome !== "undefined" && chrome.runtime) {
-        try {
-          port = chrome.runtime.connect({ name: "x1-wallet-popup" });
-          port.onMessage.addListener((message) => {
-            if (message.type === "pending-request" && message.request) {
-              logger$1.log("[App] Received pending request via port:", message.request.type);
-              setHasDAppRequest(true);
-            }
-          });
-          port.onDisconnect.addListener(() => {
-            logger$1.log("[App] Port disconnected from background");
-            port = null;
-          });
-          logger$1.log("[App] Connected to background via port");
-        } catch (err) {
+      var _a3;
+      if (!isExtensionContextValid()) return;
+      try {
+        port = chrome.runtime.connect({ name: "x1-wallet-popup" });
+        port.onMessage.addListener((message) => {
+          if (message.type === "pending-request" && message.request) {
+            logger$1.log("[App] Received pending request via port:", message.request.type);
+            setHasDAppRequest(true);
+          }
+        });
+        port.onDisconnect.addListener(() => {
+          logger$1.log("[App] Port disconnected from background");
+          port = null;
+        });
+        logger$1.log("[App] Connected to background via port");
+      } catch (err) {
+        if (!((_a3 = err.message) == null ? void 0 : _a3.includes("Extension context invalidated"))) {
           logger$1.log("[App] Failed to connect port:", err.message);
         }
       }
     };
     connectPort();
     checkDAppRequest();
-    const interval = setInterval(checkDAppRequest, 500);
+    let interval = null;
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.has("request")) {
+      interval = setInterval(checkDAppRequest, 500);
+    }
     return () => {
-      clearInterval(interval);
+      if (interval) clearInterval(interval);
       if (port) {
         try {
           port.disconnect();
@@ -34203,8 +35920,11 @@ function App() {
     /* @__PURE__ */ jsxRuntimeExports.jsx(BottomNav, {})
   ] });
 }
+function AppWithErrorBoundary() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(App, {}) });
+}
 client.createRoot(document.getElementById("root")).render(
-  /* @__PURE__ */ jsxRuntimeExports.jsx(React.StrictMode, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(App, {}) })
+  /* @__PURE__ */ jsxRuntimeExports.jsx(React.StrictMode, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(AppWithErrorBoundary, {}) })
 );
 export {
   getAugmentedNamespace as a,

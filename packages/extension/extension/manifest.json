@@ -65,7 +65,8 @@
     "https://arweave.net/*",
     "https://static.jup.ag/*",
     "https://*.helius-rpc.com/*",
-    "https://raw.githubusercontent.com/*"
+    "https://raw.githubusercontent.com/*",
+    "https://connect.trezor.io/*"
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"
