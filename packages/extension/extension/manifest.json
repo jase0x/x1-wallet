@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "X1 Wallet",
-  "version": "0.10.71",
+  "version": "0.10.73",
   "description": "X1 Blockchain Native Wallet",
   "action": {
     "default_popup": "index.html",

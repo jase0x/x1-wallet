@@ -146,6 +146,19 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
     const bal = parseFloat(t.uiAmount) || parseFloat(t.balance) || 0;
     const rawAmount = parseInt(t.amount) || 0;
     return bal > 0 || rawAmount > 0;
+  }).sort((a, b) => {
+    // Sort by USD value (highest first), fallback to raw balance
+    const aBalance = parseFloat(a.uiAmount || a.balance || 0);
+    const bBalance = parseFloat(b.uiAmount || b.balance || 0);
+    const aPrice = parseFloat(a.price || 0);
+    const bPrice = parseFloat(b.price || 0);
+    const aUsdValue = a.usdValue || (aBalance * aPrice);
+    const bUsdValue = b.usdValue || (bBalance * bPrice);
+    
+    if (aUsdValue > 0 || bUsdValue > 0) {
+      return bUsdValue - aUsdValue;
+    }
+    return bBalance - aBalance;
   });
 
   const availableTokens = [nativeToken, ...tokensWithBalance];

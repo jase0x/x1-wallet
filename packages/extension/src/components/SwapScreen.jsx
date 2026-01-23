@@ -256,6 +256,27 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
   const walletReady = !!(wallet && wallet.network);
   const currentNetwork = wallet?.network || 'X1 Mainnet';
   
+  // Track wallet public key for change detection
+  const currentWalletKey = wallet?.wallet?.publicKey || wallet?.activeAddress?.publicKey || '';
+  const prevWalletKeyRef = useRef(currentWalletKey);
+  
+  // Reset swap state when wallet changes to prevent signature mismatch
+  useEffect(() => {
+    if (prevWalletKeyRef.current && currentWalletKey && prevWalletKeyRef.current !== currentWalletKey) {
+      logger.log('[SwapScreen] Wallet changed, resetting swap state');
+      logger.log('[SwapScreen] Previous:', prevWalletKeyRef.current?.slice(0, 8), '-> Current:', currentWalletKey?.slice(0, 8));
+      
+      // Clear quote and confirmation to prevent signing with mismatched keys
+      setQuote(null);
+      setQuoteTimestamp(null);
+      setShowConfirm(false);
+      setSwapStatus('');
+      setError('');
+      setToAmount('');
+    }
+    prevWalletKeyRef.current = currentWalletKey;
+  }, [currentWalletKey]);
+  
   // Get network config - check custom networks first, then built-in
   const getNetworkConfig = () => {
     // First check built-in networks
@@ -1105,12 +1126,21 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
   const setMaxAmount = () => {
     // Leave a small amount for gas (0.002 SOL is plenty for most transactions)
     const gasReserve = 0.002;
-    const rawMax = fromToken.symbol === nativeSymbol 
-      ? Math.max(0, (fromToken.balance || walletBalance) - gasReserve) 
-      : (fromToken.balance || 0);
-    // Round to token's decimals (default 9) to avoid floating point artifacts
-    const decimals = fromToken.decimals || 9;
-    const maxAmount = Math.floor(rawMax * Math.pow(10, decimals)) / Math.pow(10, decimals);
+    
+    let rawMax;
+    if (fromToken.symbol === nativeSymbol) {
+      // Native token: subtract gas reserve
+      rawMax = Math.max(0, (fromToken.balance || walletBalance) - gasReserve);
+    } else {
+      // SPL tokens: use full balance
+      rawMax = fromToken.balance || 0;
+    }
+    
+    // Round DOWN to 4 decimal places for max button to avoid precision issues
+    // Swap APIs often round UP internally (e.g., 0.099095 becomes 0.0991 required)
+    // Using 4 decimals ensures we don't hit "insufficient balance" from rounding
+    const maxDecimals = 4;
+    const maxAmount = Math.floor(rawMax * Math.pow(10, maxDecimals)) / Math.pow(10, maxDecimals);
     handleFromAmountChange(maxAmount.toString());
   };
 
@@ -1316,6 +1346,12 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
       logger.log('[Swap] Found publicKey:', walletPublicKey ? walletPublicKey.slice(0, 8) + '...' : 'null');
       logger.log('[Swap] privateKey available:', !!privateKey);
       logger.log('[Swap] Final isHardwareWallet check:', isHardwareWallet);
+      
+      // Verify wallet hasn't changed since quote was fetched
+      if (prevWalletKeyRef.current && walletPublicKey !== prevWalletKeyRef.current) {
+        logger.error('[Swap] Wallet changed during swap! Aborting to prevent signature mismatch.');
+        throw new Error('Wallet changed. Please get a new quote and try again.');
+      }
       
       // Validate wallet public key
       if (!walletPublicKey || typeof walletPublicKey !== 'string') {
@@ -1986,6 +2022,22 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
     // Show custom tokens
     if (t.isCustom) return true;
     return false;
+  }).sort((a, b) => {
+    // Native token always first
+    if (a.symbol === nativeSymbol) return -1;
+    if (b.symbol === nativeSymbol) return 1;
+    // Sort by USD value (highest first), fallback to raw balance
+    const aBalance = parseFloat(a.uiAmount || a.balance || 0);
+    const bBalance = parseFloat(b.uiAmount || b.balance || 0);
+    const aPrice = parseFloat(a.price || 0);
+    const bPrice = parseFloat(b.price || 0);
+    const aUsdValue = a.usdValue || (aBalance * aPrice);
+    const bUsdValue = b.usdValue || (bBalance * bPrice);
+    
+    if (aUsdValue > 0 || bUsdValue > 0) {
+      return bUsdValue - aUsdValue;
+    }
+    return bBalance - aBalance;
   });
 
   // Manage Tokens Screen

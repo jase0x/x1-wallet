@@ -116,6 +116,19 @@ export default function SendScreen({ wallet, selectedToken: initialToken, userTo
       logger.log('[SendScreen] Token with balance:', t.symbol || t.mint?.slice(0, 8));
     }
     return hasBalance;
+  }).sort((a, b) => {
+    // Sort by USD value (highest first), fallback to raw balance
+    const aBalance = parseFloat(a.uiAmount || a.balance || 0);
+    const bBalance = parseFloat(b.uiAmount || b.balance || 0);
+    const aPrice = parseFloat(a.price || 0);
+    const bPrice = parseFloat(b.price || 0);
+    const aUsdValue = a.usdValue || (aBalance * aPrice);
+    const bUsdValue = b.usdValue || (bBalance * bPrice);
+    
+    if (aUsdValue > 0 || bUsdValue > 0) {
+      return bUsdValue - aUsdValue;
+    }
+    return bBalance - aBalance;
   });
 
   // Combine native token with user's SPL tokens

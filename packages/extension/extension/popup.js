@@ -13232,6 +13232,7 @@ const CURRENT_VERSION = 3;
 const SALT_LENGTH = 16;
 const IV_LENGTH = 12;
 const VERSION_BYTE_LENGTH = 1;
+const ENCRYPTED_PREFIX = "X1W:v3:";
 async function deriveKey(password, salt, iterations = PBKDF2_ITERATIONS_V3) {
   const encoder = new TextEncoder();
   const keyMaterial = await crypto.subtle.importKey(
@@ -13280,13 +13281,17 @@ async function encryptData(plaintext, password) {
     const chunk = combined.subarray(i, Math.min(i + chunkSize, combined.length));
     binary += String.fromCharCode.apply(null, chunk);
   }
-  return btoa(binary);
+  return ENCRYPTED_PREFIX + btoa(binary);
 }
 async function decryptData(encryptedBase64, password) {
   if (!password) throw new Error("Password is required for decryption");
   if (!encryptedBase64) throw new Error("No encrypted data provided");
   try {
-    const combined = Uint8Array.from(atob(encryptedBase64), (c) => c.charCodeAt(0));
+    let base64Data = encryptedBase64;
+    if (encryptedBase64.startsWith(ENCRYPTED_PREFIX)) {
+      base64Data = encryptedBase64.slice(ENCRYPTED_PREFIX.length);
+    }
+    const combined = Uint8Array.from(atob(base64Data), (c) => c.charCodeAt(0));
     let salt, iv, encrypted, iterations;
     if (combined[0] === 3) {
       salt = combined.slice(VERSION_BYTE_LENGTH, VERSION_BYTE_LENGTH + SALT_LENGTH);
@@ -13361,11 +13366,19 @@ async function verifyPassword(password, storedHash, storedSalt) {
 }
 function isEncrypted(data) {
   if (!data || typeof data !== "string") return false;
+  if (data.startsWith(ENCRYPTED_PREFIX)) {
+    return true;
+  }
   try {
-    const decoded = atob(data);
-    return decoded.length >= SALT_LENGTH + IV_LENGTH + 16;
-  } catch {
+    JSON.parse(data);
     return false;
+  } catch {
+    try {
+      const decoded = atob(data);
+      return decoded.length >= SALT_LENGTH + IV_LENGTH + 16;
+    } catch {
+      return false;
+    }
   }
 }
 const RPC_OVERRIDES_KEY = "x1wallet_rpcOverrides";
@@ -14229,7 +14242,7 @@ const ICONS = {
   // External icons (third-party tokens)
   SOL: "/icons/48-sol.png",
   USDC: "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png",
-  USDT: "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.png",
+  USDT: "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.svg",
   MSOL: "https://raw.githubusercontent.com/marinade-finance/msol-logo/main/msol-logo.png",
   BONK: "https://arweave.net/hQiPZOsRZXGXBJd_82PhVdlM_hACsT_q6wqwf5cSY7I",
   JUP: "https://static.jup.ag/jup/icon.png",
@@ -16102,9 +16115,13 @@ function useWallet() {
           throw new Error("Incorrect password");
         }
       } else {
-        const parsed = JSON.parse(saved);
+        logger$1.error("[SECURITY] Plaintext wallet data blocked. Re-import required.");
+        console.error("[SECURITY] ⛔ Unencrypted wallet data detected and BLOCKED.");
+        console.error("[SECURITY] For your security, plaintext wallets cannot be loaded.");
+        console.error("[SECURITY] Please re-import your wallet using your seed phrase.");
+        console.error("[SECURITY] Your data has NOT been deleted - you can export it manually if needed.");
         setIsLocked(false);
-        return parsed.map(migrateWallet);
+        return [];
       }
     } catch (e) {
       if (e.message === "Incorrect password") throw e;
@@ -16200,12 +16217,13 @@ function useWallet() {
             setIsLocked(true);
           }
         } else if (saved) {
-          console.log("[useWallet] Data is plain JSON - parsing...");
-          const parsed = JSON.parse(saved);
-          const migrated = parsed.map(migrateWallet);
-          console.log("[useWallet] Loaded", migrated.length, "wallets");
-          setWallets(migrated);
-          setActiveWalletId(activeId || (migrated.length > 0 ? migrated[0].id : null));
+          console.error("[SECURITY] ⛔ Unencrypted wallet data detected and BLOCKED.");
+          console.error("[SECURITY] For your security, plaintext wallets cannot be loaded.");
+          console.error("[SECURITY] Please re-import your wallet using your seed phrase.");
+          console.error("[SECURITY] Your data has NOT been deleted - you can export it manually if needed.");
+          logger$1.error("[useWallet] Plaintext wallet data blocked");
+          setWallets([]);
+          setIsLocked(false);
         } else {
           console.log("[useWallet] No saved data found");
         }
@@ -16849,7 +16867,7 @@ function WelcomeScreen({ onCreateWallet, onImportWallet, onHardwareWallet, onBac
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "welcome-footer", children: "Powered by X1 Blockchain" })
   ] });
 }
-function CreateWallet({ onComplete, onBack, passwordProtection: propPasswordProtection, sessionPassword }) {
+function CreateWallet({ onComplete, onBack, passwordProtection: propPasswordProtection, sessionPassword, existingWallets = [] }) {
   const [step, setStep] = reactExports.useState("choose");
   const [seedLength, setSeedLength] = reactExports.useState(12);
   const [mnemonic, setMnemonic] = reactExports.useState("");
@@ -16858,6 +16876,20 @@ function CreateWallet({ onComplete, onBack, passwordProtection: propPasswordProt
   const [activeInput, setActiveInput] = reactExports.useState(-1);
   const [verifyIndices, setVerifyIndices] = reactExports.useState([]);
   const [verifyInputs, setVerifyInputs] = reactExports.useState({});
+  const getNextWalletNumber = () => {
+    let maxNumber = 0;
+    existingWallets.forEach((w2) => {
+      var _a2;
+      const match = (_a2 = w2.name) == null ? void 0 : _a2.match(/(\d+)\s*$/);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (num > maxNumber) maxNumber = num;
+      }
+    });
+    return Math.max(maxNumber, existingWallets.length) + 1;
+  };
+  const nextWalletNumber = getNextWalletNumber();
+  const suggestedName = `Wallet ${nextWalletNumber}`;
   const [walletName, setWalletName] = reactExports.useState("");
   const [error, setError] = reactExports.useState("");
   const [copied, setCopied] = reactExports.useState(false);
@@ -17073,7 +17105,7 @@ function CreateWallet({ onComplete, onBack, passwordProtection: propPasswordProt
   };
   const handleNameContinue = async () => {
     if (!passwordRequired) {
-      onComplete(mnemonic, walletName.trim() || "My Wallet", null);
+      onComplete(mnemonic, walletName.trim() || suggestedName, null);
       return;
     }
     if (sessionPassword) {
@@ -17084,7 +17116,7 @@ function CreateWallet({ onComplete, onBack, passwordProtection: propPasswordProt
         }, true ? [] : void 0);
         const isValid = await checkPassword(sessionPassword);
         if (isValid) {
-          onComplete(mnemonic, walletName.trim() || "My Wallet", sessionPassword);
+          onComplete(mnemonic, walletName.trim() || suggestedName, sessionPassword);
           return;
         }
       } catch (e) {
@@ -17118,7 +17150,7 @@ function CreateWallet({ onComplete, onBack, passwordProtection: propPasswordProt
         setVerifying(false);
         return;
       }
-      onComplete(mnemonic, walletName.trim() || "My Wallet", password);
+      onComplete(mnemonic, walletName.trim() || suggestedName, password);
     } catch (err) {
       logger$1.error("Password verification error:", err);
       logger$1.log("[CreateWallet] Verification failed, falling back to password creation");
@@ -17138,7 +17170,7 @@ function CreateWallet({ onComplete, onBack, passwordProtection: propPasswordProt
       setError("Passwords do not match");
       return;
     }
-    onComplete(mnemonic, walletName.trim() || "My Wallet", password);
+    onComplete(mnemonic, walletName.trim() || suggestedName, password);
   };
   const copyMnemonic = () => {
     const cleanMnemonic = mnemonic.trim().toLowerCase().split(/\s+/).join(" ");
@@ -17378,7 +17410,7 @@ function CreateWallet({ onComplete, onBack, passwordProtection: propPasswordProt
           className: "form-input",
           value: walletName,
           onChange: (e) => setWalletName(e.target.value),
-          placeholder: "My Wallet",
+          placeholder: suggestedName,
           autoFocus: true
         }
       ) }),
@@ -17575,10 +17607,24 @@ function CreateWallet({ onComplete, onBack, passwordProtection: propPasswordProt
   }
   return null;
 }
-function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPassword }) {
+function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPassword, existingWallets = [] }) {
   const [importType, setImportType] = reactExports.useState("phrase");
   const [seedLength, setSeedLength] = reactExports.useState(12);
   const [words, setWords] = reactExports.useState(Array(12).fill(""));
+  const getNextWalletNumber = () => {
+    let maxNumber = 0;
+    existingWallets.forEach((w2) => {
+      var _a2;
+      const match = (_a2 = w2.name) == null ? void 0 : _a2.match(/(\d+)\s*$/);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (num > maxNumber) maxNumber = num;
+      }
+    });
+    return Math.max(maxNumber, existingWallets.length) + 1;
+  };
+  const nextWalletNumber = getNextWalletNumber();
+  const suggestedName = `Wallet ${nextWalletNumber}`;
   const [walletName, setWalletName] = reactExports.useState("");
   const [step, setStep] = reactExports.useState("import");
   const [error, setError] = reactExports.useState("");
@@ -17733,7 +17779,7 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPasswor
   };
   const handleNameContinue = async () => {
     if (!passwordRequired) {
-      onComplete(words.join(" "), walletName || "Imported Wallet", null);
+      onComplete(words.join(" "), walletName || suggestedName, null);
       return;
     }
     if (sessionPassword) {
@@ -17744,7 +17790,7 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPasswor
         }, true ? [] : void 0);
         const isValid = await checkPassword(sessionPassword);
         if (isValid) {
-          onComplete(words.join(" "), walletName || "Imported Wallet", sessionPassword);
+          onComplete(words.join(" "), walletName || suggestedName, sessionPassword);
           return;
         }
       } catch (e) {
@@ -17778,7 +17824,7 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPasswor
         setVerifying(false);
         return;
       }
-      onComplete(words.join(" "), walletName || "Imported Wallet", password);
+      onComplete(words.join(" "), walletName || suggestedName, password);
     } catch (err) {
       logger$1.error("Password verification error:", err);
       logger$1.log("[ImportWallet] Verification failed, falling back to password creation");
@@ -17798,7 +17844,7 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPasswor
       setError("Passwords do not match");
       return;
     }
-    onComplete(words.join(" "), walletName || "Imported Wallet", password);
+    onComplete(words.join(" "), walletName || suggestedName, password);
   };
   const handlePrivateKeyImport = async () => {
     setError("");
@@ -17949,7 +17995,7 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPasswor
       onCompletePrivateKey({
         publicKey: publicKeyBase58,
         privateKey: privateKeyBase58,
-        name: walletName || "Imported Wallet",
+        name: walletName || suggestedName,
         password: pwd
       });
     } catch (err) {
@@ -17998,7 +18044,7 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPasswor
       onCompletePrivateKey({
         publicKey: publicKeyBase58,
         privateKey: privateKeyBase58,
-        name: walletName || "Imported Wallet",
+        name: walletName || suggestedName,
         password
       });
     } catch (err) {
@@ -18014,7 +18060,7 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPasswor
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen-content seed-container", style: { paddingTop: 0 }, children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "seed-subtitle", children: "Give your imported wallet a name" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "form-group", style: { marginTop: 24 }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "text", className: "form-input", value: walletName, onChange: (e) => setWalletName(e.target.value), onKeyDown: (e) => e.key === "Enter" && handleNameContinue(), placeholder: "My Imported Wallet", autoFocus: true }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "form-group", style: { marginTop: 24 }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "text", className: "form-input", value: walletName, onChange: (e) => setWalletName(e.target.value), onKeyDown: (e) => e.key === "Enter" && handleNameContinue(), placeholder: suggestedName, autoFocus: true }) }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", type: "button", onClick: handleNameContinue, style: { marginTop: 24 }, children: "Continue" })
       ] })
     ] });
@@ -18227,7 +18273,7 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPasswor
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen-content seed-container", style: { paddingTop: 0 }, children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "seed-subtitle", children: "Give your imported wallet a name" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "form-group", style: { marginTop: 24 }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "text", className: "form-input", value: walletName, onChange: (e) => setWalletName(e.target.value), onKeyDown: (e) => e.key === "Enter" && handleNamePkContinue(), placeholder: "My Imported Wallet", autoFocus: true }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "form-group", style: { marginTop: 24 }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "text", className: "form-input", value: walletName, onChange: (e) => setWalletName(e.target.value), onKeyDown: (e) => e.key === "Enter" && handleNamePkContinue(), placeholder: suggestedName, autoFocus: true }) }),
         error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", children: error }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", type: "button", onClick: handleNamePkContinue, style: { marginTop: 24 }, children: "Continue" })
       ] })
@@ -20337,26 +20383,33 @@ const CONNECTION_TYPES = {
   BLUETOOTH: "bluetooth"
 };
 const DERIVATION_SCHEMES = {
-  // Standard BIP44: m/44'/501'/{account}'
-  BIP44_STANDARD: {
-    id: "bip44_standard",
-    name: "Standard (BIP44)",
-    description: "m/44'/501'/<account>'",
-    getPath: (index) => `44'/501'/${index}'`
-  },
-  // Extended BIP44: m/44'/501'/{account}'/0'
-  BIP44_EXTENDED: {
-    id: "bip44_extended",
-    name: "Extended (BIP44)",
+  // Default: m/44'/501'/{account}'/0'
+  // Used by Phantom, Backpack, Ledger, Brave, and most modern Solana wallets
+  DEFAULT: {
+    id: "default",
+    name: "Default",
     description: "m/44'/501'/<account>'/0'",
     getPath: (index) => `44'/501'/${index}'/0'`
   },
-  // Legacy BIP44 Change: m/44'/501'/0'/{account}'
-  BIP44_LEGACY: {
-    id: "bip44_legacy",
-    name: "Legacy",
-    description: "m/44'/501'/0'/<account>'",
-    getPath: (index) => `44'/501'/0'/${index}'`
+  // Solflare-style: m/44'/501'/{account}'
+  // Used for scanning existing wallets, not shown in UI
+  SOLFLARE: {
+    id: "solflare",
+    name: "Solflare",
+    description: "m/44'/501'/<account>'",
+    getPath: (index) => `44'/501'/${index}'`,
+    hidden: true
+    // Don't show in UI, only for scanning
+  },
+  // Deprecated Legacy: m/501'/{index}'/0/0
+  // Used for scanning old wallets, not shown in UI
+  DEPRECATED: {
+    id: "deprecated",
+    name: "Deprecated",
+    description: "m/501'/<account>'/0/0",
+    getPath: (index) => `501'/${index}'/0/0`,
+    hidden: true
+    // Don't show in UI, only for scanning
   }
 };
 class HardwareWalletService {
@@ -20368,7 +20421,7 @@ class HardwareWalletService {
     this.state = LEDGER_STATES.DISCONNECTED;
     this.publicKey = null;
     this.derivationPath = "44'/501'/0'/0'";
-    this.currentScheme = DERIVATION_SCHEMES.BIP44_EXTENDED;
+    this.currentScheme = DERIVATION_SCHEMES.DEFAULT;
     this.sessionInvalid = false;
   }
   // Mark session as invalid and close transport
@@ -21024,7 +21077,7 @@ class TrezorWalletService {
   getDerivationPaths() {
     return [
       { path: "44'/501'/0'/0'", label: "Default (m/44'/501'/0'/0')" },
-      { path: "44'/501'/0'", label: "Legacy (m/44'/501'/0')" },
+      { path: "44'/501'/0'", label: "Solflare (m/44'/501'/0')" },
       { path: "44'/501'/1'/0'", label: "Account 2 (m/44'/501'/1'/0')" },
       { path: "44'/501'/2'/0'", label: "Account 3 (m/44'/501'/2'/0')" }
     ];
@@ -21060,7 +21113,7 @@ function HardwareWallet({ onComplete, onBack, isFirstWallet = false, existingWal
   const [walletName, setWalletName] = reactExports.useState("");
   const [derivationPaths] = reactExports.useState(hardwareWallet.getDerivationPaths());
   const [loadedCount, setLoadedCount] = reactExports.useState(0);
-  const [selectedScheme, setSelectedScheme] = reactExports.useState(DERIVATION_SCHEMES.BIP44_STANDARD);
+  const [selectedScheme, setSelectedScheme] = reactExports.useState(DERIVATION_SCHEMES.DEFAULT);
   const [customPath, setCustomPath] = reactExports.useState("");
   const [showCustomPath, setShowCustomPath] = reactExports.useState(false);
   const [balances, setBalances] = reactExports.useState({});
@@ -21157,10 +21210,12 @@ function HardwareWallet({ onComplete, onBack, isFirstWallet = false, existingWal
     try {
       const wallet = getWallet();
       await wallet.connect(connectionType);
-      logger$1.log("[HardwareWallet] Device connected, setting step to app");
-      setStatus("Device connected!");
-      setStep("app");
-      logger$1.log("[HardwareWallet] Step updated");
+      logger$1.log("[HardwareWallet] Device connected");
+      setStatus("Opening Solana app...");
+      await wallet.openApp();
+      logger$1.log("[HardwareWallet] App opened, going to scheme selection");
+      setStatus("Ready!");
+      setStep("scheme");
     } catch (err) {
       logger$1.error("[HardwareWallet] Connection failed:", err);
       logger$1.error("[HardwareWallet] Error name:", err == null ? void 0 : err.name);
@@ -21169,43 +21224,6 @@ function HardwareWallet({ onComplete, onBack, isFirstWallet = false, existingWal
       const errorMsg = (err == null ? void 0 : err.message) || (err == null ? void 0 : err.name) || `Failed to connect to device. Make sure ${deviceType === HW_TYPES.TREZOR ? "Trezor" : "Ledger"} is connected and unlocked.`;
       setError(errorMsg);
     } finally {
-      setLoading(false);
-    }
-  };
-  const openAppAndSelectScheme = async () => {
-    setLoading(true);
-    setError("");
-    setStatus(deviceType === HW_TYPES.TREZOR ? "Connecting to Trezor..." : "Opening Solana app...");
-    try {
-      const wallet = getWallet();
-      await wallet.openApp();
-      setStatus("Ready!");
-      setLoading(false);
-      setStep("scheme");
-    } catch (err) {
-      setError(err.message || "Failed to open app");
-      setLoading(false);
-    }
-  };
-  const getAccountsForScheme = async () => {
-    setLoading(true);
-    setError("");
-    setStatus("Getting accounts...");
-    try {
-      const wallet = getWallet();
-      const accountList = await wallet.getAccountsForScheme(selectedScheme, 0, 5);
-      if (accountList.length === 0) {
-        throw new Error(`No accounts found. Make sure ${deviceType === HW_TYPES.TREZOR ? "Trezor is unlocked" : "the Solana app is open on your Ledger"}.`);
-      }
-      setAccounts(accountList);
-      setLoadedCount(accountList.length);
-      setSelectedAccounts([]);
-      setLoading(false);
-      setShowCustomPath(false);
-      setStep("account");
-      fetchBalances(accountList);
-    } catch (err) {
-      setError(err.message || "Failed to get accounts");
       setLoading(false);
     }
   };
@@ -21241,46 +21259,6 @@ function HardwareWallet({ onComplete, onBack, isFirstWallet = false, existingWal
       setLoading(false);
     }
   };
-  const scanAllPaths = async () => {
-    setLoading(true);
-    setError("");
-    setStatus("Scanning all paths...");
-    try {
-      const wallet = getWallet();
-      const allAccounts = [];
-      const seenAddresses = /* @__PURE__ */ new Set();
-      for (const scheme of Object.values(DERIVATION_SCHEMES)) {
-        setStatus(`Scanning ${scheme.name}...`);
-        try {
-          const schemeAccounts = await wallet.getAccountsForScheme(scheme, 0, 5);
-          for (const account of schemeAccounts) {
-            if (!seenAddresses.has(account.address)) {
-              seenAddresses.add(account.address);
-              allAccounts.push({
-                ...account,
-                label: `${scheme.name} #${account.index}`,
-                schemeName: scheme.name
-              });
-            }
-          }
-        } catch (e) {
-          logger$1.warn(`Failed to scan ${scheme.name}:`, e);
-        }
-      }
-      if (allAccounts.length === 0) {
-        throw new Error("No accounts found on any derivation path.");
-      }
-      setAccounts(allAccounts);
-      setLoadedCount(allAccounts.length);
-      setSelectedAccount(allAccounts[0]);
-      setLoading(false);
-      setShowCustomPath(false);
-      setStep("account");
-    } catch (err) {
-      setError(err.message || "Failed to scan paths");
-      setLoading(false);
-    }
-  };
   const loadMoreAccounts = async () => {
     setLoadingMore(true);
     setError("");
@@ -21298,18 +21276,37 @@ function HardwareWallet({ onComplete, onBack, isFirstWallet = false, existingWal
     setLoadingMore(false);
   };
   const verifyOnDevice = async () => {
-    if (selectedAccounts.length === 0) return;
+    var _a2;
+    if (selectedAccounts.length === 0) {
+      setError("Please select an account first");
+      return;
+    }
     const accountToVerify = selectedAccounts[0];
     setLoading(true);
-    setStatus(`Please verify address on your ${deviceType === HW_TYPES.TREZOR ? "Trezor" : "Ledger"}...`);
+    setError("");
+    setStatus(`Check your ${deviceType === HW_TYPES.TREZOR ? "Trezor" : "Ledger"} screen to verify the address...`);
     try {
       const wallet = getWallet();
-      await wallet.getPublicKey(accountToVerify.path, true);
+      await wallet.openApp();
+      const address = await wallet.getPublicKey(accountToVerify.path, true);
       setLoading(false);
-      setStatus("Address verified!");
+      setStatus("");
+      if (address === accountToVerify.address) {
+        setError("");
+        alert(`Address verified on device!
+
+${address}`);
+      } else {
+        setError("Warning: Address mismatch! The address on device does not match.");
+      }
     } catch (err) {
-      setError(err.message || "Verification cancelled");
       setLoading(false);
+      setStatus("");
+      if (((_a2 = err.message) == null ? void 0 : _a2.includes("rejected")) || err.statusCode === 27013) {
+        setError("Verification cancelled on device");
+      } else {
+        setError(err.message || "Failed to verify address. Try reconnecting your device.");
+      }
     }
   };
   const handleComplete = () => {
@@ -21562,117 +21559,227 @@ function HardwareWallet({ onComplete, onBack, isFirstWallet = false, existingWal
       ] })
     ] });
   }
-  if (step === "app") {
-    const isTrezor = deviceType === HW_TYPES.TREZOR;
-    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen hardware-screen no-nav", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", onClick: () => {
-        getWallet().disconnect();
-        setStep(isTrezor ? "select" : "connection");
-      }, style: { alignSelf: "flex-start", marginBottom: 16 }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "hardware-connecting", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "hardware-device-icon connected", children: isTrezor ? /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "48", height: "48", viewBox: "0 0 24 24", fill: "none", stroke: "var(--success)", strokeWidth: "2", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M12 2L4 6v6c0 5.5 3.4 10.3 8 12 4.6-1.7 8-6.5 8-12V6l-8-4z" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("polyline", { points: "9 12 12 15 16 10" })
-        ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "48", height: "48", viewBox: "0 0 24 24", fill: "none", stroke: "var(--success)", strokeWidth: "2", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "2", y: "6", width: "20", height: "12", rx: "2" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M12 10v4" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "1" })
-        ] }) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: isTrezor ? "Trezor Connected" : "Ledger Connected" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: isTrezor ? "Click Continue to select your account" : "Now open the Solana app on your device and click Continue" })
-      ] }),
-      error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", children: error }),
-      status && loading && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "status-message", children: status }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "button",
-        {
-          className: "btn-primary",
-          onClick: openAppAndSelectScheme,
-          disabled: loading,
-          children: loading ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "spinner-small" }),
-            status || "Loading..."
-          ] }) : "Continue"
-        }
-      )
-    ] });
-  }
   if (step === "scheme") {
+    const handleDefault = async () => {
+      setLoading(true);
+      setError("");
+      setStatus("Getting accounts...");
+      try {
+        const wallet = getWallet();
+        const accountList = await wallet.getAccountsForScheme(DERIVATION_SCHEMES.DEFAULT, 0, 5);
+        if (accountList.length === 0) {
+          throw new Error(`No accounts found. Make sure ${deviceType === HW_TYPES.TREZOR ? "Trezor is unlocked" : "the Solana app is open on your Ledger"}.`);
+        }
+        setAccounts(accountList);
+        setLoadedCount(accountList.length);
+        setSelectedScheme(DERIVATION_SCHEMES.DEFAULT);
+        setSelectedAccounts([]);
+        setLoading(false);
+        setStep("account");
+        fetchBalances(accountList);
+      } catch (err) {
+        setError(err.message || "Failed to get accounts");
+        setLoading(false);
+      }
+    };
+    const handleScan = async () => {
+      setLoading(true);
+      setError("");
+      setStatus("Scanning all paths...");
+      try {
+        const wallet = getWallet();
+        const allAccounts = [];
+        const seenAddresses = /* @__PURE__ */ new Set();
+        let accountNum = 1;
+        for (const scheme of Object.values(DERIVATION_SCHEMES)) {
+          setStatus(`Scanning ${scheme.name}...`);
+          try {
+            const schemeAccounts = await wallet.getAccountsForScheme(scheme, 0, 3);
+            for (const account of schemeAccounts) {
+              if (!seenAddresses.has(account.address)) {
+                seenAddresses.add(account.address);
+                allAccounts.push({
+                  ...account,
+                  label: `Account ${accountNum}`
+                });
+                accountNum++;
+              }
+            }
+          } catch (e) {
+            logger$1.warn(`Failed to scan ${scheme.name}:`, e);
+          }
+        }
+        if (allAccounts.length === 0) {
+          throw new Error("No accounts found on any path.");
+        }
+        setAccounts(allAccounts);
+        setLoadedCount(allAccounts.length);
+        setSelectedAccounts([]);
+        setLoading(false);
+        setStep("account");
+        fetchBalances(allAccounts);
+      } catch (err) {
+        setError(err.message || "Failed to scan paths");
+        setLoading(false);
+      }
+    };
+    const handleCustom = async () => {
+      if (!customPath.trim()) {
+        setError("Please enter a derivation path");
+        return;
+      }
+      setLoading(true);
+      setError("");
+      setStatus("Getting account...");
+      try {
+        const wallet = getWallet();
+        let path = customPath.trim();
+        if (path.startsWith("m/")) {
+          path = path.slice(2);
+        }
+        const publicKey = await wallet.getPublicKey(path, false);
+        const account = {
+          address: publicKey,
+          path,
+          label: "Custom Path",
+          index: 0
+        };
+        setAccounts([account]);
+        setLoadedCount(1);
+        setSelectedAccounts([account]);
+        setLoading(false);
+        setStep("account");
+        fetchBalances([account]);
+      } catch (err) {
+        setError(err.message || "Failed to get account");
+        setLoading(false);
+      }
+    };
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen hardware-screen no-nav", style: { justifyContent: "flex-start", paddingTop: 20, paddingBottom: 20 }, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", onClick: () => setStep("app"), style: { alignSelf: "flex-start", marginBottom: 20 }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", onClick: () => {
+        setAccounts([]);
+        setShowCustomPath(false);
+        setCustomPath("");
+        getWallet().disconnect();
+        setStep("connect");
+      }, style: { alignSelf: "flex-start", marginBottom: 20 }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { style: { marginBottom: 6 }, children: "Select Derivation Path" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { style: { margin: "0 0 20px 0", fontSize: 14, color: "var(--text-muted)" }, children: "Choose the path that matches your wallet" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { display: "flex", flexDirection: "column", gap: 10, flex: 1 }, children: Object.values(DERIVATION_SCHEMES).map((scheme) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
-        "button",
-        {
-          onClick: () => setSelectedScheme(scheme),
-          style: {
-            border: selectedScheme.id === scheme.id ? "2px solid var(--x1-blue)" : "1px solid var(--border-color)",
-            background: selectedScheme.id === scheme.id ? "rgba(0, 122, 255, 0.1)" : "var(--bg-secondary)",
-            padding: "16px",
-            borderRadius: 12,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            textAlign: "center",
-            gap: 4,
-            cursor: "pointer",
-            transition: "all 0.15s ease"
-          },
-          children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 16, fontWeight: 600, color: "var(--text-primary)" }, children: scheme.name }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 13, color: "var(--text-muted)", fontFamily: "monospace" }, children: scheme.description })
-          ]
-        },
-        scheme.id
-      )) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: {
-        display: "flex",
-        gap: 10,
-        padding: "12px 14px",
-        background: "var(--bg-secondary)",
-        borderRadius: 10,
-        marginTop: 16,
-        marginBottom: 16,
-        fontSize: 13,
-        color: "var(--text-secondary)",
-        alignItems: "flex-start"
-      }, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "none", stroke: "var(--x1-blue)", strokeWidth: "2", style: { flexShrink: 0, marginTop: 1 }, children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "10" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "12", y1: "16", x2: "12", y2: "12" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "12", y1: "8", x2: "12.01", y2: "8" })
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { style: { margin: "0 0 20px 0", fontSize: 14, color: "var(--text-muted)" }, children: loading ? status : "Choose how to set up your wallet" }),
+      loading ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: 1, gap: 16 }, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "spinner", style: { width: 40, height: 40 } }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { style: { color: "var(--text-secondary)", fontSize: 14 }, children: status })
+      ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: 10 }, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "button",
+          {
+            onClick: handleDefault,
+            disabled: loading,
+            style: {
+              border: "1px solid var(--border-color)",
+              background: "var(--bg-secondary)",
+              padding: "16px",
+              borderRadius: 12,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-start",
+              textAlign: "left",
+              gap: 4,
+              cursor: "pointer",
+              transition: "all 0.15s ease",
+              position: "relative"
+            },
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: {
+                position: "absolute",
+                top: 8,
+                right: 8,
+                fontSize: 10,
+                background: "var(--x1-blue)",
+                color: "white",
+                padding: "2px 8px",
+                borderRadius: 4,
+                fontWeight: 600
+              }, children: "RECOMMENDED" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 16, fontWeight: 600, color: "var(--text-primary)" }, children: "Default" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 13, color: "var(--text-muted)" }, children: "Extended derivation path for most wallets" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 12, color: "var(--text-muted)", fontFamily: "monospace", marginTop: 4 }, children: "m/44'/501'/{account}'/0'" })
+            ]
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "button",
+          {
+            onClick: handleScan,
+            disabled: loading,
+            style: {
+              border: "1px solid var(--border-color)",
+              background: "var(--bg-secondary)",
+              padding: "16px",
+              borderRadius: 12,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-start",
+              textAlign: "left",
+              gap: 4,
+              cursor: "pointer",
+              transition: "all 0.15s ease"
+            },
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 16, fontWeight: 600, color: "var(--text-primary)" }, children: "Scan to Find" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 13, color: "var(--text-muted)" }, children: "Search Solflare, deprecated, and legacy paths for existing accounts" })
+            ]
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "button",
+          {
+            onClick: () => setShowCustomPath(!showCustomPath),
+            disabled: loading,
+            style: {
+              border: showCustomPath ? "2px solid var(--x1-blue)" : "1px solid var(--border-color)",
+              background: showCustomPath ? "rgba(0, 122, 255, 0.1)" : "var(--bg-secondary)",
+              padding: "16px",
+              borderRadius: 12,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-start",
+              textAlign: "left",
+              gap: 4,
+              cursor: "pointer",
+              transition: "all 0.15s ease"
+            },
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 16, fontWeight: 600, color: "var(--text-primary)" }, children: "Custom Path" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 13, color: "var(--text-muted)" }, children: "Enter a specific path (e.g., m/44'/501'/0'/0')" })
+            ]
+          }
+        ),
+        showCustomPath && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: 10, marginTop: 8 }, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              type: "text",
+              className: "form-input",
+              value: customPath,
+              onChange: (e) => setCustomPath(e.target.value),
+              placeholder: "e.g., m/44'/501'/0'/0'",
+              style: { fontFamily: "monospace", fontSize: 14 },
+              autoFocus: true
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              className: "btn-primary",
+              onClick: handleCustom,
+              disabled: loading || !customPath.trim(),
+              style: { padding: "12px", fontSize: 14 },
+              children: "Continue with Custom Path"
+            }
+          )
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Not sure?" }),
-          ` Try "Standard (BIP44)" first. If your accounts don't appear, go back and try another path.`
-        ] })
-      ] }),
-      error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", style: { marginBottom: 12 }, children: error }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "button",
-        {
-          className: "btn-primary",
-          onClick: getAccountsForScheme,
-          disabled: loading,
-          style: { padding: "14px", fontSize: 15 },
-          children: loading ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "spinner-small" }),
-            status || "Loading..."
-          ] }) : "Continue"
-        }
-      ),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "button",
-        {
-          className: "btn-secondary",
-          onClick: scanAllPaths,
-          disabled: loading,
-          style: { padding: "12px", fontSize: 14, marginTop: 10 },
-          children: loading ? "Scanning..." : "Scan All Paths"
-        }
-      ),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { style: { fontSize: 12, color: "var(--text-muted)", textAlign: "center", marginTop: 8 }, children: `Use "Scan All Paths" if you're not sure which path your wallet uses` })
+        error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", style: { marginTop: 12 }, children: error })
+      ] })
     ] });
   }
   if (step === "account") {
@@ -25198,7 +25305,18 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
           /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "spinner-small" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Loading tokens..." })
         ] }),
-        tokens2.filter((token) => showHiddenTokens || !hiddenTokens.includes(token.mint)).map((token) => {
+        tokens2.filter((token) => showHiddenTokens || !hiddenTokens.includes(token.mint)).sort((a, b) => {
+          const aBalance = parseFloat(a.uiAmount || a.balance || 0);
+          const bBalance = parseFloat(b.uiAmount || b.balance || 0);
+          const aPrice = parseFloat(a.price || 0);
+          const bPrice = parseFloat(b.price || 0);
+          const aUsdValue = a.usdValue || aBalance * aPrice;
+          const bUsdValue = b.usdValue || bBalance * bPrice;
+          if (aUsdValue > 0 || bUsdValue > 0) {
+            return bUsdValue - aUsdValue;
+          }
+          return bBalance - aBalance;
+        }).map((token) => {
           var _a3;
           const isHidden = hiddenTokens.includes(token.mint);
           const tokenName = (token.name || "").toLowerCase();
@@ -27696,6 +27814,17 @@ function SendFlow({ wallet, selectedToken: initialToken, userTokens = [], onBack
     const bal = parseFloat(t2.uiAmount) || parseFloat(t2.balance) || 0;
     const rawAmount = parseInt(t2.amount) || 0;
     return bal > 0 || rawAmount > 0;
+  }).sort((a, b) => {
+    const aBalance = parseFloat(a.uiAmount || a.balance || 0);
+    const bBalance = parseFloat(b.uiAmount || b.balance || 0);
+    const aPrice = parseFloat(a.price || 0);
+    const bPrice = parseFloat(b.price || 0);
+    const aUsdValue = a.usdValue || aBalance * aPrice;
+    const bUsdValue = b.usdValue || bBalance * bPrice;
+    if (aUsdValue > 0 || bUsdValue > 0) {
+      return bUsdValue - aUsdValue;
+    }
+    return bBalance - aBalance;
   });
   const availableTokens = [nativeToken, ...tokensWithBalance];
   const isTokenSend = currentToken && currentToken.mint;
@@ -28823,7 +28952,7 @@ function isTokenAddress(str) {
   }
 }
 function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFromToken = null }) {
-  var _a2, _b2, _c, _d;
+  var _a2, _b2, _c, _d, _e, _f;
   const [tokens$1, setTokens] = reactExports.useState([]);
   const [fromToken, setFromToken] = reactExports.useState(null);
   const [toToken, setToToken] = reactExports.useState(null);
@@ -28866,6 +28995,22 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
   const lastOptimisticUpdate = reactExports.useRef(0);
   const walletReady = !!(wallet && wallet.network);
   const currentNetwork2 = (wallet == null ? void 0 : wallet.network) || "X1 Mainnet";
+  const currentWalletKey = ((_c = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _c.publicKey) || ((_d = wallet == null ? void 0 : wallet.activeAddress) == null ? void 0 : _d.publicKey) || "";
+  const prevWalletKeyRef = reactExports.useRef(currentWalletKey);
+  reactExports.useEffect(() => {
+    var _a3;
+    if (prevWalletKeyRef.current && currentWalletKey && prevWalletKeyRef.current !== currentWalletKey) {
+      logger$1.log("[SwapScreen] Wallet changed, resetting swap state");
+      logger$1.log("[SwapScreen] Previous:", (_a3 = prevWalletKeyRef.current) == null ? void 0 : _a3.slice(0, 8), "-> Current:", currentWalletKey == null ? void 0 : currentWalletKey.slice(0, 8));
+      setQuote(null);
+      setQuoteTimestamp(null);
+      setShowConfirm(false);
+      setSwapStatus("");
+      setError("");
+      setToAmount("");
+    }
+    prevWalletKeyRef.current = currentWalletKey;
+  }, [currentWalletKey]);
   const getNetworkConfig2 = () => {
     if (NETWORKS[currentNetwork2]) {
       return NETWORKS[currentNetwork2];
@@ -28981,7 +29126,7 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
       }
     };
     fetchLocalTokens();
-  }, [userTokens, walletReady, networkConfig == null ? void 0 : networkConfig.rpcUrl, (_c = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _c.publicKey, currentNetwork2, fetchingLocalTokens]);
+  }, [userTokens, walletReady, networkConfig == null ? void 0 : networkConfig.rpcUrl, (_e = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _e.publicKey, currentNetwork2, fetchingLocalTokens]);
   const effectiveUserTokens = React.useMemo(() => {
     if (userTokens && userTokens.length > 0) {
       return userTokens;
@@ -29509,9 +29654,14 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
   };
   const setMaxAmount = () => {
     const gasReserve = 2e-3;
-    const rawMax = fromToken.symbol === nativeSymbol ? Math.max(0, (fromToken.balance || walletBalance) - gasReserve) : fromToken.balance || 0;
-    const decimals = fromToken.decimals || 9;
-    const maxAmount = Math.floor(rawMax * Math.pow(10, decimals)) / Math.pow(10, decimals);
+    let rawMax;
+    if (fromToken.symbol === nativeSymbol) {
+      rawMax = Math.max(0, (fromToken.balance || walletBalance) - gasReserve);
+    } else {
+      rawMax = fromToken.balance || 0;
+    }
+    const maxDecimals = 4;
+    const maxAmount = Math.floor(rawMax * Math.pow(10, maxDecimals)) / Math.pow(10, maxDecimals);
     handleFromAmountChange(maxAmount.toString());
   };
   const handleAddToken = async () => {
@@ -29643,7 +29793,7 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
     setShowConfirm(true);
   };
   const handleSwap = async () => {
-    var _a3, _b3, _c2, _d2, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x;
+    var _a3, _b3, _c2, _d2, _e2, _f2, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x;
     if (loading) {
       logger$1.log("[Swap] Already processing, ignoring duplicate call");
       return;
@@ -29664,10 +29814,14 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
     logger$1.log("[Swap] wallet.wallet keys:", Object.keys((wallet == null ? void 0 : wallet.wallet) || {}));
     try {
       const walletPublicKey = ((_c2 = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _c2.publicKey) || ((_d2 = wallet == null ? void 0 : wallet.activeAddress) == null ? void 0 : _d2.publicKey);
-      const privateKey = ((_e = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _e.privateKey) || ((_f = wallet == null ? void 0 : wallet.activeAddress) == null ? void 0 : _f.privateKey);
+      const privateKey = ((_e2 = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _e2.privateKey) || ((_f2 = wallet == null ? void 0 : wallet.activeAddress) == null ? void 0 : _f2.privateKey);
       logger$1.log("[Swap] Found publicKey:", walletPublicKey ? walletPublicKey.slice(0, 8) + "..." : "null");
       logger$1.log("[Swap] privateKey available:", !!privateKey);
       logger$1.log("[Swap] Final isHardwareWallet check:", isHardwareWallet);
+      if (prevWalletKeyRef.current && walletPublicKey !== prevWalletKeyRef.current) {
+        logger$1.error("[Swap] Wallet changed during swap! Aborting to prevent signature mismatch.");
+        throw new Error("Wallet changed. Please get a new quote and try again.");
+      }
       if (!walletPublicKey || typeof walletPublicKey !== "string") {
         throw new Error("Could not find wallet public key");
       }
@@ -30157,6 +30311,19 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
     if (t2.balance > 0) return true;
     if (t2.isCustom) return true;
     return false;
+  }).sort((a, b) => {
+    if (a.symbol === nativeSymbol) return -1;
+    if (b.symbol === nativeSymbol) return 1;
+    const aBalance = parseFloat(a.uiAmount || a.balance || 0);
+    const bBalance = parseFloat(b.uiAmount || b.balance || 0);
+    const aPrice = parseFloat(a.price || 0);
+    const bPrice = parseFloat(b.price || 0);
+    const aUsdValue = a.usdValue || aBalance * aPrice;
+    const bUsdValue = b.usdValue || bBalance * bPrice;
+    if (aUsdValue > 0 || bUsdValue > 0) {
+      return bUsdValue - aUsdValue;
+    }
+    return bBalance - aBalance;
   });
   if (showManageTokens) {
     const handleClearAllCustomTokens = () => {
@@ -30752,7 +30919,7 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
               /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "send-summary-label", children: "Network Fee" }),
               /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "send-summary-value", children: [
                 "~",
-                (getBaseFee$1(currentNetwork2) + (swapPriority === "custom" ? parseFloat(customFee) || 0 : ((_d = getPriorityOptions$1(currentNetwork2).find((p2) => p2.id === swapPriority)) == null ? void 0 : _d.fee) || 0)).toFixed(6),
+                (getBaseFee$1(currentNetwork2) + (swapPriority === "custom" ? parseFloat(customFee) || 0 : ((_f = getPriorityOptions$1(currentNetwork2).find((p2) => p2.id === swapPriority)) == null ? void 0 : _f.fee) || 0)).toFixed(6),
                 " ",
                 networkConfig.symbol
               ] })
@@ -33287,6 +33454,25 @@ function TokenDetail({
     ] })
   ] });
 }
+async function safeSendMessage$1(message) {
+  var _a2, _b2, _c, _d;
+  try {
+    if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.sendMessage) {
+      logger$1.error("[DAppApproval] Chrome runtime unavailable - context may be invalidated");
+      throw new Error("Extension context invalidated. Please reload the page.");
+    }
+    return await chrome.runtime.sendMessage(message);
+  } catch (err) {
+    if ((_a2 = err.message) == null ? void 0 : _a2.includes("Extension context invalidated")) {
+      throw err;
+    }
+    if (((_b2 = err.message) == null ? void 0 : _b2.includes("Extension context invalidated")) || ((_c = err.message) == null ? void 0 : _c.includes("sendMessage")) || ((_d = err.message) == null ? void 0 : _d.includes("runtime"))) {
+      logger$1.error("[DAppApproval] Extension context error:", err.message);
+      throw new Error("Extension context invalidated. Please reload the page.");
+    }
+    throw err;
+  }
+}
 function getPriorityOptions(network) {
   const isX1 = network == null ? void 0 : network.includes("X1");
   if (isX1) {
@@ -33611,7 +33797,7 @@ function DAppApproval({ wallet, requestId, onComplete }) {
   reactExports.useEffect(() => {
     const checkPendingRequest = async () => {
       try {
-        const response = await chrome.runtime.sendMessage({ type: "get-pending-request" });
+        const response = await safeSendMessage$1({ type: "get-pending-request" });
         const request = (response == null ? void 0 : response.request) || response;
         const reqId = (response == null ? void 0 : response.requestId) || (request == null ? void 0 : request.requestId);
         logger$1.log("[DAppApproval] Pending request type:", request == null ? void 0 : request.type, "id:", reqId);
@@ -33741,7 +33927,7 @@ function DAppApproval({ wallet, requestId, onComplete }) {
   const handleReject = async () => {
     setProcessing(true);
     try {
-      await chrome.runtime.sendMessage({
+      await safeSendMessage$1({
         type: "approve-sign",
         requestId: currentRequestId,
         requestId: currentRequestId,
@@ -33770,7 +33956,7 @@ function DAppApproval({ wallet, requestId, onComplete }) {
       if (wallet.setNetwork) {
         wallet.setNetwork(network);
       }
-      await chrome.runtime.sendMessage({
+      await safeSendMessage$1({
         type: "provider-response",
         requestId: currentRequestId,
         // X1W-SEC: Include request ID
@@ -33833,7 +34019,7 @@ function DAppApproval({ wallet, requestId, onComplete }) {
     setError(null);
     if (isHardwareWallet) {
       try {
-        await chrome.runtime.sendMessage({
+        await safeSendMessage$1({
           type: "ledger-busy",
           busy: true,
           origin: pendingRequest == null ? void 0 : pendingRequest.origin
@@ -33865,7 +34051,7 @@ function DAppApproval({ wallet, requestId, onComplete }) {
       signedTx.set(signature, sigSlotsStart);
       const signedTxBase64 = btoa(String.fromCharCode(...signedTx));
       logger$1.log("[DAppApproval] Transaction signed successfully");
-      await chrome.runtime.sendMessage({
+      await safeSendMessage$1({
         type: "approve-sign",
         requestId: currentRequestId,
         signedTransaction: signedTxBase64
@@ -33880,7 +34066,7 @@ function DAppApproval({ wallet, requestId, onComplete }) {
         return;
       }
       try {
-        await chrome.runtime.sendMessage({
+        await safeSendMessage$1({
           type: "approve-sign",
           requestId: currentRequestId,
           error: (err == null ? void 0 : err.message) || "Transaction signing failed"
@@ -33894,7 +34080,7 @@ function DAppApproval({ wallet, requestId, onComplete }) {
       signingInProgress.current = false;
       if (isHardwareWallet) {
         try {
-          await chrome.runtime.sendMessage({ type: "ledger-busy", busy: false });
+          await safeSendMessage$1({ type: "ledger-busy", busy: false });
         } catch (e) {
           logger$1.warn("[DAppApproval] Failed to clear ledger-busy:", e);
         }
@@ -33918,7 +34104,7 @@ function DAppApproval({ wallet, requestId, onComplete }) {
     setError(null);
     if (isHardwareWallet) {
       try {
-        await chrome.runtime.sendMessage({
+        await safeSendMessage$1({
           type: "ledger-busy",
           busy: true,
           origin: pendingRequest == null ? void 0 : pendingRequest.origin
@@ -33956,7 +34142,7 @@ function DAppApproval({ wallet, requestId, onComplete }) {
         signedTxs.push(btoa(String.fromCharCode(...signedTx)));
       }
       setHwStatus("");
-      await chrome.runtime.sendMessage({
+      await safeSendMessage$1({
         type: "approve-sign",
         requestId: currentRequestId,
         signedTransactions: signedTxs
@@ -33971,7 +34157,7 @@ function DAppApproval({ wallet, requestId, onComplete }) {
         return;
       }
       try {
-        await chrome.runtime.sendMessage({
+        await safeSendMessage$1({
           type: "approve-sign",
           requestId: currentRequestId,
           error: (err == null ? void 0 : err.message) || "Transaction signing failed"
@@ -33985,7 +34171,7 @@ function DAppApproval({ wallet, requestId, onComplete }) {
       signingInProgress.current = false;
       if (isHardwareWallet) {
         try {
-          await chrome.runtime.sendMessage({ type: "ledger-busy", busy: false });
+          await safeSendMessage$1({ type: "ledger-busy", busy: false });
         } catch (e) {
           logger$1.warn("[DAppApproval] Failed to clear ledger-busy:", e);
         }
@@ -34009,7 +34195,7 @@ function DAppApproval({ wallet, requestId, onComplete }) {
     setError(null);
     if (isHardwareWallet) {
       try {
-        await chrome.runtime.sendMessage({
+        await safeSendMessage$1({
           type: "ledger-busy",
           busy: true,
           origin: pendingRequest == null ? void 0 : pendingRequest.origin
@@ -34181,7 +34367,7 @@ function DAppApproval({ wallet, requestId, onComplete }) {
         logger$1.warn("[DAppApproval] Failed to record transaction:", e);
       }
       logger$1.log("[DAppApproval] Sending signature to background:", txSignature);
-      await chrome.runtime.sendMessage({
+      await safeSendMessage$1({
         type: "approve-sign",
         requestId: currentRequestId,
         signature: txSignature
@@ -34197,7 +34383,7 @@ function DAppApproval({ wallet, requestId, onComplete }) {
         return;
       }
       try {
-        await chrome.runtime.sendMessage({
+        await safeSendMessage$1({
           type: "approve-sign",
           requestId: currentRequestId,
           error: (err == null ? void 0 : err.message) || "Transaction failed"
@@ -34211,7 +34397,7 @@ function DAppApproval({ wallet, requestId, onComplete }) {
       signingInProgress.current = false;
       if (isHardwareWallet) {
         try {
-          await chrome.runtime.sendMessage({ type: "ledger-busy", busy: false });
+          await safeSendMessage$1({ type: "ledger-busy", busy: false });
         } catch (e) {
           logger$1.warn("[DAppApproval] Failed to clear ledger-busy:", e);
         }
@@ -34235,7 +34421,7 @@ function DAppApproval({ wallet, requestId, onComplete }) {
     setError(null);
     if (isHardwareWallet) {
       try {
-        await chrome.runtime.sendMessage({
+        await safeSendMessage$1({
           type: "ledger-busy",
           busy: true,
           origin: pendingRequest == null ? void 0 : pendingRequest.origin
@@ -34256,7 +34442,7 @@ function DAppApproval({ wallet, requestId, onComplete }) {
         signature = await sign(messageBytes, secretKey);
       }
       const signatureBase64 = btoa(String.fromCharCode(...signature));
-      await chrome.runtime.sendMessage({
+      await safeSendMessage$1({
         type: "approve-sign-message",
         requestId: currentRequestId,
         signature: signatureBase64
@@ -34283,7 +34469,7 @@ function DAppApproval({ wallet, requestId, onComplete }) {
         return;
       }
       try {
-        await chrome.runtime.sendMessage({
+        await safeSendMessage$1({
           type: "approve-sign-message",
           requestId: currentRequestId,
           error: (err == null ? void 0 : err.message) || "Signing failed"
@@ -34297,7 +34483,7 @@ function DAppApproval({ wallet, requestId, onComplete }) {
       signingInProgress.current = false;
       if (isHardwareWallet) {
         try {
-          await chrome.runtime.sendMessage({ type: "ledger-busy", busy: false });
+          await safeSendMessage$1({ type: "ledger-busy", busy: false });
         } catch (e) {
           logger$1.warn("[DAppApproval] Failed to clear ledger-busy:", e);
         }
@@ -35587,7 +35773,8 @@ function App() {
           onComplete: handleCreateComplete,
           onBack: () => setScreen(returnScreen === "manage" ? "manage" : "welcome"),
           passwordProtection,
-          sessionPassword
+          sessionPassword,
+          existingWallets: wallet.wallets || []
         }
       )
     ] });
@@ -35609,7 +35796,8 @@ function App() {
           onComplete: handleImportComplete,
           onCompletePrivateKey: handleImportPrivateKey,
           onBack: () => setScreen(returnScreen === "manage" ? "manage" : "welcome"),
-          sessionPassword
+          sessionPassword,
+          existingWallets: wallet.wallets || []
         }
       )
     ] });

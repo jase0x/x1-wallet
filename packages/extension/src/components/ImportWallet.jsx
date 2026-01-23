@@ -3,10 +3,29 @@ import { logger, getUserFriendlyError, ErrorMessages } from '@x1-wallet/core';
 import React, { useState, useRef, useEffect } from 'react';
 import { validateMnemonic, WORDLIST } from '@x1-wallet/core/utils/bip39';
 
-export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPassword }) {
+export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPassword, existingWallets = [] }) {
   const [importType, setImportType] = useState('phrase'); // 'phrase' or 'privatekey'
   const [seedLength, setSeedLength] = useState(12);
   const [words, setWords] = useState(Array(12).fill(''));
+  
+  // Compute next wallet number from existing wallets
+  const getNextWalletNumber = () => {
+    let maxNumber = 0;
+    existingWallets.forEach(w => {
+      // Match patterns like "Wallet 1", "My Wallet 2", "Imported Wallet 3", etc.
+      const match = w.name?.match(/(\d+)\s*$/);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (num > maxNumber) maxNumber = num;
+      }
+    });
+    // If no numbered wallets found, use wallet count
+    return Math.max(maxNumber, existingWallets.length) + 1;
+  };
+  
+  const nextWalletNumber = getNextWalletNumber();
+  const suggestedName = `Wallet ${nextWalletNumber}`;
+  
   const [walletName, setWalletName] = useState('');
   const [step, setStep] = useState('import'); // import, name, password, verify-password, name-pk, password-pk, verify-password-pk
   const [error, setError] = useState('');
@@ -195,7 +214,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey,
   const handleNameContinue = async () => {
     if (!passwordRequired) {
       // Password protection is OFF - complete without password
-      onComplete(words.join(' '), walletName || 'Imported Wallet', null);
+      onComplete(words.join(' '), walletName || suggestedName, null);
       return;
     }
     
@@ -206,7 +225,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey,
         const isValid = await checkPassword(sessionPassword);
         if (isValid) {
           // Session password is valid - complete with it
-          onComplete(words.join(' '), walletName || 'Imported Wallet', sessionPassword);
+          onComplete(words.join(' '), walletName || suggestedName, sessionPassword);
           return;
         }
       } catch (e) {
@@ -246,7 +265,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey,
       }
       
       // Password verified - complete import with password for encryption
-      onComplete(words.join(' '), walletName || 'Imported Wallet', password);
+      onComplete(words.join(' '), walletName || suggestedName, password);
     } catch (err) {
       logger.error('Password verification error:', err);
       // If verification throws an error, it might mean no valid password exists
@@ -272,7 +291,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey,
       return;
     }
     
-    onComplete(words.join(' '), walletName || 'Imported Wallet', password);
+    onComplete(words.join(' '), walletName || suggestedName, password);
   };
   
   // Private Key Import (handles base58 and byte array formats)
@@ -448,7 +467,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey,
       onCompletePrivateKey({
         publicKey: publicKeyBase58,
         privateKey: privateKeyBase58,
-        name: walletName || 'Imported Wallet',
+        name: walletName || suggestedName,
         password: pwd
       });
     } catch (err) {
@@ -503,7 +522,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey,
       onCompletePrivateKey({
         publicKey: publicKeyBase58,
         privateKey: privateKeyBase58,
-        name: walletName || 'Imported Wallet',
+        name: walletName || suggestedName,
         password: password
       });
     } catch (err) {
@@ -529,7 +548,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey,
         <div className="screen-content seed-container" style={{ paddingTop: 0 }}>
           <p className="seed-subtitle">Give your imported wallet a name</p>
           <div className="form-group" style={{ marginTop: 24 }}>
-            <input type="text" className="form-input" value={walletName} onChange={e => setWalletName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleNameContinue()} placeholder="My Imported Wallet" autoFocus />
+            <input type="text" className="form-input" value={walletName} onChange={e => setWalletName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleNameContinue()} placeholder={suggestedName} autoFocus />
           </div>
           <button className="btn-primary" type="button" onClick={handleNameContinue} style={{ marginTop: 24 }}>Continue</button>
         </div>
@@ -760,7 +779,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey,
         <div className="screen-content seed-container" style={{ paddingTop: 0 }}>
           <p className="seed-subtitle">Give your imported wallet a name</p>
           <div className="form-group" style={{ marginTop: 24 }}>
-            <input type="text" className="form-input" value={walletName} onChange={e => setWalletName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleNamePkContinue()} placeholder="My Imported Wallet" autoFocus />
+            <input type="text" className="form-input" value={walletName} onChange={e => setWalletName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleNamePkContinue()} placeholder={suggestedName} autoFocus />
           </div>
           {error && <div className="error-message">{error}</div>}
           <button className="btn-primary" type="button" onClick={handleNamePkContinue} style={{ marginTop: 24 }}>Continue</button>

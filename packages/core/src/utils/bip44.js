@@ -491,5 +491,6 @@ export async function sign(message, secretKey) {
 }
 
 // Derivation path constants
+// Default path matching Phantom/Backpack/Ledger
 export const SOLANA_PATH = "m/44'/501'/0'/0'";
 export const X1_PATH = "m/44'/501'/0'/0'"; // Same as Solana for compatibility

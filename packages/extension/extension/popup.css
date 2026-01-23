@@ -9282,6 +9282,19 @@ details[open] .dapp-tx-details-summary svg {
   font-size: 16px;
   font-weight: 600;
   color: var(--text-primary);
+  max-width: calc(100% - 100px);
+  overflow: hidden;
+}
+
+.token-detail-header-title span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.token-detail-header-title span:first-of-type {
+  max-width: 120px;
+  flex-shrink: 1;
 }
 
 .token-detail-header-icon {

@@ -17,7 +17,7 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
   const [walletName, setWalletName] = useState('');
   const [derivationPaths] = useState(hardwareWallet.getDerivationPaths());
   const [loadedCount, setLoadedCount] = useState(0);
-  const [selectedScheme, setSelectedScheme] = useState(DERIVATION_SCHEMES.BIP44_STANDARD);
+  const [selectedScheme, setSelectedScheme] = useState(DERIVATION_SCHEMES.DEFAULT);
   const [customPath, setCustomPath] = useState('');
   const [showCustomPath, setShowCustomPath] = useState(false);
   const [balances, setBalances] = useState({}); // Map of address -> balance
@@ -131,7 +131,7 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
   };
 
   // Check if running in extension popup (limited WebHID access)
-  // Connect to device
+  // Connect to device and open app, then go to scheme selection
   const connectDevice = async () => {
     // Prevent double calls
     if (loading) {
@@ -147,10 +147,14 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
     try {
       const wallet = getWallet();
       await wallet.connect(connectionType);
-      logger.log('[HardwareWallet] Device connected, setting step to app');
-      setStatus('Device connected!');
-      setStep('app');
-      logger.log('[HardwareWallet] Step updated');
+      logger.log('[HardwareWallet] Device connected');
+      setStatus('Opening Solana app...');
+      
+      // Open the Solana app
+      await wallet.openApp();
+      logger.log('[HardwareWallet] App opened, going to scheme selection');
+      setStatus('Ready!');
+      setStep('scheme');
     } catch (err) {
       logger.error('[HardwareWallet] Connection failed:', err);
       logger.error('[HardwareWallet] Error name:', err?.name);
@@ -162,24 +166,6 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
         `Failed to connect to device. Make sure ${deviceType === HW_TYPES.TREZOR ? 'Trezor' : 'Ledger'} is connected and unlocked.`;
       setError(errorMsg);
     } finally {
-      setLoading(false);
-    }
-  };
-
-  // Open app and go to scheme selection
-  const openAppAndSelectScheme = async () => {
-    setLoading(true);
-    setError('');
-    setStatus(deviceType === HW_TYPES.TREZOR ? 'Connecting to Trezor...' : 'Opening Solana app...');
-
-    try {
-      const wallet = getWallet();
-      await wallet.openApp();
-      setStatus('Ready!');
-      setLoading(false);
-      setStep('scheme');
-    } catch (err) {
-      setError(err.message || 'Failed to open app');
       setLoading(false);
     }
   };
@@ -266,6 +252,7 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
       const wallet = getWallet();
       const allAccounts = [];
       const seenAddresses = new Set();
+      let accountNum = 1;
       
       // Scan each scheme
       for (const scheme of Object.values(DERIVATION_SCHEMES)) {
@@ -278,9 +265,10 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
               seenAddresses.add(account.address);
               allAccounts.push({
                 ...account,
-                label: `${scheme.name} #${account.index}`,
+                label: `Account ${accountNum}`,
                 schemeName: scheme.name
               });
+              accountNum++;
             }
           }
         } catch (e) {
@@ -328,20 +316,44 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
 
   // Verify address on device (verify first selected account)
   const verifyOnDevice = async () => {
-    if (selectedAccounts.length === 0) return;
+    if (selectedAccounts.length === 0) {
+      setError('Please select an account first');
+      return;
+    }
     
     const accountToVerify = selectedAccounts[0];
     setLoading(true);
-    setStatus(`Please verify address on your ${deviceType === HW_TYPES.TREZOR ? 'Trezor' : 'Ledger'}...`);
+    setError('');
+    setStatus(`Check your ${deviceType === HW_TYPES.TREZOR ? 'Trezor' : 'Ledger'} screen to verify the address...`);
     
     try {
       const wallet = getWallet();
-      await wallet.getPublicKey(accountToVerify.path, true);
+      
+      // Re-open the app connection in case it timed out
+      await wallet.openApp();
+      
+      // Request address with display=true to show on device
+      const address = await wallet.getPublicKey(accountToVerify.path, true);
+      
       setLoading(false);
-      setStatus('Address verified!');
+      setStatus('');
+      
+      // Show success - address was verified
+      if (address === accountToVerify.address) {
+        setError(''); // Clear any previous errors
+        alert(`Address verified on device!\n\n${address}`);
+      } else {
+        setError('Warning: Address mismatch! The address on device does not match.');
+      }
     } catch (err) {
-      setError(err.message || 'Verification cancelled');
       setLoading(false);
+      setStatus('');
+      
+      if (err.message?.includes('rejected') || err.statusCode === 0x6985) {
+        setError('Verification cancelled on device');
+      } else {
+        setError(err.message || 'Failed to verify address. Try reconnecting your device.');
+      }
     }
   };
 
@@ -699,150 +711,259 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
     );
   }
 
-  // Step 3: Open app
-  if (step === 'app') {
-    const isTrezor = deviceType === HW_TYPES.TREZOR;
+  // Step 3.5: Select derivation scheme - 3 options: Default, Scan, Custom
+  if (step === 'scheme') {
+    // Handle Default - get accounts for default scheme
+    const handleDefault = async () => {
+      setLoading(true);
+      setError('');
+      setStatus('Getting accounts...');
+      
+      try {
+        const wallet = getWallet();
+        const accountList = await wallet.getAccountsForScheme(DERIVATION_SCHEMES.DEFAULT, 0, 5);
+        
+        if (accountList.length === 0) {
+          throw new Error(`No accounts found. Make sure ${deviceType === HW_TYPES.TREZOR ? 'Trezor is unlocked' : 'the Solana app is open on your Ledger'}.`);
+        }
+        
+        setAccounts(accountList);
+        setLoadedCount(accountList.length);
+        setSelectedScheme(DERIVATION_SCHEMES.DEFAULT);
+        setSelectedAccounts([]);
+        setLoading(false);
+        setStep('account');
+        
+        fetchBalances(accountList);
+      } catch (err) {
+        setError(err.message || 'Failed to get accounts');
+        setLoading(false);
+      }
+    };
+    
+    // Handle Scan - scan all paths to find existing accounts
+    const handleScan = async () => {
+      setLoading(true);
+      setError('');
+      setStatus('Scanning all paths...');
+      
+      try {
+        const wallet = getWallet();
+        const allAccounts = [];
+        const seenAddresses = new Set();
+        let accountNum = 1;
+        
+        for (const scheme of Object.values(DERIVATION_SCHEMES)) {
+          setStatus(`Scanning ${scheme.name}...`);
+          try {
+            // Only scan first account per scheme for speed
+            const schemeAccounts = await wallet.getAccountsForScheme(scheme, 0, 3);
+            for (const account of schemeAccounts) {
+              if (!seenAddresses.has(account.address)) {
+                seenAddresses.add(account.address);
+                allAccounts.push({
+                  ...account,
+                  label: `Account ${accountNum}`
+                });
+                accountNum++;
+              }
+            }
+          } catch (e) {
+            logger.warn(`Failed to scan ${scheme.name}:`, e);
+          }
+        }
+        
+        if (allAccounts.length === 0) {
+          throw new Error('No accounts found on any path.');
+        }
+        
+        setAccounts(allAccounts);
+        setLoadedCount(allAccounts.length);
+        setSelectedAccounts([]);
+        setLoading(false);
+        setStep('account');
+        
+        fetchBalances(allAccounts);
+      } catch (err) {
+        setError(err.message || 'Failed to scan paths');
+        setLoading(false);
+      }
+    };
+    
+    // Handle Custom path
+    const handleCustom = async () => {
+      if (!customPath.trim()) {
+        setError('Please enter a derivation path');
+        return;
+      }
+      
+      setLoading(true);
+      setError('');
+      setStatus('Getting account...');
+      
+      try {
+        const wallet = getWallet();
+        let path = customPath.trim();
+        if (path.startsWith('m/')) {
+          path = path.slice(2);
+        }
+        
+        const publicKey = await wallet.getPublicKey(path, false);
+        
+        const account = {
+          address: publicKey,
+          path: path,
+          label: 'Custom Path',
+          index: 0
+        };
+        
+        setAccounts([account]);
+        setLoadedCount(1);
+        setSelectedAccounts([account]);
+        setLoading(false);
+        setStep('account');
+        
+        fetchBalances([account]);
+      } catch (err) {
+        setError(err.message || 'Failed to get account');
+        setLoading(false);
+      }
+    };
     
     return (
-      <div className="screen hardware-screen no-nav">
-        <button className="back-btn" onClick={() => { getWallet().disconnect(); setStep(isTrezor ? 'select' : 'connection'); }} style={{ alignSelf: 'flex-start', marginBottom: 16 }}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M19 12H5M12 19l-7-7 7-7" />
-          </svg>
-        </button>
-
-        <div className="hardware-connecting">
-          <div className="hardware-device-icon connected">
-            {isTrezor ? (
-              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="2">
-                <path d="M12 2L4 6v6c0 5.5 3.4 10.3 8 12 4.6-1.7 8-6.5 8-12V6l-8-4z" />
-                <polyline points="9 12 12 15 16 10" />
-              </svg>
-            ) : (
-              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="2">
-                <rect x="2" y="6" width="20" height="12" rx="2" />
-                <path d="M12 10v4" />
-                <circle cx="12" cy="12" r="1" />
-              </svg>
-            )}
-          </div>
-          <h2>{isTrezor ? 'Trezor Connected' : 'Ledger Connected'}</h2>
-          <p>{isTrezor ? 'Click Continue to select your account' : 'Now open the Solana app on your device and click Continue'}</p>
-        </div>
-
-        {error && <div className="error-message">{error}</div>}
-        {status && loading && <div className="status-message">{status}</div>}
-
-        <button 
-          className="btn-primary" 
-          onClick={openAppAndSelectScheme}
-          disabled={loading}
-        >
-          {loading ? (
-            <>
-              <span className="spinner-small" />
-              {status || 'Loading...'}
-            </>
-          ) : (
-            'Continue'
-          )}
-        </button>
-      </div>
-    );
-  }
-
-  // Step 3.5: Select derivation scheme
-  if (step === 'scheme') {
-    return (
       <div className="screen hardware-screen no-nav" style={{ justifyContent: 'flex-start', paddingTop: 20, paddingBottom: 20 }}>
-        <button className="back-btn" onClick={() => setStep('app')} style={{ alignSelf: 'flex-start', marginBottom: 20 }}>
+        <button className="back-btn" onClick={() => { setAccounts([]); setShowCustomPath(false); setCustomPath(''); getWallet().disconnect(); setStep('connect'); }} style={{ alignSelf: 'flex-start', marginBottom: 20 }}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M19 12H5M12 19l-7-7 7-7" />
           </svg>
         </button>
 
         <h2 style={{ marginBottom: 6 }}>Select Derivation Path</h2>
-        <p style={{ margin: '0 0 20px 0', fontSize: 14, color: 'var(--text-muted)' }}>Choose the path that matches your wallet</p>
+        <p style={{ margin: '0 0 20px 0', fontSize: 14, color: 'var(--text-muted)' }}>
+          {loading ? status : 'Choose how to set up your wallet'}
+        </p>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, flex: 1 }}>
-          {Object.values(DERIVATION_SCHEMES).map((scheme) => (
+        {loading ? (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, gap: 16 }}>
+            <span className="spinner" style={{ width: 40, height: 40 }} />
+            <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>{status}</p>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {/* Default Option with RECOMMENDED badge */}
             <button 
-              key={scheme.id}
-              onClick={() => setSelectedScheme(scheme)}
+              onClick={handleDefault}
+              disabled={loading}
               style={{
-                border: selectedScheme.id === scheme.id ? '2px solid var(--x1-blue)' : '1px solid var(--border-color)',
-                background: selectedScheme.id === scheme.id ? 'rgba(0, 122, 255, 0.1)' : 'var(--bg-secondary)',
+                border: '1px solid var(--border-color)',
+                background: 'var(--bg-secondary)',
                 padding: '16px',
                 borderRadius: 12,
                 display: 'flex',
                 flexDirection: 'column',
-                alignItems: 'center',
-                textAlign: 'center',
+                alignItems: 'flex-start',
+                textAlign: 'left',
+                gap: 4,
+                cursor: 'pointer',
+                transition: 'all 0.15s ease',
+                position: 'relative'
+              }}
+            >
+              <span style={{ 
+                position: 'absolute', 
+                top: 8, 
+                right: 8, 
+                fontSize: 10, 
+                background: 'var(--x1-blue)', 
+                color: 'white', 
+                padding: '2px 8px', 
+                borderRadius: 4,
+                fontWeight: 600
+              }}>
+                RECOMMENDED
+              </span>
+              <span style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)' }}>Default</span>
+              <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                Extended derivation path for most wallets
+              </span>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'monospace', marginTop: 4 }}>
+                m/44'/501'/&#123;account&#125;'/0'
+              </span>
+            </button>
+            
+            {/* Scan Option */}
+            <button 
+              onClick={handleScan}
+              disabled={loading}
+              style={{
+                border: '1px solid var(--border-color)',
+                background: 'var(--bg-secondary)',
+                padding: '16px',
+                borderRadius: 12,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'flex-start',
+                textAlign: 'left',
                 gap: 4,
                 cursor: 'pointer',
                 transition: 'all 0.15s ease'
               }}
             >
-              <span style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)' }}>{scheme.name}</span>
-              <span style={{ fontSize: 13, color: 'var(--text-muted)', fontFamily: 'monospace' }}>
-                {scheme.description}
+              <span style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)' }}>Scan to Find</span>
+              <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                Search Solflare, deprecated, and legacy paths for existing accounts
               </span>
             </button>
-          ))}
-        </div>
+            
+            {/* Custom Path Option */}
+            <button 
+              onClick={() => setShowCustomPath(!showCustomPath)}
+              disabled={loading}
+              style={{
+                border: showCustomPath ? '2px solid var(--x1-blue)' : '1px solid var(--border-color)',
+                background: showCustomPath ? 'rgba(0, 122, 255, 0.1)' : 'var(--bg-secondary)',
+                padding: '16px',
+                borderRadius: 12,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'flex-start',
+                textAlign: 'left',
+                gap: 4,
+                cursor: 'pointer',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <span style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)' }}>Custom Path</span>
+              <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                Enter a specific path (e.g., m/44'/501'/0'/0')
+              </span>
+            </button>
+            
+            {showCustomPath && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={customPath}
+                  onChange={(e) => setCustomPath(e.target.value)}
+                  placeholder="e.g., m/44'/501'/0'/0'"
+                  style={{ fontFamily: 'monospace', fontSize: 14 }}
+                  autoFocus
+                />
+                <button 
+                  className="btn-primary" 
+                  onClick={handleCustom}
+                  disabled={loading || !customPath.trim()}
+                  style={{ padding: '12px', fontSize: 14 }}
+                >
+                  Continue with Custom Path
+                </button>
+              </div>
+            )}
 
-        <div style={{ 
-          display: 'flex', 
-          gap: 10, 
-          padding: '12px 14px', 
-          background: 'var(--bg-secondary)', 
-          borderRadius: 10, 
-          marginTop: 16,
-          marginBottom: 16,
-          fontSize: 13,
-          color: 'var(--text-secondary)',
-          alignItems: 'flex-start'
-        }}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--x1-blue)" strokeWidth="2" style={{ flexShrink: 0, marginTop: 1 }}>
-            <circle cx="12" cy="12" r="10" />
-            <line x1="12" y1="16" x2="12" y2="12" />
-            <line x1="12" y1="8" x2="12.01" y2="8" />
-          </svg>
-          <span>
-            <strong>Not sure?</strong> Try "Standard (BIP44)" first. If your accounts don't appear, go back and try another path.
-          </span>
-        </div>
-
-        {error && <div className="error-message" style={{ marginBottom: 12 }}>{error}</div>}
-
-        <button 
-          className="btn-primary" 
-          onClick={getAccountsForScheme}
-          disabled={loading}
-          style={{ padding: '14px', fontSize: 15 }}
-        >
-          {loading ? (
-            <>
-              <span className="spinner-small" />
-              {status || 'Loading...'}
-            </>
-          ) : (
-            'Continue'
-          )}
-        </button>
-        
-        <button 
-          className="btn-secondary" 
-          onClick={scanAllPaths}
-          disabled={loading}
-          style={{ padding: '12px', fontSize: 14, marginTop: 10 }}
-        >
-          {loading ? 'Scanning...' : 'Scan All Paths'}
-        </button>
-        
-        <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', marginTop: 8 }}>
-          Use "Scan All Paths" if you're not sure which path your wallet uses
-        </p>
+            {error && <div className="error-message" style={{ marginTop: 12 }}>{error}</div>}
+          </div>
+        )}
       </div>
     );
   }

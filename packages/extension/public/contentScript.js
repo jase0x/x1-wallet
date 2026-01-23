@@ -31,6 +31,7 @@
   }
 
   // X1W-SEC: Establish secure MessageChannel with provider
+  // Fixed: Added handshake token verification to prevent race condition attacks
   function establishSecureChannel() {
     // Create a MessageChannel - two entangled ports
     const channel = new MessageChannel();
@@ -38,8 +39,26 @@
     // We keep port1, send port2 to provider
     providerPort = channel.port1;
     
-    // Listen for messages from provider on our private port
-    providerPort.onmessage = async (event) => {
+    // X1W-SEC: Generate cryptographically secure handshake token
+    // No fallback to Math.random - crypto.randomUUID is supported in all modern browsers
+    const handshakeToken = crypto.randomUUID();
+    let handshakeVerified = false;
+    
+    // Handler to verify handshake acknowledgment from provider
+    const verifyHandshake = (event) => {
+      if (event.data && 
+          event.data.type === 'handshake-ack' && 
+          event.data.token === handshakeToken) {
+        handshakeVerified = true;
+        console.log('[X1 Wallet] Handshake verified successfully');
+        
+        // Now set up the real message handler
+        providerPort.onmessage = handleProviderMessage;
+      }
+    };
+    
+    // Real message handler for after handshake is verified
+    const handleProviderMessage = async (event) => {
       const { type, method, params, id } = event.data;
       
       if (type === 'request') {
@@ -70,21 +89,28 @@
       }
     };
     
+    // Start with handshake verification handler
+    providerPort.onmessage = verifyHandshake;
+    
     // Start the port
     providerPort.start();
     
-    // Generate a random handshake token for additional security
-    const handshakeToken = crypto.randomUUID ? crypto.randomUUID() : 
-      Math.random().toString(36).substring(2) + Date.now().toString(36);
-    
     // Send port2 to the provider via one-time postMessage
-    // This is the ONLY postMessage we send - after this, all comms go through the port
+    // Include the handshake token for verification
     window.postMessage({
       target: 'x1-wallet-provider-handshake',
-      token: handshakeToken
+      token: handshakeToken,
+      extensionId: chrome.runtime.id
     }, currentOrigin, [channel.port2]);
     
-    console.log('[X1 Wallet] Secure channel established');
+    // X1W-SEC: Timeout for handshake verification
+    setTimeout(() => {
+      if (!handshakeVerified) {
+        console.warn('[X1 Wallet] Handshake not verified within timeout - possible security issue');
+      }
+    }, 5000);
+    
+    console.log('[X1 Wallet] Secure channel initiated, awaiting verification');
   }
 
   // Listen for messages from extension (events like disconnect, account change)

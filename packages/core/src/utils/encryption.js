@@ -1,6 +1,6 @@
 // Wallet Encryption Utilities
 // Uses AES-GCM with PBKDF2 key derivation for secure storage
-// This is an OPTIONAL upgrade - existing unencrypted wallets continue to work
+// X1W-SEC: Encryption is MANDATORY - plaintext storage is blocked
 
 // X1W-NEW-001 FIX: Increased to OWASP 2024 recommendation (600,000+ for PBKDF2-SHA256)
 // Version 2 uses legacy 100k iterations for backward compatibility
@@ -11,6 +11,9 @@ const CURRENT_VERSION = 3;
 const SALT_LENGTH = 16;
 const IV_LENGTH = 12;
 const VERSION_BYTE_LENGTH = 1;
+
+// X1W-SEC: Deterministic prefix for encrypted data - NOT heuristic
+const ENCRYPTED_PREFIX = 'X1W:v3:';
 
 async function deriveKey(password, salt, iterations = PBKDF2_ITERATIONS_V3) {
   const encoder = new TextEncoder();
@@ -68,7 +71,8 @@ export async function encryptData(plaintext, password) {
     const chunk = combined.subarray(i, Math.min(i + chunkSize, combined.length));
     binary += String.fromCharCode.apply(null, chunk);
   }
-  return btoa(binary);
+  // X1W-SEC: Add deterministic prefix for reliable detection
+  return ENCRYPTED_PREFIX + btoa(binary);
 }
 
 export async function decryptData(encryptedBase64, password) {
@@ -76,7 +80,13 @@ export async function decryptData(encryptedBase64, password) {
   if (!encryptedBase64) throw new Error('No encrypted data provided');
   
   try {
-    const combined = Uint8Array.from(atob(encryptedBase64), c => c.charCodeAt(0));
+    // X1W-SEC: Strip prefix if present
+    let base64Data = encryptedBase64;
+    if (encryptedBase64.startsWith(ENCRYPTED_PREFIX)) {
+      base64Data = encryptedBase64.slice(ENCRYPTED_PREFIX.length);
+    }
+    
+    const combined = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
     
     // Detect version based on format
     // Version 3: first byte is 3, then salt, iv, ciphertext
@@ -167,13 +177,27 @@ export async function verifyPassword(password, storedHash, storedSalt) {
   }
 }
 
+// X1W-SEC: Deterministic check - prefix means definitely encrypted
 export function isEncrypted(data) {
   if (!data || typeof data !== 'string') return false;
+  
+  // Deterministic: has our prefix
+  if (data.startsWith(ENCRYPTED_PREFIX)) {
+    return true;
+  }
+  
+  // Legacy: try to decode as JSON first
   try {
-    const decoded = atob(data);
-    return decoded.length >= SALT_LENGTH + IV_LENGTH + 16;
+    JSON.parse(data);
+    return false; // Valid JSON = plaintext
   } catch {
-    return false;
+    // Not JSON - check if valid base64 with minimum length
+    try {
+      const decoded = atob(data);
+      return decoded.length >= SALT_LENGTH + IV_LENGTH + 16;
+    } catch {
+      return false;
+    }
   }
 }
 

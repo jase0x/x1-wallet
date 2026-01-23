@@ -3,7 +3,7 @@ import { logger, getUserFriendlyError, ErrorMessages } from '@x1-wallet/core';
 import React, { useState, useRef, useEffect } from 'react';
 import { generateMnemonic, validateMnemonic, WORDLIST } from '@x1-wallet/core/utils/bip39';
 
-export default function CreateWallet({ onComplete, onBack, passwordProtection: propPasswordProtection, sessionPassword }) {
+export default function CreateWallet({ onComplete, onBack, passwordProtection: propPasswordProtection, sessionPassword, existingWallets = [] }) {
   const [step, setStep] = useState('choose'); // choose, generate, custom, verify, name, password, verify-password
   const [seedLength, setSeedLength] = useState(12);
   const [mnemonic, setMnemonic] = useState('');
@@ -12,6 +12,25 @@ export default function CreateWallet({ onComplete, onBack, passwordProtection: p
   const [activeInput, setActiveInput] = useState(-1);
   const [verifyIndices, setVerifyIndices] = useState([]);
   const [verifyInputs, setVerifyInputs] = useState({});
+  
+  // Compute next wallet number from existing wallets
+  const getNextWalletNumber = () => {
+    let maxNumber = 0;
+    existingWallets.forEach(w => {
+      // Match patterns like "Wallet 1", "My Wallet 2", "Imported Wallet 3", etc.
+      const match = w.name?.match(/(\d+)\s*$/);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (num > maxNumber) maxNumber = num;
+      }
+    });
+    // If no numbered wallets found, use wallet count
+    return Math.max(maxNumber, existingWallets.length) + 1;
+  };
+  
+  const nextWalletNumber = getNextWalletNumber();
+  const suggestedName = `Wallet ${nextWalletNumber}`;
+  
   const [walletName, setWalletName] = useState('');
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
@@ -277,7 +296,7 @@ export default function CreateWallet({ onComplete, onBack, passwordProtection: p
   const handleNameContinue = async () => {
     if (!passwordRequired) {
       // Password protection is OFF - complete without password
-      onComplete(mnemonic, walletName.trim() || 'My Wallet', null);
+      onComplete(mnemonic, walletName.trim() || suggestedName, null);
       return;
     }
     
@@ -288,7 +307,7 @@ export default function CreateWallet({ onComplete, onBack, passwordProtection: p
         const isValid = await checkPassword(sessionPassword);
         if (isValid) {
           // Session password is valid - complete with it
-          onComplete(mnemonic, walletName.trim() || 'My Wallet', sessionPassword);
+          onComplete(mnemonic, walletName.trim() || suggestedName, sessionPassword);
           return;
         }
       } catch (e) {
@@ -328,7 +347,7 @@ export default function CreateWallet({ onComplete, onBack, passwordProtection: p
       }
       
       // Password verified - complete with password for encryption
-      onComplete(mnemonic, walletName.trim() || 'My Wallet', password);
+      onComplete(mnemonic, walletName.trim() || suggestedName, password);
     } catch (err) {
       logger.error('Password verification error:', err);
       // If verification throws an error, fall back to creating a new password
@@ -355,7 +374,7 @@ export default function CreateWallet({ onComplete, onBack, passwordProtection: p
     }
     
     // Pass mnemonic, name, and password to parent
-    onComplete(mnemonic, walletName.trim() || 'My Wallet', password);
+    onComplete(mnemonic, walletName.trim() || suggestedName, password);
   };
 
   // Copy to clipboard with auto-clear (X1W-007)
@@ -679,7 +698,7 @@ export default function CreateWallet({ onComplete, onBack, passwordProtection: p
             className="form-input"
             value={walletName}
             onChange={e => setWalletName(e.target.value)}
-            placeholder="My Wallet"
+            placeholder={suggestedName}
             autoFocus
           />
         </div>

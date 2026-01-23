@@ -39,28 +39,34 @@ export const CONNECTION_TYPES = {
   BLUETOOTH: 'bluetooth'
 };
 
-// Derivation path schemes supported by different wallets
+// Derivation path schemes for Solana/X1
+// Default matches Phantom, Backpack, Ledger, Solflare, and most Solana wallets
 export const DERIVATION_SCHEMES = {
-  // Standard BIP44: m/44'/501'/{account}'
-  BIP44_STANDARD: {
-    id: 'bip44_standard',
-    name: 'Standard (BIP44)',
-    description: "m/44'/501'/<account>'",
-    getPath: (index) => `44'/501'/${index}'`
-  },
-  // Extended BIP44: m/44'/501'/{account}'/0'
-  BIP44_EXTENDED: {
-    id: 'bip44_extended',
-    name: 'Extended (BIP44)',
+  // Default: m/44'/501'/{account}'/0'
+  // Used by Phantom, Backpack, Ledger, Brave, and most modern Solana wallets
+  DEFAULT: {
+    id: 'default',
+    name: 'Default',
     description: "m/44'/501'/<account>'/0'",
     getPath: (index) => `44'/501'/${index}'/0'`
   },
-  // Legacy BIP44 Change: m/44'/501'/0'/{account}'
-  BIP44_LEGACY: {
-    id: 'bip44_legacy',
-    name: 'Legacy',
-    description: "m/44'/501'/0'/<account>'",
-    getPath: (index) => `44'/501'/0'/${index}'`
+  // Solflare-style: m/44'/501'/{account}'
+  // Used for scanning existing wallets, not shown in UI
+  SOLFLARE: {
+    id: 'solflare',
+    name: 'Solflare',
+    description: "m/44'/501'/<account>'",
+    getPath: (index) => `44'/501'/${index}'`,
+    hidden: true // Don't show in UI, only for scanning
+  },
+  // Deprecated Legacy: m/501'/{index}'/0/0
+  // Used for scanning old wallets, not shown in UI
+  DEPRECATED: {
+    id: 'deprecated',
+    name: 'Deprecated',
+    description: "m/501'/<account>'/0/0",
+    getPath: (index) => `501'/${index}'/0/0`,
+    hidden: true // Don't show in UI, only for scanning
   }
 };
 
@@ -72,8 +78,8 @@ class HardwareWalletService {
     this.connectionType = null;
     this.state = LEDGER_STATES.DISCONNECTED;
     this.publicKey = null;
-    this.derivationPath = "44'/501'/0'/0'"; // Solana default, works for X1 too
-    this.currentScheme = DERIVATION_SCHEMES.BIP44_EXTENDED; // Default scheme
+    this.derivationPath = "44'/501'/0'/0'"; // Default: Phantom/Backpack compatible
+    this.currentScheme = DERIVATION_SCHEMES.DEFAULT; // Default scheme for new wallets
     
     // Session invalid flag - forces reconnection after Ledger errors
     // This prevents 0x6a81 errors from corrupted transport state
@@ -907,7 +913,7 @@ class TrezorWalletService {
   getDerivationPaths() {
     return [
       { path: "44'/501'/0'/0'", label: "Default (m/44'/501'/0'/0')" },
-      { path: "44'/501'/0'", label: "Legacy (m/44'/501'/0')" },
+      { path: "44'/501'/0'", label: "Solflare (m/44'/501'/0')" },
       { path: "44'/501'/1'/0'", label: "Account 2 (m/44'/501'/1'/0')" },
       { path: "44'/501'/2'/0'", label: "Account 3 (m/44'/501'/2'/0')" },
     ];

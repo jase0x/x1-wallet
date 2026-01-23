@@ -5,6 +5,32 @@ import * as base58 from '@x1-wallet/core/utils/base58';
 import { logger, getUserFriendlyError, ErrorMessages } from '@x1-wallet/core';
 import { hardwareWallet } from '../services/hardware';
 
+// Safe wrapper for chrome.runtime.sendMessage to handle context invalidation
+// Returns null if chrome.runtime is unavailable (extension context invalidated)
+async function safeSendMessage(message) {
+  try {
+    // Check if chrome.runtime exists (it can become undefined if extension context is invalidated)
+    if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) {
+      logger.error('[DAppApproval] Chrome runtime unavailable - context may be invalidated');
+      throw new Error('Extension context invalidated. Please reload the page.');
+    }
+    return await chrome.runtime.sendMessage(message);
+  } catch (err) {
+    // If it's already our error, rethrow
+    if (err.message?.includes('Extension context invalidated')) {
+      throw err;
+    }
+    // Handle "Extension context invalidated" error from Chrome
+    if (err.message?.includes('Extension context invalidated') || 
+        err.message?.includes('sendMessage') ||
+        err.message?.includes('runtime')) {
+      logger.error('[DAppApproval] Extension context error:', err.message);
+      throw new Error('Extension context invalidated. Please reload the page.');
+    }
+    throw err;
+  }
+}
+
 // Transaction priority options - network aware
 function getPriorityOptions(network) {
   const isX1 = network?.includes('X1');
@@ -471,7 +497,7 @@ export default function DAppApproval({ wallet, requestId, onComplete }) {
   useEffect(() => {
     const checkPendingRequest = async () => {
       try {
-        const response = await chrome.runtime.sendMessage({ type: 'get-pending-request' });
+        const response = await safeSendMessage({ type: 'get-pending-request' });
         // Handle new response format: { request, requestId }
         const request = response?.request || response;
         const reqId = response?.requestId || request?.requestId;
@@ -658,7 +684,7 @@ export default function DAppApproval({ wallet, requestId, onComplete }) {
   const handleReject = async () => {
     setProcessing(true);
     try {
-      await chrome.runtime.sendMessage({
+      await safeSendMessage({
         type: 'approve-sign', requestId: currentRequestId,
         requestId: currentRequestId,  // X1W-SEC: Include request ID
         error: 'User rejected the request'
@@ -694,7 +720,7 @@ export default function DAppApproval({ wallet, requestId, onComplete }) {
       }
 
       // Send via provider-response with network and chain info
-      await chrome.runtime.sendMessage({
+      await safeSendMessage({
         type: 'provider-response',
         requestId: currentRequestId,  // X1W-SEC: Include request ID
         payload: { result: { publicKey, network, chain } }
@@ -765,7 +791,7 @@ export default function DAppApproval({ wallet, requestId, onComplete }) {
     // Notify background that Ledger is busy (prevents wallet switching during signing)
     if (isHardwareWallet) {
       try {
-        await chrome.runtime.sendMessage({ 
+        await safeSendMessage({ 
           type: 'ledger-busy', 
           busy: true, 
           origin: pendingRequest?.origin 
@@ -814,7 +840,7 @@ export default function DAppApproval({ wallet, requestId, onComplete }) {
       logger.log('[DAppApproval] Transaction signed successfully');
       
       // Send the signed transaction to background
-      await chrome.runtime.sendMessage({
+      await safeSendMessage({
         type: 'approve-sign', requestId: currentRequestId,
         signedTransaction: signedTxBase64
       });
@@ -833,7 +859,7 @@ export default function DAppApproval({ wallet, requestId, onComplete }) {
       
       // Send error back to background so it can clear queue and stop retries
       try {
-        await chrome.runtime.sendMessage({
+        await safeSendMessage({
           type: 'approve-sign', requestId: currentRequestId,
           error: err?.message || 'Transaction signing failed'
         });
@@ -850,7 +876,7 @@ export default function DAppApproval({ wallet, requestId, onComplete }) {
       // ALWAYS clear Ledger busy state when done (success or failure)
       if (isHardwareWallet) {
         try {
-          await chrome.runtime.sendMessage({ type: 'ledger-busy', busy: false });
+          await safeSendMessage({ type: 'ledger-busy', busy: false });
         } catch (e) {
           logger.warn('[DAppApproval] Failed to clear ledger-busy:', e);
         }
@@ -879,7 +905,7 @@ export default function DAppApproval({ wallet, requestId, onComplete }) {
     // Notify background that Ledger is busy (prevents wallet switching during signing)
     if (isHardwareWallet) {
       try {
-        await chrome.runtime.sendMessage({ 
+        await safeSendMessage({ 
           type: 'ledger-busy', 
           busy: true, 
           origin: pendingRequest?.origin 
@@ -928,7 +954,7 @@ export default function DAppApproval({ wallet, requestId, onComplete }) {
       
       setHwStatus('');
       
-      await chrome.runtime.sendMessage({
+      await safeSendMessage({
         type: 'approve-sign', requestId: currentRequestId,
         signedTransactions: signedTxs
       });
@@ -947,7 +973,7 @@ export default function DAppApproval({ wallet, requestId, onComplete }) {
       
       // Send error back to background so it can clear queue and stop retries
       try {
-        await chrome.runtime.sendMessage({
+        await safeSendMessage({
           type: 'approve-sign', requestId: currentRequestId,
           error: err?.message || 'Transaction signing failed'
         });
@@ -964,7 +990,7 @@ export default function DAppApproval({ wallet, requestId, onComplete }) {
       // ALWAYS clear Ledger busy state when done (success or failure)
       if (isHardwareWallet) {
         try {
-          await chrome.runtime.sendMessage({ type: 'ledger-busy', busy: false });
+          await safeSendMessage({ type: 'ledger-busy', busy: false });
         } catch (e) {
           logger.warn('[DAppApproval] Failed to clear ledger-busy:', e);
         }
@@ -993,7 +1019,7 @@ export default function DAppApproval({ wallet, requestId, onComplete }) {
     // Notify background that Ledger is busy (prevents wallet switching during signing)
     if (isHardwareWallet) {
       try {
-        await chrome.runtime.sendMessage({ 
+        await safeSendMessage({ 
           type: 'ledger-busy', 
           busy: true, 
           origin: pendingRequest?.origin 
@@ -1207,7 +1233,7 @@ export default function DAppApproval({ wallet, requestId, onComplete }) {
       
       logger.log('[DAppApproval] Sending signature to background:', txSignature);
       
-      await chrome.runtime.sendMessage({
+      await safeSendMessage({
         type: 'approve-sign', requestId: currentRequestId,
         signature: txSignature
       });
@@ -1228,7 +1254,7 @@ export default function DAppApproval({ wallet, requestId, onComplete }) {
       
       // Send error back to background so it can clear queue and stop retries
       try {
-        await chrome.runtime.sendMessage({
+        await safeSendMessage({
           type: 'approve-sign', requestId: currentRequestId,
           error: err?.message || 'Transaction failed'
         });
@@ -1245,7 +1271,7 @@ export default function DAppApproval({ wallet, requestId, onComplete }) {
       // ALWAYS clear Ledger busy state when done (success or failure)
       if (isHardwareWallet) {
         try {
-          await chrome.runtime.sendMessage({ type: 'ledger-busy', busy: false });
+          await safeSendMessage({ type: 'ledger-busy', busy: false });
         } catch (e) {
           logger.warn('[DAppApproval] Failed to clear ledger-busy:', e);
         }
@@ -1276,7 +1302,7 @@ export default function DAppApproval({ wallet, requestId, onComplete }) {
     // Notify background that Ledger is busy (prevents wallet switching during signing)
     if (isHardwareWallet) {
       try {
-        await chrome.runtime.sendMessage({ 
+        await safeSendMessage({ 
           type: 'ledger-busy', 
           busy: true, 
           origin: pendingRequest?.origin 
@@ -1303,7 +1329,7 @@ export default function DAppApproval({ wallet, requestId, onComplete }) {
       
       const signatureBase64 = btoa(String.fromCharCode(...signature));
       
-      await chrome.runtime.sendMessage({
+      await safeSendMessage({
         type: 'approve-sign-message', requestId: currentRequestId,
         signature: signatureBase64
       });
@@ -1350,7 +1376,7 @@ export default function DAppApproval({ wallet, requestId, onComplete }) {
       
       // For non-recoverable errors (like user rejection), send to background and close
       try {
-        await chrome.runtime.sendMessage({
+        await safeSendMessage({
           type: 'approve-sign-message', requestId: currentRequestId,
           error: err?.message || 'Signing failed'
         });
@@ -1367,7 +1393,7 @@ export default function DAppApproval({ wallet, requestId, onComplete }) {
       // ALWAYS clear Ledger busy state when done (success or failure)
       if (isHardwareWallet) {
         try {
-          await chrome.runtime.sendMessage({ type: 'ledger-busy', busy: false });
+          await safeSendMessage({ type: 'ledger-busy', busy: false });
         } catch (e) {
           logger.warn('[DAppApproval] Failed to clear ledger-busy:', e);
         }

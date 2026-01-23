@@ -197,7 +197,7 @@ export function useWallet() {
     };
   };
 
-  // Load wallets from storage (encrypted or plain)
+  // Load wallets from storage (encrypted ONLY - plaintext blocked)
   const loadWalletsFromStorage = useCallback(async (password = null) => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
@@ -221,10 +221,19 @@ export function useWallet() {
           throw new Error('Incorrect password');
         }
       } else {
-        // Plain JSON (legacy or unencrypted)
-        const parsed = JSON.parse(saved);
+        // X1W-SEC: PLAINTEXT BLOCKED - Do not load, do not delete
+        // User must re-import wallet with a password
+        logger.error('[SECURITY] Plaintext wallet data blocked. Re-import required.');
+        console.error('[SECURITY] ⛔ Unencrypted wallet data detected and BLOCKED.');
+        console.error('[SECURITY] For your security, plaintext wallets cannot be loaded.');
+        console.error('[SECURITY] Please re-import your wallet using your seed phrase.');
+        console.error('[SECURITY] Your data has NOT been deleted - you can export it manually if needed.');
+        
+        // Do NOT delete - user may need to recover manually
+        // localStorage.removeItem(STORAGE_KEY);
+        
         setIsLocked(false);
-        return parsed.map(migrateWallet);
+        return [];
       }
     } catch (e) {
       if (e.message === 'Incorrect password') throw e;
@@ -353,13 +362,18 @@ export function useWallet() {
             setIsLocked(true);
           }
         } else if (saved) {
-          // Plain JSON - load directly
-          console.log('[useWallet] Data is plain JSON - parsing...');
-          const parsed = JSON.parse(saved);
-          const migrated = parsed.map(migrateWallet);
-          console.log('[useWallet] Loaded', migrated.length, 'wallets');
-          setWallets(migrated);
-          setActiveWalletId(activeId || (migrated.length > 0 ? migrated[0].id : null));
+          // X1W-SEC: PLAINTEXT BLOCKED - Do not load, do not delete
+          console.error('[SECURITY] ⛔ Unencrypted wallet data detected and BLOCKED.');
+          console.error('[SECURITY] For your security, plaintext wallets cannot be loaded.');
+          console.error('[SECURITY] Please re-import your wallet using your seed phrase.');
+          console.error('[SECURITY] Your data has NOT been deleted - you can export it manually if needed.');
+          logger.error('[useWallet] Plaintext wallet data blocked');
+          
+          // Do NOT delete - user may need to recover manually
+          // localStorage.removeItem(STORAGE_KEY);
+          
+          setWallets([]);
+          setIsLocked(false);
         } else {
           console.log('[useWallet] No saved data found');
         }

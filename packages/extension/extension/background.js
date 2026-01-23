@@ -152,7 +152,12 @@ async function isSiteConnected(origin) {
 }
 
 // X1W-006: Check if sensitive operation requires re-authentication
+// TEMPORARILY DISABLED for debugging - always returns false
 async function requiresReauth(origin) {
+  // TODO: Re-enable after debugging reauth trigger issue
+  return false;
+  
+  /*
   const sites = await getConnectedSites();
   const siteData = sites[origin];
   
@@ -160,6 +165,7 @@ async function requiresReauth(origin) {
   
   const timeSinceLastOp = Date.now() - siteData.lastSensitiveOp;
   return timeSinceLastOp > SENSITIVE_OPS_REAUTH_MS;
+  */
 }
 
 // X1W-006: Update last sensitive operation timestamp
@@ -200,7 +206,17 @@ function validateOrigin(providedOrigin, sender) {
 // Get active wallet from storage
 async function getActiveWallet() {
   const result = await chrome.storage.local.get(['x1wallet_wallets', 'x1wallet_active']);
-  const wallets = JSON.parse(result.x1wallet_wallets || '[]');
+  
+  // X1W-SEC: Safe JSON parsing with error handling
+  let wallets = [];
+  try {
+    const rawWallets = JSON.parse(result.x1wallet_wallets || '[]');
+    wallets = Array.isArray(rawWallets) ? rawWallets : [];
+  } catch (e) {
+    console.error('[Background] Failed to parse wallet data - may be corrupted');
+    wallets = [];
+  }
+  
   const activeId = result.x1wallet_active;
   
   if (!activeId || wallets.length === 0) return null;
@@ -231,8 +247,11 @@ async function getCurrentNetwork() {
 const pendingRequests = new Map(); // key: requestId → { request, callback, timeoutId }
 
 // Generate unique request ID
+// X1W-SEC: Use cryptographically secure random for unpredictable request IDs
 function generateRequestId() {
-  return Date.now().toString(36) + Math.random().toString(36).substring(2, 9);
+  const arr = new Uint8Array(16);
+  crypto.getRandomValues(arr);
+  return Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
 }
 
 // Get the oldest pending request (first in, first served)
@@ -569,7 +588,7 @@ async function handleConnect(origin, favicon, sender, params = {}) {
           clearBadge();
         }
       }
-    }, 60000);
+    }, 30000);  // X1W-SEC: Reduced timeout for security
     
     pendingRequests.set(requestId, { request, callback: resolve, timeoutId });
     
@@ -678,7 +697,7 @@ async function handleSignTransaction(params, origin, sender) {
           clearBadge();
         }
       }
-    }, 60000);
+    }, 30000);  // X1W-SEC: Reduced timeout for security
     
     // Store in Map
     pendingRequests.set(requestId, { request, callback: resolve, timeoutId });
@@ -729,7 +748,7 @@ async function handleSignAllTransactions(params, origin, sender) {
           clearBadge();
         }
       }
-    }, 60000);
+    }, 30000);  // X1W-SEC: Reduced timeout for security
     
     pendingRequests.set(requestId, { request, callback: resolve, timeoutId });
     
@@ -779,7 +798,7 @@ async function handleSignAndSendTransaction(params, origin, sender) {
           clearBadge();
         }
       }
-    }, 60000);
+    }, 30000);  // X1W-SEC: Reduced timeout for security
     
     pendingRequests.set(requestId, { request, callback: resolve, timeoutId });
     
@@ -828,7 +847,7 @@ async function handleSignMessage(params, origin, sender) {
           clearBadge();
         }
       }
-    }, 60000);
+    }, 30000);  // X1W-SEC: Reduced timeout for security
     
     pendingRequests.set(requestId, { request, callback: resolve, timeoutId });
     

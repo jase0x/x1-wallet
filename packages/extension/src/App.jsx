@@ -1112,6 +1112,7 @@ function App() {
           onBack={() => setScreen(returnScreen === 'manage' ? 'manage' : 'welcome')}
           passwordProtection={passwordProtection}
           sessionPassword={sessionPassword}
+          existingWallets={wallet.wallets || []}
         />
       </div>
     );
@@ -1134,6 +1135,7 @@ function App() {
           onCompletePrivateKey={handleImportPrivateKey}
           onBack={() => setScreen(returnScreen === 'manage' ? 'manage' : 'welcome')}
           sessionPassword={sessionPassword}
+          existingWallets={wallet.wallets || []}
         />
       </div>
     );

@@ -36,14 +36,31 @@
   });
 
   // X1W-SEC: Listen for the secure channel handshake (one-time only)
+  // Fixed: Added token verification and race condition prevention
   function setupSecureChannel() {
+    let handshakeComplete = false;
+    
     const handshakeHandler = (event) => {
       // Only accept handshake from same window
       if (event.source !== window) return;
       if (!event.data || event.data.target !== 'x1-wallet-provider-handshake') return;
       
+      // X1W-SEC: Prevent multiple handshakes (race condition fix)
+      if (handshakeComplete) {
+        console.warn('[X1 Wallet] Rejected duplicate handshake attempt');
+        return;
+      }
+      
+      // X1W-SEC: Require token for verification
+      if (!event.data.token) {
+        console.warn('[X1 Wallet] Rejected handshake without token');
+        return;
+      }
+      
       // Get the transferred port
       if (event.ports && event.ports[0]) {
+        const receivedToken = event.data.token;
+        
         _securePort = event.ports[0];
         
         // Set up message handler on the secure port
@@ -53,6 +70,16 @@
         
         // Start the port
         _securePort.start();
+        
+        // X1W-SEC: Send acknowledgment through the secure port
+        // This proves we have the real port (attacker can't intercept MessagePort)
+        _securePort.postMessage({
+          type: 'handshake-ack',
+          token: receivedToken
+        });
+        
+        // Mark handshake as complete BEFORE removing listener
+        handshakeComplete = true;
         _portReady = true;
         
         // Resolve the ready promise
@@ -60,7 +87,7 @@
           _portReadyResolve();
         }
         
-        console.log("[X1 Wallet] Secure channel connected");
+        console.log("[X1 Wallet] Secure channel connected and verified");
         
         // Remove the handshake listener - only needed once
         window.removeEventListener('message', handshakeHandler);
@@ -68,6 +95,15 @@
     };
     
     window.addEventListener('message', handshakeHandler);
+    
+    // X1W-SEC: Timeout for handshake - detect missing extension or communication failure
+    setTimeout(() => {
+      if (!handshakeComplete) {
+        console.warn('[X1 Wallet] Handshake timeout - extension communication may have failed');
+        window.removeEventListener('message', handshakeHandler);
+        // Note: Don't set _portReady - requests will properly fail with timeout
+      }
+    }, 10000);
   }
   
   // Set up secure channel immediately
@@ -153,6 +189,73 @@
     return str;
   }
 
+  // Minimal BN (BigNumber) implementation for web3.js compatibility
+  // web3.js PublicKey uses _bn internally for comparisons
+  class SimpleBN {
+    constructor(bytes) {
+      // Store as Uint8Array (big-endian, 32 bytes for public keys)
+      if (bytes instanceof Uint8Array) {
+        this._bytes = bytes;
+      } else if (Array.isArray(bytes)) {
+        this._bytes = new Uint8Array(bytes);
+      } else if (typeof bytes === 'string') {
+        // Hex string
+        const hex = bytes.replace(/^0x/, '');
+        this._bytes = new Uint8Array(hex.match(/.{1,2}/g).map(b => parseInt(b, 16)));
+      } else if (bytes && bytes._bytes) {
+        this._bytes = bytes._bytes;
+      } else {
+        this._bytes = new Uint8Array(32);
+      }
+      this.negative = 0;
+      this.length = this._bytes.length;
+    }
+    
+    // Compare: returns -1, 0, or 1
+    cmp(other) {
+      const otherBytes = other._bytes || other;
+      const a = this._bytes;
+      const b = otherBytes instanceof Uint8Array ? otherBytes : new Uint8Array(32);
+      
+      // Compare byte by byte (big-endian)
+      const len = Math.max(a.length, b.length);
+      for (let i = 0; i < len; i++) {
+        const ai = i < a.length ? a[i] : 0;
+        const bi = i < b.length ? b[i] : 0;
+        if (ai < bi) return -1;
+        if (ai > bi) return 1;
+      }
+      return 0;
+    }
+    
+    // Equals
+    eq(other) {
+      return this.cmp(other) === 0;
+    }
+    
+    // Convert to array (for compatibility)
+    toArray(endian = 'be', length = 32) {
+      const result = new Array(length).fill(0);
+      const bytes = this._bytes;
+      if (endian === 'be') {
+        // Big-endian: copy from end
+        for (let i = 0; i < bytes.length && i < length; i++) {
+          result[length - 1 - i] = bytes[bytes.length - 1 - i];
+        }
+      } else {
+        // Little-endian
+        for (let i = 0; i < bytes.length && i < length; i++) {
+          result[i] = bytes[i];
+        }
+      }
+      return result;
+    }
+    
+    toArrayLike(ArrayType, endian = 'be', length = 32) {
+      return new ArrayType(this.toArray(endian, length));
+    }
+  }
+
   // PublicKey class - mimics @solana/web3.js PublicKey
   class PublicKey {
     constructor(value) {
@@ -166,11 +269,48 @@
         this._key = value._key;
         this._base58 = value._base58;
       } else if (value && value._key) {
+        // Handle objects with _key property (X1 Wallet format)
         this._key = value._key;
         this._base58 = value._base58 || encodeBase58(value._key);
+      } else if (value && typeof value.toBase58 === 'function') {
+        // Handle @solana/web3.js PublicKey objects (they have toBase58 method)
+        this._base58 = value.toBase58();
+        this._key = decodeBase58(this._base58);
+      } else if (value && typeof value.toBytes === 'function') {
+        // Handle objects with toBytes method
+        this._key = new Uint8Array(value.toBytes());
+        this._base58 = encodeBase58(this._key);
+      } else if (value && value._bn) {
+        // Handle @solana/web3.js PublicKey with _bn (BigNumber) property
+        const bnValue = value._bn;
+        if (typeof bnValue.toArray === 'function') {
+          const bytes = bnValue.toArray('be', 32);
+          this._key = new Uint8Array(bytes);
+          this._base58 = encodeBase58(this._key);
+        } else if (bnValue._bytes) {
+          this._key = new Uint8Array(bnValue._bytes);
+          this._base58 = encodeBase58(this._key);
+        } else {
+          throw new Error("Invalid public key input: cannot convert _bn");
+        }
       } else {
         throw new Error("Invalid public key input");
       }
+      
+      // Ensure _key is exactly 32 bytes (pad if necessary)
+      if (this._key.length !== 32) {
+        const normalized = new Uint8Array(32);
+        if (this._key.length < 32) {
+          normalized.set(this._key, 32 - this._key.length);
+        } else {
+          normalized.set(this._key.slice(this._key.length - 32));
+        }
+        this._key = normalized;
+      }
+      
+      // Create _bn for web3.js compatibility
+      // This is critical for Transaction.compileMessage() which uses _bn.eq()
+      this._bn = new SimpleBN(this._key);
     }
 
     toBase58() {
@@ -191,8 +331,33 @@
 
     equals(other) {
       if (!other) return false;
-      const otherKey = other instanceof PublicKey ? other : new PublicKey(other);
-      return this._base58 === otherKey._base58;
+      
+      // Try to get base58 string from the other object for comparison
+      let otherBase58;
+      try {
+        if (other instanceof PublicKey) {
+          otherBase58 = other._base58;
+        } else if (typeof other === 'string') {
+          otherBase58 = other;
+        } else if (typeof other.toBase58 === 'function') {
+          // Handle @solana/web3.js PublicKey
+          otherBase58 = other.toBase58();
+        } else if (other._base58) {
+          otherBase58 = other._base58;
+        } else if (other._bn && this._bn) {
+          // Compare using _bn if both have it
+          return this._bn.eq(other._bn);
+        } else {
+          // Fallback: try to create a new PublicKey
+          const otherKey = new PublicKey(other);
+          otherBase58 = otherKey._base58;
+        }
+      } catch (e) {
+        // If we can't convert, they're not equal
+        return false;
+      }
+      
+      return this._base58 === otherBase58;
     }
 
     toJSON() {

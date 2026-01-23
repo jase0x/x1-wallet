@@ -3997,6 +3997,22 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
 
             {tokens
               .filter(token => showHiddenTokens || !hiddenTokens.includes(token.mint))
+              .sort((a, b) => {
+                // Sort by USD value (highest first), fallback to raw balance
+                const aBalance = parseFloat(a.uiAmount || a.balance || 0);
+                const bBalance = parseFloat(b.uiAmount || b.balance || 0);
+                const aPrice = parseFloat(a.price || 0);
+                const bPrice = parseFloat(b.price || 0);
+                const aUsdValue = a.usdValue || (aBalance * aPrice);
+                const bUsdValue = b.usdValue || (bBalance * bPrice);
+                
+                // If both have USD values, sort by USD
+                if (aUsdValue > 0 || bUsdValue > 0) {
+                  return bUsdValue - aUsdValue;
+                }
+                // Otherwise sort by raw balance
+                return bBalance - aBalance;
+              })
               .map((token) => {
               const isHidden = hiddenTokens.includes(token.mint);
               // AGGRESSIVE LP TOKEN DETECTION
