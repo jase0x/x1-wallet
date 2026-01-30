@@ -40,6 +40,56 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
   // Check if an address is already imported
   const isAlreadyImported = (address) => existingAddresses.includes(address);
   
+  // Find next available account number for Ledger/Trezor naming (fills gaps)
+  const getNextAccountNumber = (deviceType) => {
+    const prefix = deviceType === 'trezor' ? 'Trezor' : 'Ledger';
+    const regex = new RegExp(`^${prefix}\\s+Account\\s+(\\d+)$`, 'i');
+    
+    // Collect all used numbers
+    const usedNumbers = new Set();
+    for (const wallet of existingWallets) {
+      const match = wallet.name?.match(regex);
+      if (match) {
+        usedNumbers.add(parseInt(match[1], 10));
+      }
+    }
+    
+    // Find first available number starting from 1
+    let nextNum = 1;
+    while (usedNumbers.has(nextNum)) {
+      nextNum++;
+    }
+    
+    return nextNum;
+  };
+  
+  // Get a sequence of available account numbers (for batch imports)
+  const getAvailableAccountNumbers = (deviceType, count) => {
+    const prefix = deviceType === 'trezor' ? 'Trezor' : 'Ledger';
+    const regex = new RegExp(`^${prefix}\\s+Account\\s+(\\d+)$`, 'i');
+    
+    // Collect all used numbers
+    const usedNumbers = new Set();
+    for (const wallet of existingWallets) {
+      const match = wallet.name?.match(regex);
+      if (match) {
+        usedNumbers.add(parseInt(match[1], 10));
+      }
+    }
+    
+    // Find 'count' available numbers
+    const available = [];
+    let num = 1;
+    while (available.length < count) {
+      if (!usedNumbers.has(num)) {
+        available.push(num);
+      }
+      num++;
+    }
+    
+    return available;
+  };
+  
   // Fetch balances for accounts
   const fetchBalances = async (accountList) => {
     if (!accountList || accountList.length === 0) return;
@@ -185,15 +235,22 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
         throw new Error(`No accounts found. Make sure ${deviceType === HW_TYPES.TREZOR ? 'Trezor is unlocked' : 'the Solana app is open on your Ledger'}.`);
       }
       
-      setAccounts(accountList);
-      setLoadedCount(accountList.length);
+      // Get available numbers for all accounts at once (fills gaps)
+      const availableNumbers = getAvailableAccountNumbers(deviceType, accountList.length);
+      const relabeledAccounts = accountList.map((account, idx) => ({
+        ...account,
+        label: `Account ${availableNumbers[idx]}`
+      }));
+      
+      setAccounts(relabeledAccounts);
+      setLoadedCount(relabeledAccounts.length);
       setSelectedAccounts([]); // Reset selection
       setLoading(false);
       setShowCustomPath(false);
       setStep('account');
       
       // Fetch balances in background
-      fetchBalances(accountList);
+      fetchBalances(relabeledAccounts);
     } catch (err) {
       setError(err.message || 'Failed to get accounts');
       setLoading(false);
@@ -252,9 +309,8 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
       const wallet = getWallet();
       const allAccounts = [];
       const seenAddresses = new Set();
-      let accountNum = 1;
       
-      // Scan each scheme
+      // Scan each scheme and collect accounts
       for (const scheme of Object.values(DERIVATION_SCHEMES)) {
         setStatus(`Scanning ${scheme.name}...`);
         try {
@@ -265,10 +321,8 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
               seenAddresses.add(account.address);
               allAccounts.push({
                 ...account,
-                label: `Account ${accountNum}`,
                 schemeName: scheme.name
               });
-              accountNum++;
             }
           }
         } catch (e) {
@@ -280,9 +334,16 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
         throw new Error('No accounts found on any derivation path.');
       }
       
-      setAccounts(allAccounts);
-      setLoadedCount(allAccounts.length);
-      setSelectedAccount(allAccounts[0]);
+      // Get available numbers and relabel all accounts
+      const availableNumbers = getAvailableAccountNumbers(deviceType, allAccounts.length);
+      const relabeledAccounts = allAccounts.map((account, idx) => ({
+        ...account,
+        label: `Account ${availableNumbers[idx]}`
+      }));
+      
+      setAccounts(relabeledAccounts);
+      setLoadedCount(relabeledAccounts.length);
+      setSelectedAccount(relabeledAccounts[0]);
       setLoading(false);
       setShowCustomPath(false);
       setStep('account');
@@ -302,10 +363,42 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
       const newAccounts = await wallet.getAccountsForScheme(selectedScheme, loadedCount, 5);
       
       if (newAccounts.length > 0) {
-        setAccounts([...accounts, ...newAccounts]);
-        setLoadedCount(loadedCount + newAccounts.length);
+        // Collect all used numbers from both existingWallets AND current display
+        const prefix = deviceType === 'trezor' ? 'Trezor' : 'Ledger';
+        const regex = new RegExp(`^${prefix}\\s+Account\\s+(\\d+)$`, 'i');
+        const usedNumbers = new Set();
+        
+        // Add numbers from existing wallets
+        for (const w of existingWallets) {
+          const match = w.name?.match(regex);
+          if (match) usedNumbers.add(parseInt(match[1], 10));
+        }
+        
+        // Add numbers from currently displayed accounts
+        for (const acc of accounts) {
+          const match = acc.label?.match(/Account\s+(\d+)/i);
+          if (match) usedNumbers.add(parseInt(match[1], 10));
+        }
+        
+        // Find available numbers for new accounts
+        const availableNumbers = [];
+        let num = 1;
+        while (availableNumbers.length < newAccounts.length) {
+          if (!usedNumbers.has(num)) {
+            availableNumbers.push(num);
+          }
+          num++;
+        }
+        
+        const relabeledNewAccounts = newAccounts.map((account, idx) => ({
+          ...account,
+          label: `Account ${availableNumbers[idx]}`
+        }));
+        
+        setAccounts([...accounts, ...relabeledNewAccounts]);
+        setLoadedCount(loadedCount + relabeledNewAccounts.length);
         // Fetch balances for new accounts
-        fetchBalances(newAccounts);
+        fetchBalances(relabeledNewAccounts);
       }
     } catch (err) {
       setError(err.message || 'Failed to load more accounts');
@@ -727,14 +820,21 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
           throw new Error(`No accounts found. Make sure ${deviceType === HW_TYPES.TREZOR ? 'Trezor is unlocked' : 'the Solana app is open on your Ledger'}.`);
         }
         
-        setAccounts(accountList);
-        setLoadedCount(accountList.length);
+        // Get available numbers for all accounts at once (fills gaps)
+        const availableNumbers = getAvailableAccountNumbers(deviceType, accountList.length);
+        const relabeledAccounts = accountList.map((account, idx) => ({
+          ...account,
+          label: `Account ${availableNumbers[idx]}`
+        }));
+        
+        setAccounts(relabeledAccounts);
+        setLoadedCount(relabeledAccounts.length);
         setSelectedScheme(DERIVATION_SCHEMES.DEFAULT);
         setSelectedAccounts([]);
         setLoading(false);
         setStep('account');
         
-        fetchBalances(accountList);
+        fetchBalances(relabeledAccounts);
       } catch (err) {
         setError(err.message || 'Failed to get accounts');
         setLoading(false);
@@ -751,7 +851,6 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
         const wallet = getWallet();
         const allAccounts = [];
         const seenAddresses = new Set();
-        let accountNum = 1;
         
         for (const scheme of Object.values(DERIVATION_SCHEMES)) {
           setStatus(`Scanning ${scheme.name}...`);
@@ -761,11 +860,7 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
             for (const account of schemeAccounts) {
               if (!seenAddresses.has(account.address)) {
                 seenAddresses.add(account.address);
-                allAccounts.push({
-                  ...account,
-                  label: `Account ${accountNum}`
-                });
-                accountNum++;
+                allAccounts.push(account);
               }
             }
           } catch (e) {
@@ -777,13 +872,20 @@ export default function HardwareWallet({ onComplete, onBack, isFirstWallet = fal
           throw new Error('No accounts found on any path.');
         }
         
-        setAccounts(allAccounts);
-        setLoadedCount(allAccounts.length);
+        // Get available numbers and relabel all accounts
+        const availableNumbers = getAvailableAccountNumbers(deviceType, allAccounts.length);
+        const relabeledAccounts = allAccounts.map((account, idx) => ({
+          ...account,
+          label: `Account ${availableNumbers[idx]}`
+        }));
+        
+        setAccounts(relabeledAccounts);
+        setLoadedCount(relabeledAccounts.length);
         setSelectedAccounts([]);
         setLoading(false);
         setStep('account');
         
-        fetchBalances(allAccounts);
+        fetchBalances(relabeledAccounts);
       } catch (err) {
         setError(err.message || 'Failed to scan paths');
         setLoading(false);

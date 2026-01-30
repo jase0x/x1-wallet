@@ -2015,6 +2015,34 @@ function WalletPanel({ wallets, activeId, network, onSelect, onManage, onClose, 
   const [dragOverId, setDragOverId] = useState(null);
   const [balances, setBalances] = useState({});
   const [loadingBalances, setLoadingBalances] = useState(true);
+  const [hiddenWallets, setHiddenWallets] = useState(() => {
+    try {
+      const stored = localStorage.getItem('x1wallet_hidden_wallets');
+      return stored ? JSON.parse(stored) : [];
+    } catch { return []; }
+  });
+  const [showHidden, setShowHidden] = useState(false);
+
+  // Toggle wallet visibility (can't hide active wallet)
+  const toggleWalletVisibility = (e, walletId) => {
+    e.stopPropagation();
+    // Don't allow hiding the currently active wallet
+    if (walletId === activeId && !hiddenWallets.includes(walletId)) {
+      return; // Can't hide active wallet
+    }
+    const newHidden = hiddenWallets.includes(walletId)
+      ? hiddenWallets.filter(id => id !== walletId)
+      : [...hiddenWallets, walletId];
+    setHiddenWallets(newHidden);
+    localStorage.setItem('x1wallet_hidden_wallets', JSON.stringify(newHidden));
+  };
+
+  // Filter wallets based on visibility
+  const visibleWallets = showHidden 
+    ? wallets 
+    : wallets.filter(w => !hiddenWallets.includes(w.id));
+  
+  const hiddenCount = wallets.filter(w => hiddenWallets.includes(w.id)).length;
 
   // Fetch balances for all wallets when panel opens
   useEffect(() => {
@@ -2167,21 +2195,59 @@ function WalletPanel({ wallets, activeId, network, onSelect, onManage, onClose, 
           <div style={{ width: 32 }} />
         </div>
         <div className="slide-panel-content">
-          {wallets.map(w => {
+          {/* Show hidden toggle if there are hidden wallets */}
+          {hiddenCount > 0 && (
+            <button
+              onClick={() => setShowHidden(!showHidden)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '8px 12px',
+                marginBottom: 8,
+                background: 'var(--bg-tertiary)',
+                border: '1px solid var(--border-color)',
+                borderRadius: 8,
+                color: 'var(--text-muted)',
+                fontSize: 12,
+                cursor: 'pointer',
+                width: '100%'
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                {showHidden ? (
+                  <>
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </>
+                ) : (
+                  <>
+                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                    <line x1="1" y1="1" x2="23" y2="23" />
+                  </>
+                )}
+              </svg>
+              {showHidden ? 'Hide' : 'Show'} hidden wallets ({hiddenCount})
+            </button>
+          )}
+          
+          {visibleWallets.map(w => {
             const activeAddr = getActiveAddress(w);
             const hasImage = isImage(w.avatar);
+            const isHidden = hiddenWallets.includes(w.id);
             
             return (
               <div 
                 key={w.id}
                 className={`wallet-panel-item ${activeId === w.id ? 'active' : ''} ${dragOverId === w.id ? 'drag-over' : ''}`}
                 onClick={() => { onSelect(w.id); onClose(); }}
-                draggable
+                draggable={!isHidden}
                 onDragStart={(e) => handleDragStart(e, w.id)}
                 onDragEnd={handleDragEnd}
                 onDragOver={(e) => handleDragOver(e, w.id)}
                 onDragLeave={handleDragLeave}
                 onDrop={(e) => handleDrop(e, w.id)}
+                style={{ opacity: isHidden ? 0.5 : 1 }}
               >
                 <div className="wallet-item-avatar">
                   {hasImage ? (
@@ -2194,7 +2260,43 @@ function WalletPanel({ wallets, activeId, network, onSelect, onManage, onClose, 
                 </div>
                 <div className="wallet-item-info">
                   <div className="wallet-item-row1" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span className="wallet-item-name">{w.name}</span>
+                    <span 
+                      className="wallet-item-name"
+                      style={{ 
+                        color: (w.type === 'watchonly' || w.isWatchOnly) ? '#ffc107' : undefined 
+                      }}
+                    >
+                      {w.name}
+                    </span>
+                    {/* Hide/Unhide toggle - next to name */}
+                    <button 
+                      className={`wallet-hide-btn ${isHidden ? 'is-hidden' : ''} ${w.id === activeId && !isHidden ? 'is-active' : ''}`}
+                      onClick={(e) => toggleWalletVisibility(e, w.id)}
+                      title={w.id === activeId && !isHidden ? "Can't hide active wallet" : isHidden ? "Show wallet" : "Hide wallet"}
+                      style={{ 
+                        background: 'none',
+                        border: 'none',
+                        padding: 2,
+                        cursor: w.id === activeId && !isHidden ? 'not-allowed' : 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        pointerEvents: w.id === activeId && !isHidden ? 'none' : 'auto'
+                      }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={isHidden ? "var(--text-muted)" : "var(--text-secondary)"} strokeWidth="2">
+                        {isHidden ? (
+                          <>
+                            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                            <line x1="1" y1="1" x2="23" y2="23" />
+                          </>
+                        ) : (
+                          <>
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                            <circle cx="12" cy="12" r="3" />
+                          </>
+                        )}
+                      </svg>
+                    </button>
                     {activeId === w.id && (
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--x1-blue)" strokeWidth="3">
                         <polyline points="20 6 9 17 4 12" />
@@ -2258,7 +2360,7 @@ function WalletPanel({ wallets, activeId, network, onSelect, onManage, onClose, 
 }
 
 // Add Wallet Options Panel
-function AddWalletPanel({ onClose, onCreateNew, onImport, onHardware }) {
+function AddWalletPanel({ onClose, onCreateNew, onImport, onHardware, onWatchOnly }) {
   return (
     <div className="slide-panel-overlay" onClick={onClose}>
       <div className="slide-panel" onClick={e => e.stopPropagation()}>
@@ -2317,6 +2419,24 @@ function AddWalletPanel({ onClose, onCreateNew, onImport, onHardware }) {
               <div className="add-wallet-text">
                 <span className="add-wallet-title">Hardware Wallet</span>
                 <span className="add-wallet-desc">Connect Ledger or Trezor</span>
+              </div>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M9 18l6-6-6-6" />
+              </svg>
+            </button>
+
+            <button className="add-wallet-option" onClick={() => { onClose(); onWatchOnly && onWatchOnly(); }}>
+              <div className="add-wallet-icon">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--x1-blue)" strokeWidth="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                  <line x1="16" y1="13" x2="8" y2="13" />
+                  <line x1="16" y1="17" x2="8" y2="17" />
+                </svg>
+              </div>
+              <div className="add-wallet-text">
+                <span className="add-wallet-title">Watch-Only</span>
+                <span className="add-wallet-desc">Monitor any address (read only)</span>
               </div>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M9 18l6-6-6-6" />
@@ -2505,7 +2625,7 @@ function EditWalletPanel({ walletData, onSave, onClose, onRemove }) {
     name: 'Address 1' 
   }];
   // Show seed phrase button unless explicitly marked as private-key-only or hardware wallet
-  const hasMnemonic = !walletData.isPrivateKeyOnly && !walletData.isHardware && walletData.type !== 'privatekey';
+  const hasMnemonic = !walletData.isPrivateKeyOnly && !walletData.isHardware && walletData.type !== 'privatekey' && walletData.type !== 'watchonly' && !walletData.isWatchOnly;
   const primaryAddress = addresses[0]?.publicKey || '';
   const privateKey = addresses[0]?.privateKey || '';
 
@@ -3251,7 +3371,7 @@ function BrowserScreen({ wallet, onBack }) {
   );
 }
 
-export default function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, onSend, onReceive, onSwap, onBridge, onStake, onSettings, onCreateWallet, onImportWallet, onHardwareWallet, activityRefreshKey: externalRefreshKey = 0, balanceRefreshKey = 0, onTokenClick }) {
+export default function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, onSend, onReceive, onSwap, onBridge, onStake, onSettings, onCreateWallet, onImportWallet, onHardwareWallet, onWatchOnly, activityRefreshKey: externalRefreshKey = 0, balanceRefreshKey = 0, onTokenClick, onWalletSwitch }) {
   const [activeTab, setActiveTab] = useState('tokens');
   const [bottomNav, setBottomNav] = useState('assets');
   const [showNetworkPanel, setShowNetworkPanel] = useState(false);
@@ -3299,6 +3419,41 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
   const [tokenRefreshKey, setTokenRefreshKey] = useState(0);  // For forcing token refresh after transactions
   const [prevBalanceRefreshKey, setPrevBalanceRefreshKey] = useState(0);
   const lastManualRefresh = useRef(0);
+  
+  // Currency setting - read from localStorage
+  const [currency, setCurrency] = useState(() => {
+    try {
+      const saved = localStorage.getItem('x1wallet_currency');
+      return saved ? JSON.parse(saved) : 'USD';
+    } catch {
+      return 'USD';
+    }
+  });
+  
+  // Listen for currency changes from Settings
+  useEffect(() => {
+    const checkCurrency = () => {
+      try {
+        const saved = localStorage.getItem('x1wallet_currency');
+        const newCurrency = saved ? JSON.parse(saved) : 'USD';
+        if (newCurrency !== currency) {
+          setCurrency(newCurrency);
+        }
+      } catch {
+        // Ignore
+      }
+    };
+    
+    // Check on mount and when tab gets focus
+    checkCurrency();
+    window.addEventListener('focus', checkCurrency);
+    window.addEventListener('storage', checkCurrency);
+    
+    return () => {
+      window.removeEventListener('focus', checkCurrency);
+      window.removeEventListener('storage', checkCurrency);
+    };
+  }, [currency]);
   
   // Track current wallet to prevent stale fetch results from updating state
   const currentWalletRef = useRef(wallet.wallet?.publicKey);
@@ -3382,12 +3537,82 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
   const totalPortfolioUsd = tokensUsdValue + nativeUsdValue;
   logger.log('[Portfolio] Total USD:', totalPortfolioUsd, 'tokens:', tokensUsdValue, 'native:', nativeUsdValue);
   
-  // Format USD balance
-  const formatUsd = (value) => {
-    if (value === null || value === undefined || isNaN(value)) return '$0.00';
-    if (value === 0) return '$0.00';
-    if (value < 0.01) return '<$0.01';
-    return '$' + value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // Get the native symbol for the current network
+  const nativeSymbol = isSolana ? 'SOL' : 'XNT';
+  
+  // Check if native currency is selected
+  const isNativeCurrency = currency === 'NATIVE';
+  
+  // Currency configuration with exchange rates (USD base)
+  // Rates are approximate - could be fetched from API for accuracy
+  const currencyInfo = {
+    // NATIVE - uses network's native token (XNT for X1, SOL for Solana)
+    NATIVE: { symbol: nativeSymbol, position: 'after', rate: null, isNative: true },
+    // Fiat currencies with USD exchange rates
+    USD: { symbol: '$', position: 'before', rate: 1 },
+    EUR: { symbol: '€', position: 'before', rate: 0.92 },
+    GBP: { symbol: '£', position: 'before', rate: 0.79 },
+    PLN: { symbol: 'zł', position: 'after', rate: 4.02 },
+    JPY: { symbol: '¥', position: 'before', rate: 149.5 },
+    CAD: { symbol: 'C$', position: 'before', rate: 1.36 },
+    AUD: { symbol: 'A$', position: 'before', rate: 1.53 },
+    CNY: { symbol: '¥', position: 'before', rate: 7.24 },
+    KRW: { symbol: '₩', position: 'before', rate: 1320 }
+  };
+  
+  // Format currency value with conversion
+  const formatCurrency = (usdValue) => {
+    const info = currencyInfo[currency] || currencyInfo.USD;
+    
+    // If showing native token currency
+    if (info.isNative) {
+      // For native token display, show the balance in native units
+      // usdValue is already in USD, convert back to native
+      const nativeAmount = usdValue / nativePrice;
+      if (nativeAmount === 0 || isNaN(nativeAmount)) return `0 ${nativeSymbol}`;
+      if (nativeAmount < 0.0001) return `<0.0001 ${nativeSymbol}`;
+      const formatted = nativeAmount.toLocaleString(undefined, { 
+        minimumFractionDigits: 2, 
+        maximumFractionDigits: 4 
+      });
+      return `${formatted} ${nativeSymbol}`;
+    }
+    
+    // Fiat currency conversion
+    if (usdValue === null || usdValue === undefined || isNaN(usdValue)) {
+      return info.position === 'after' ? '0.00 ' + info.symbol : info.symbol + '0.00';
+    }
+    if (usdValue === 0) {
+      return info.position === 'after' ? '0.00 ' + info.symbol : info.symbol + '0.00';
+    }
+    
+    // Convert USD to target currency
+    const convertedValue = usdValue * (info.rate || 1);
+    
+    // For JPY and KRW, don't show decimals
+    const decimals = (currency === 'JPY' || currency === 'KRW') ? 0 : 2;
+    
+    const formatted = convertedValue.toLocaleString(undefined, { 
+      minimumFractionDigits: decimals, 
+      maximumFractionDigits: decimals 
+    });
+    
+    if (convertedValue < 0.01 && decimals > 0) {
+      return info.position === 'after' ? '<0.01 ' + info.symbol : '<' + info.symbol + '0.01';
+    }
+    
+    return info.position === 'after' ? formatted + ' ' + info.symbol : info.symbol + formatted;
+  };
+  
+  // Legacy formatUsd function (for compatibility)
+  const formatUsd = formatCurrency;
+  
+  // Format as USD fiat (used as secondary display when native token is primary)
+  const formatFiat = (usdValue) => {
+    if (usdValue === null || usdValue === undefined || isNaN(usdValue)) return '$0.00';
+    if (usdValue === 0) return '$0.00';
+    if (usdValue < 0.01) return '<$0.01';
+    return '$' + usdValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
   
   // Format balance - show minimal decimals, no trailing zeros, with commas
@@ -3858,6 +4083,28 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
         </div>
       </div>
 
+      {/* Watch-only Banner */}
+      {(wallet.wallet?.type === 'watchonly' || wallet.wallet?.isWatchOnly) && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 6,
+          padding: '6px 12px',
+          background: 'rgba(255, 193, 7, 0.1)',
+          borderBottom: '1px solid rgba(255, 193, 7, 0.2)',
+          color: '#ffc107',
+          fontSize: 12,
+          fontWeight: 500
+        }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+          Watch-only · View balances and activity
+        </div>
+      )}
+
       {/* Tabs - Tokens, DeFi, NFTs, Activity */}
       <div className="tabs">
         <button className={`tab ${activeTab === 'tokens' ? 'active' : ''}`} onClick={() => setActiveTab('tokens')}>
@@ -3877,11 +4124,23 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
       {/* Balance - Only show on Tokens tab */}
       {activeTab === 'tokens' && (
         <div className="balance-section">
-          <div className="balance-row">
-            {/* Total portfolio USD value */}
-            <div className="balance-amount">{formatUsd(totalPortfolioUsd)}</div>
-          </div>
-          <div className="balance-usd">{formatBalance(displayBalance)} {networkConfig.symbol}</div>
+          {isNativeCurrency ? (
+            /* Native token selected - show native balance as primary */
+            <>
+              <div className="balance-row">
+                <div className="balance-amount">{formatBalance(displayBalance)} {networkConfig.symbol}</div>
+              </div>
+              <div className="balance-usd">{formatFiat(totalPortfolioUsd)}</div>
+            </>
+          ) : (
+            /* Fiat currency selected - show fiat as primary */
+            <>
+              <div className="balance-row">
+                <div className="balance-amount">{formatCurrency(totalPortfolioUsd)}</div>
+              </div>
+              <div className="balance-usd">{formatBalance(displayBalance)} {networkConfig.symbol}</div>
+            </>
+          )}
         </div>
       )}
 
@@ -3895,18 +4154,72 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
             </svg>
           </div>
         </button>
-        <button className="action-btn" onClick={() => onSend(null)} title="Send">
-          <div className="action-icon-sleek send">
+        <button 
+          className="action-btn" 
+          onClick={() => {
+            if (wallet.wallet?.type === 'watchonly' || wallet.wallet?.isWatchOnly) {
+              return; // Silently ignore - button looks disabled
+            }
+            onSend(null);
+          }} 
+          title={wallet.wallet?.type === 'watchonly' || wallet.wallet?.isWatchOnly ? 'Watch-only wallet cannot send' : 'Send'}
+          style={{ 
+            opacity: wallet.wallet?.type === 'watchonly' || wallet.wallet?.isWatchOnly ? 0.4 : 1,
+            cursor: wallet.wallet?.type === 'watchonly' || wallet.wallet?.isWatchOnly ? 'not-allowed' : 'pointer'
+          }}
+        >
+          <div className="action-icon-sleek send" style={{ position: 'relative' }}>
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M12 19V5M5 12l7-7 7 7" />
             </svg>
+            {/* Lock overlay for watch-only */}
+            {(wallet.wallet?.type === 'watchonly' || wallet.wallet?.isWatchOnly) && (
+              <svg 
+                width="12" height="12" 
+                viewBox="0 0 24 24" 
+                fill="none" 
+                stroke="var(--text-muted)" 
+                strokeWidth="2.5"
+                style={{ position: 'absolute', bottom: -2, right: -2, background: 'var(--bg-primary)', borderRadius: 4, padding: 1 }}
+              >
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+            )}
           </div>
         </button>
-        <button className="action-btn" onClick={onSwap} title="Swap">
-          <div className="action-icon-sleek swap">
+        <button 
+          className="action-btn" 
+          onClick={() => {
+            if (wallet.wallet?.type === 'watchonly' || wallet.wallet?.isWatchOnly) {
+              return; // Silently ignore - button looks disabled
+            }
+            onSwap();
+          }} 
+          title={wallet.wallet?.type === 'watchonly' || wallet.wallet?.isWatchOnly ? 'Watch-only wallet cannot swap' : 'Swap'}
+          style={{ 
+            opacity: wallet.wallet?.type === 'watchonly' || wallet.wallet?.isWatchOnly ? 0.4 : 1,
+            cursor: wallet.wallet?.type === 'watchonly' || wallet.wallet?.isWatchOnly ? 'not-allowed' : 'pointer'
+          }}
+        >
+          <div className="action-icon-sleek swap" style={{ position: 'relative' }}>
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M17 2l4 4-4 4" /><path d="M3 11V9a4 4 0 0 1 4-4h14" /><path d="M7 22l-4-4 4-4" /><path d="M21 13v2a4 4 0 0 1-4 4H3" />
             </svg>
+            {/* Lock overlay for watch-only */}
+            {(wallet.wallet?.type === 'watchonly' || wallet.wallet?.isWatchOnly) && (
+              <svg 
+                width="12" height="12" 
+                viewBox="0 0 24 24" 
+                fill="none" 
+                stroke="var(--text-muted)" 
+                strokeWidth="2.5"
+                style={{ position: 'absolute', bottom: -2, right: -2, background: 'var(--bg-primary)', borderRadius: 4, padding: 1 }}
+              >
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+            )}
           </div>
         </button>
         <button className="action-btn" onClick={() => setShowMoreMenu(true)} title="More">
@@ -3927,30 +4240,75 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
           <div className="slide-panel small" onClick={e => e.stopPropagation()}>
             
             <div className="slide-panel-content">
-              <div className="more-menu-item" onClick={() => { setShowMoreMenu(false); onBridge(); }}>
-                <div className="more-menu-icon bridge">
+              <div 
+                className="more-menu-item" 
+                onClick={() => { 
+                  if (wallet.wallet?.type === 'watchonly' || wallet.wallet?.isWatchOnly) return;
+                  setShowMoreMenu(false); 
+                  onBridge(); 
+                }}
+                style={{ 
+                  opacity: wallet.wallet?.type === 'watchonly' || wallet.wallet?.isWatchOnly ? 0.4 : 1,
+                  cursor: wallet.wallet?.type === 'watchonly' || wallet.wallet?.isWatchOnly ? 'not-allowed' : 'pointer'
+                }}
+              >
+                <div className="more-menu-icon bridge" style={{ position: 'relative' }}>
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
                     <line x1="4" y1="22" x2="4" y2="15" />
                     <line x1="20" y1="22" x2="20" y2="15" />
                   </svg>
+                  {(wallet.wallet?.type === 'watchonly' || wallet.wallet?.isWatchOnly) && (
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2.5"
+                      style={{ position: 'absolute', bottom: -2, right: -2, background: 'var(--bg-secondary)', borderRadius: 3 }}>
+                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                    </svg>
+                  )}
                 </div>
                 <div className="more-menu-info">
                   <span className="more-menu-title">Bridge</span>
-                  <span className="more-menu-desc">Transfer across chains</span>
+                  <span className="more-menu-desc">
+                    {wallet.wallet?.type === 'watchonly' || wallet.wallet?.isWatchOnly 
+                      ? 'Not available for watch-only' 
+                      : 'Transfer across chains'}
+                  </span>
                 </div>
               </div>
-              <div className="more-menu-item" onClick={() => { logger.log('[WalletMain] Stake clicked'); setShowMoreMenu(false); onStake(); }}>
-                <div className="more-menu-icon stake">
+              <div 
+                className="more-menu-item" 
+                onClick={() => { 
+                  if (wallet.wallet?.type === 'watchonly' || wallet.wallet?.isWatchOnly) return;
+                  logger.log('[WalletMain] Stake clicked'); 
+                  setShowMoreMenu(false); 
+                  onStake(); 
+                }}
+                style={{ 
+                  opacity: wallet.wallet?.type === 'watchonly' || wallet.wallet?.isWatchOnly ? 0.4 : 1,
+                  cursor: wallet.wallet?.type === 'watchonly' || wallet.wallet?.isWatchOnly ? 'not-allowed' : 'pointer'
+                }}
+              >
+                <div className="more-menu-icon stake" style={{ position: 'relative' }}>
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M12 2L2 7l10 5 10-5-10-5z" />
                     <path d="M2 17l10 5 10-5" />
                     <path d="M2 12l10 5 10-5" />
                   </svg>
+                  {(wallet.wallet?.type === 'watchonly' || wallet.wallet?.isWatchOnly) && (
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2.5"
+                      style={{ position: 'absolute', bottom: -2, right: -2, background: 'var(--bg-secondary)', borderRadius: 3 }}>
+                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                    </svg>
+                  )}
                 </div>
                 <div className="more-menu-info">
                   <span className="more-menu-title">Stake</span>
-                  <span className="more-menu-desc">Earn rewards on your tokens</span>
+                  <span className="more-menu-desc">
+                    {wallet.wallet?.type === 'watchonly' || wallet.wallet?.isWatchOnly 
+                      ? 'Not available for watch-only' 
+                      : 'Earn rewards on your tokens'}
+                  </span>
                 </div>
               </div>
             </div>
@@ -4233,7 +4591,13 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
           wallets={wallet.wallets}
           activeId={wallet.activeWalletId}
           network={wallet.network}
-          onSelect={wallet.switchWallet}
+          onSelect={(walletId) => {
+            // Clear tokens immediately before switching to prevent stale data
+            setTokens([]);
+            setTokensLoading(true);
+            if (onWalletSwitch) onWalletSwitch();
+            wallet.switchWallet(walletId);
+          }}
           onClose={() => setShowWalletPanel(false)}
           onEditWallet={(w) => setEditingWalletId(w.id)}
           onShowAddWallet={() => setShowAddWalletPanel(true)}
@@ -4247,6 +4611,7 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
           onCreateNew={onCreateWallet}
           onImport={onImportWallet}
           onHardware={onHardwareWallet}
+          onWatchOnly={onWatchOnly}
         />
       )}
 

@@ -1,6 +1,6 @@
 // Wallet Hook with Multi-Address Support and Encrypted Storage
 import { logger } from '../utils/logger.js';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { mnemonicToKeypair, SOLANA_PATH } from '../utils/bip44';
 import { encodeBase58 } from '../utils/base58';
 import { NETWORKS, DEFAULT_NETWORK } from '../services/networks';
@@ -304,6 +304,14 @@ export function useWallet() {
 
   // Initial load
   useEffect(() => {
+    // Safety timeout - if loading takes more than 5 seconds, show wallet anyway
+    const safetyTimeout = setTimeout(() => {
+      if (loading) {
+        console.warn('[useWallet] Loading timeout - forcing ready state');
+        setLoading(false);
+      }
+    }, 5000);
+    
     const loadWallets = async () => {
       try {
         const saved = localStorage.getItem(STORAGE_KEY);
@@ -393,9 +401,14 @@ export function useWallet() {
         logger.error('Failed to load wallets:', e);
       }
       setLoading(false);
+      clearTimeout(safetyTimeout);
     };
     
     loadWallets();
+    
+    return () => {
+      clearTimeout(safetyTimeout);
+    };
   }, []);
 
   // Unlock wallet with password
@@ -579,7 +592,9 @@ export function useWallet() {
   const activeAddress = activeWallet ? getActiveAddress(activeWallet) : null;
 
   // Create new wallet from mnemonic
-  const createWallet = useCallback(async (mnemonic, name = null, password = null) => {
+  const createWallet = useCallback(async (mnemonic, name = null, password = null, derivationIndex = 0) => {
+    logger.log(`[createWallet] Starting: name=${name}, derivationIndex=${derivationIndex}`);
+    
     // Require a password before creating/importing the first wallet.
     // React state may lag after enableEncryption(), so also consult the persisted flag.
     const hasEncryption = Boolean(encryptionPassword) || localStorage.getItem(ENCRYPTION_ENABLED_KEY) === 'true';
@@ -587,6 +602,7 @@ export function useWallet() {
     // If encryption isn't initialized yet (fresh install), bootstrap it using the provided password.
     if (!hasEncryption) {
       if (password && wallets.length === 0) {
+        logger.log('[createWallet] Enabling encryption for first wallet');
         await enableEncryption(password);
       } else {
         throw new Error('Please set a password before creating a wallet. Your wallet data must be encrypted.');
@@ -597,16 +613,39 @@ export function useWallet() {
     const effectivePassword = password || encryptionPassword;
     
     try {
-      const keypair = await mnemonicToKeypair(mnemonic, 0);
+      const keypair = await mnemonicToKeypair(mnemonic, derivationIndex);
       const publicKey = encodeBase58(keypair.publicKey);
       const privateKey = encodeBase58(keypair.secretKey);
       
-      // Check current storage state directly (not just React state which may be stale)
-      let currentWallets = wallets;
+      logger.log(`[createWallet] Derived publicKey: ${publicKey.slice(0, 8)}...`);
+      
+      // CRITICAL FIX: Always read from localStorage to get current state
+      // React state `wallets` may be stale during batch imports
+      let currentWallets = [];
       const savedData = localStorage.getItem(STORAGE_KEY);
-      if (!savedData || savedData === '[]' || savedData === 'null') {
-        // Storage is empty - fresh start
-        currentWallets = [];
+      logger.log(`[createWallet] Storage data exists: ${!!savedData}, encrypted: ${savedData ? isEncrypted(savedData) : 'N/A'}`);
+      
+      if (savedData && savedData !== '[]' && savedData !== 'null') {
+        if (isEncrypted(savedData)) {
+          try {
+            const decrypted = await decryptData(savedData, effectivePassword);
+            currentWallets = JSON.parse(decrypted);
+            logger.log(`[createWallet] Decrypted ${currentWallets.length} existing wallets from storage`);
+          } catch (e) {
+            logger.error('[createWallet] Failed to decrypt existing wallets:', e);
+            // Fall back to React state if decryption fails
+            currentWallets = wallets;
+            logger.log(`[createWallet] Falling back to React state: ${currentWallets.length} wallets`);
+          }
+        } else {
+          // Unencrypted data - shouldn't happen but handle it
+          try {
+            currentWallets = JSON.parse(savedData);
+            logger.log(`[createWallet] Loaded ${currentWallets.length} unencrypted wallets`);
+          } catch (e) {
+            currentWallets = [];
+          }
+        }
       }
       
       // Check if this wallet already exists (same public key)
@@ -615,19 +654,21 @@ export function useWallet() {
           w.addresses?.some(a => a.publicKey === publicKey)
         );
         if (existingWallet) {
+          logger.log(`[createWallet] Wallet already exists: ${existingWallet.name}`);
           throw new Error('This wallet has already been imported');
         }
       }
       
       const walletName = name || 'My Wallet';
       const newWallet = {
-        id: Date.now().toString(),
+        id: Date.now().toString() + '_' + derivationIndex, // Add derivationIndex to ensure unique IDs in batch
         name: walletName,
         mnemonic,
         type: 'local',
+        derivationIndex,
         createdAt: new Date().toISOString(),
         addresses: [{
-          index: 0,
+          index: derivationIndex,
           publicKey,
           privateKey,
           name: 'Address 1'
@@ -636,21 +677,24 @@ export function useWallet() {
       };
       
       const newWallets = [...currentWallets, newWallet];
+      logger.log(`[createWallet] Saving ${newWallets.length} wallets (was ${currentWallets.length})`);
+      
       // FIX: Pass password directly to avoid React state closure issues
       await saveWallets(newWallets, effectivePassword);
       setActiveWalletId(newWallet.id);
       localStorage.setItem(ACTIVE_KEY, newWallet.id);
       
+      logger.log(`[createWallet] Successfully created wallet: ${walletName}`);
       return newWallet;
     } catch (e) {
-      logger.error('Failed to create wallet:', e);
+      logger.error('[createWallet] Failed to create wallet:', e);
       throw e;
     }
   }, [wallets, saveWallets, encryptionPassword, enableEncryption]);
 
   // Import wallet
-  const importWallet = useCallback(async (mnemonic, name = null, password = null) => {
-    return createWallet(mnemonic, name, password);
+  const importWallet = useCallback(async (mnemonic, name = null, password = null, derivationIndex = 0) => {
+    return createWallet(mnemonic, name, password, derivationIndex);
   }, [createWallet]);
 
   // Add new address to existing wallet
@@ -860,6 +904,63 @@ export function useWallet() {
     });
   }, [wallets, saveWallets, encryptionPassword, enableEncryption]);
 
+  // Add watch-only wallet (no private key - view only)
+  const addWatchOnlyWallet = useCallback(async (publicKey, name = 'Watch Wallet', password = null) => {
+    const currentWallets = wallets.length > 0 ? wallets : [];
+    
+    // Check if address already exists
+    const existingWallet = currentWallets.find(w => 
+      w.addresses?.some(a => a.publicKey === publicKey) || w.publicKey === publicKey
+    );
+    if (existingWallet) {
+      throw new Error(`This address is already being watched as "${existingWallet.name}"`);
+    }
+    
+    // Determine effective password
+    const effectivePassword = password || encryptionPassword;
+    
+    // If no password provided and encryption is needed, we need to handle it
+    if (currentWallets.length > 0 && !effectivePassword) {
+      const isEncrypted = localStorage.getItem(ENCRYPTION_ENABLED_KEY) === 'true';
+      if (isEncrypted) {
+        throw new Error('Password required to add wallet to encrypted storage');
+      }
+    }
+    
+    // If this is the first wallet and no password, set up encryption
+    if (currentWallets.length === 0 && password) {
+      await enableEncryption(password);
+    }
+    
+    const newWallet = {
+      id: Date.now().toString(),
+      name,
+      type: 'watchonly',
+      isWatchOnly: true,
+      isHardware: false,
+      mnemonic: null,
+      createdAt: new Date().toISOString(),
+      addresses: [{
+        index: 0,
+        publicKey,
+        privateKey: null,
+        name: 'Address 1'
+      }],
+      activeAddressIndex: 0
+    };
+    
+    logger.log('Adding watch-only wallet:', newWallet.name);
+
+    const newWallets = [...currentWallets, newWallet];
+    await saveWallets(newWallets, effectivePassword);
+    localStorage.setItem(ACTIVE_KEY, newWallet.id);
+    setActiveWalletId(newWallet.id);
+    
+    return new Promise((resolve) => {
+      setTimeout(() => resolve(newWallet), 100);
+    });
+  }, [wallets, saveWallets, encryptionPassword, enableEncryption]);
+
   // Switch active wallet
   const switchWallet = useCallback((walletId) => {
     setActiveWalletId(walletId);
@@ -873,15 +974,26 @@ export function useWallet() {
 
   const selectWallet = switchWallet;
 
+  // Track last notified public key to avoid duplicate notifications
+  const lastNotifiedPublicKey = useRef(null);
+
   // Notify connected dApps when wallet/account changes
   useEffect(() => {
     if (!activeAddress?.publicKey) return;
+    
+    // Don't send if the public key hasn't actually changed
+    if (lastNotifiedPublicKey.current === activeAddress.publicKey) {
+      return;
+    }
     
     // Don't send account-changed from approval popups - it causes infinite loops
     // Approval popups have URLs like index.html?request=sign
     if (typeof window !== 'undefined' && window.location.search.includes('request=')) {
       return;
     }
+    
+    // Update tracking
+    lastNotifiedPublicKey.current = activeAddress.publicKey;
     
     // Send account change notification to background script
     if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
@@ -1131,6 +1243,7 @@ export function useWallet() {
     createWallet,
     importWallet,
     addHardwareWallet,
+    addWatchOnlyWallet,
     switchWallet,
     selectWallet,
     updateWallet,

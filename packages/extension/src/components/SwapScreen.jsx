@@ -1018,6 +1018,27 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
         
         logger.log('[Swap] Output amount:', outputAmount);
         
+        // Check for zero or very small output - this indicates the pool may have insufficient liquidity
+        const parsedOutput = parseFloat(outputAmount);
+        if (outputAmount !== undefined && outputAmount !== null && parsedOutput === 0) {
+          logger.warn('[Swap] Quote returned zero output - pool may have insufficient liquidity');
+          setError('Pool has insufficient liquidity for this swap. Try a smaller amount or different pair.');
+          setQuote(null);
+          if (inputMode === 'from') setToAmount('');
+          else setFromAmount('');
+          return;
+        }
+        
+        // Check if output is extremely small relative to input (potential precision/rounding issue)
+        if (parsedOutput > 0 && parsedOutput < 0.000001) {
+          logger.warn('[Swap] Quote output is extremely small:', parsedOutput);
+          setError('Output amount is too small. Try increasing the input amount.');
+          setQuote(null);
+          if (inputMode === 'from') setToAmount('');
+          else setFromAmount('');
+          return;
+        }
+        
         if (outputAmount !== undefined && outputAmount !== null) {
           if (inputMode === 'from') {
             setToAmount(parseFloat(parseFloat(outputAmount).toFixed(4)).toString());
@@ -1124,7 +1145,7 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
   };
 
   const setMaxAmount = () => {
-    // Leave a small amount for gas (0.002 SOL is plenty for most transactions)
+    // Leave a small amount for gas (0.002 SOL/XNT is plenty for most transactions)
     const gasReserve = 0.002;
     
     let rawMax;
@@ -1136,11 +1157,24 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
       rawMax = fromToken.balance || 0;
     }
     
-    // Round DOWN to 4 decimal places for max button to avoid precision issues
-    // Swap APIs often round UP internally (e.g., 0.099095 becomes 0.0991 required)
-    // Using 4 decimals ensures we don't hit "insufficient balance" from rounding
-    const maxDecimals = 4;
+    // Use token's actual decimals for precision (default to 9 for native tokens)
+    // This ensures we don't lose precision by truncating to arbitrary decimal places
+    const tokenDecimals = fromToken?.decimals || 9;
+    // Use slightly fewer decimals than the token supports to avoid floating-point edge cases
+    const maxDecimals = Math.min(tokenDecimals, 9);
+    
+    // Round DOWN (floor) to avoid "insufficient balance" errors from floating-point precision
     const maxAmount = Math.floor(rawMax * Math.pow(10, maxDecimals)) / Math.pow(10, maxDecimals);
+    
+    logger.log('[Swap] setMaxAmount:', {
+      rawBalance: fromToken.balance,
+      walletBalance,
+      rawMax,
+      tokenDecimals,
+      maxDecimals,
+      maxAmount
+    });
+    
     handleFromAmountChange(maxAmount.toString());
   };
 
@@ -1886,6 +1920,14 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
       if (userMessage.includes('429') || userMessage.includes('Too Many Requests') || userMessage.includes('rate limit')) {
         userMessage = 'Too many requests. Please wait a few seconds and try again.';
       }
+      // Check for zero output amount error (liquidity issue)
+      else if (userMessage.includes('output amount is zero') || userMessage.includes('Calculated output amount is zero') || userMessage.includes('too small for available liquidity') || userMessage.includes('insufficient liquidity')) {
+        userMessage = 'Pool has insufficient liquidity for this swap amount. Try a smaller amount or a different token pair.';
+      }
+      // Check for very low liquidity pool
+      else if (userMessage.includes('very low liquidity')) {
+        userMessage = 'This pool has very low liquidity. Try a much smaller amount or use a different trading pair.';
+      }
       // Check for XDEX fee account creation error (backend issue)
       else if (userMessage.includes('Failed to create fee token account')) {
         userMessage = 'Swap service temporarily unavailable. The XDEX API is experiencing issues with fee account creation. Please try again later or contact XDEX support.';
@@ -2335,6 +2377,15 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
       };
       
       const latestBalance = getLatestBalance(token);
+      
+      logger.log('[Swap] handleSelectToken:', {
+        symbol: token.symbol,
+        mint: token.mint?.slice(0, 8),
+        tokenBalance: token.balance,
+        tokenUiAmount: token.uiAmount,
+        latestBalance,
+        selectingFor: selectingToken
+      });
       
       if (selectingToken === 'from') {
         setFromToken({ ...token, balance: latestBalance });

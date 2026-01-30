@@ -13,7 +13,40 @@ const SESSION_TIMEOUT_MS = 4 * 60 * 60 * 1000; // 4 hours
 const SENSITIVE_OPS_REAUTH_MS = 30 * 60 * 1000; // 30 minutes for sensitive operations
 
 // Track connected popup/side panel ports for approval notifications
-const connectedPorts = new Set();
+// Map port -> requestId that was displayed to that popup
+const connectedPorts = new Map();
+
+// Track last broadcast public key to avoid duplicate accountChanged events
+let lastBroadcastPublicKey = null;
+
+// Initialize lastBroadcastPublicKey from current wallet on startup
+chrome.storage.local.get(['x1wallet_active', 'x1wallet_wallets'], (result) => {
+  try {
+    const activeId = result.x1wallet_active;
+    let walletsData = result.x1wallet_wallets;
+    
+    // Skip if encrypted
+    if (typeof walletsData === 'string' && walletsData.startsWith('X1W:')) {
+      console.log('[Background] Wallet data encrypted, skipping init');
+      return;
+    }
+    
+    // Parse if needed
+    if (typeof walletsData === 'string') {
+      walletsData = JSON.parse(walletsData);
+    }
+    
+    if (Array.isArray(walletsData) && activeId) {
+      const activeWallet = walletsData.find(w => w.id === activeId);
+      if (activeWallet && activeWallet.publicKey) {
+        lastBroadcastPublicKey = activeWallet.publicKey;
+        console.log('[Background] Initialized lastBroadcastPublicKey:', lastBroadcastPublicKey);
+      }
+    }
+  } catch (e) {
+    console.log('[Background] Could not init lastBroadcastPublicKey:', e.message);
+  }
+});
 
 // Clear the badge helper
 function clearBadge() {
@@ -24,14 +57,16 @@ function clearBadge() {
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name === 'x1-wallet-popup') {
     console.log('[Background] Popup/side panel connected');
-    connectedPorts.add(port);
     
     // Clear badge - user has seen the notification by clicking the icon
     clearBadge();
     
     // Send oldest pending request if any (FIFO - first in, first out)
     const oldest = getOldestPendingRequest();
+    let displayedRequestId = null;
+    
     if (oldest) {
+      displayedRequestId = oldest.id;
       port.postMessage({ 
         type: 'pending-request', 
         request: oldest.request,
@@ -39,26 +74,34 @@ chrome.runtime.onConnect.addListener((port) => {
       });
     }
     
+    // Track which request this popup is handling
+    connectedPorts.set(port, displayedRequestId);
+    
     port.onDisconnect.addListener(() => {
       console.log('[Background] Popup/side panel disconnected');
+      
+      // Get the request ID this popup was displaying
+      const handledRequestId = connectedPorts.get(port);
       connectedPorts.delete(port);
       
       // Always clear badge when popup closes
       clearBadge();
       
-      // If popup closed and there are pending requests, reject the oldest one
-      // (the one that was being displayed)
-      const oldest = getOldestPendingRequest();
-      if (oldest) {
-        console.log('[Background] Popup closed without response, rejecting request:', oldest.id);
-        oldest.callback({ error: 'User rejected the request.' });
-        removePendingRequest(oldest.id);
-        
-        // If there are more pending requests, show badge
-        if (pendingRequests.size > 0) {
-          chrome.action.setBadgeText({ text: pendingRequests.size.toString() });
-          chrome.action.setBadgeBackgroundColor({ color: '#FF6B00' });
+      // Only reject the request that THIS popup was displaying (if it still exists)
+      // This prevents rejecting requests that arrived after the popup opened
+      if (handledRequestId) {
+        const entry = getPendingRequestById(handledRequestId);
+        if (entry) {
+          console.log('[Background] Popup closed without response, rejecting displayed request:', handledRequestId);
+          entry.callback({ error: 'User rejected the request.' });
+          removePendingRequest(handledRequestId);
         }
+      }
+      
+      // If there are more pending requests, show badge
+      if (pendingRequests.size > 0) {
+        chrome.action.setBadgeText({ text: pendingRequests.size.toString() });
+        chrome.action.setBadgeBackgroundColor({ color: '#FF6B00' });
       }
     });
   }
@@ -67,12 +110,17 @@ chrome.runtime.onConnect.addListener((port) => {
 // Notify all connected ports about a new pending request
 function notifyPendingRequest(requestId, request) {
   console.log('[Background] Notifying', connectedPorts.size, 'connected ports about pending request:', requestId);
-  for (const port of connectedPorts) {
-    try {
-      port.postMessage({ type: 'pending-request', request, requestId });
-    } catch (e) {
-      console.log('[Background] Failed to notify port:', e.message);
-      connectedPorts.delete(port);
+  for (const [port, currentRequestId] of connectedPorts) {
+    // Only notify ports that aren't already handling a request
+    if (!currentRequestId) {
+      try {
+        port.postMessage({ type: 'pending-request', request, requestId });
+        // Update the port's tracked request
+        connectedPorts.set(port, requestId);
+      } catch (e) {
+        console.log('[Background] Failed to notify port:', e.message);
+        connectedPorts.delete(port);
+      }
     }
   }
 }
@@ -432,8 +480,17 @@ async function handleNetworkChanged(network) {
 }
 
 // Handle wallet/account change - broadcast to all connected sites
-async function handleWalletChanged(publicKey) {
+async function handleWalletChanged(publicKey, force = false) {
   console.log('[Background] handleWalletChanged called with:', publicKey);
+  
+  // Skip if public key hasn't actually changed (unless forced)
+  if (!force && publicKey === lastBroadcastPublicKey) {
+    console.log('[Background] Public key unchanged, skipping broadcast');
+    return;
+  }
+  
+  // Update tracking
+  lastBroadcastPublicKey = publicKey;
   
   // Update all connected sites with new public key
   const sites = await getConnectedSites();
@@ -456,7 +513,7 @@ async function handleWalletChanged(publicKey) {
   // We can't check URLs without tabs permission, so broadcast to all
   try {
     const tabs = await chrome.tabs.query({});
-    console.log('[Background] Broadcasting to', tabs.length, 'tabs');
+    console.log('[Background] Broadcasting accountChanged to', tabs.length, 'tabs');
     
     for (const tab of tabs) {
       // Skip extension pages and chrome:// URLs

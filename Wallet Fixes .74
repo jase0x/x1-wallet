@@ -1,0 +1,9 @@
+Bugs:
+- side panel goes to black when you open new site
+
+feature requests:
+- show a connected status (helpful when you have multiple wallet extensions) with the option to disconnect.
+- possibility to add readonly wallets and/or favorite addresses
+- Add PLN language to settings
+- 1 operation in approval windows shouuld right justified - Jack
+- Add ability to use existing seed for generating wallets

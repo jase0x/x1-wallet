@@ -471,6 +471,29 @@ body {
   padding-right: 20px;
 }
 
+.wallet-hide-btn {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.wallet-hide-btn.is-hidden {
+  opacity: 0.6;
+}
+
+.wallet-hide-btn.is-active {
+  opacity: 0 !important;
+  pointer-events: none;
+}
+
+.wallet-panel-item:hover .wallet-hide-btn,
+.wallet-panel-item:hover .wallet-hide-btn.is-hidden {
+  opacity: 1;
+}
+
+.wallet-panel-item:hover .wallet-hide-btn.is-active {
+  opacity: 0;
+}
+
 .wallet-item-main {
   display: flex;
   align-items: center;
@@ -7912,6 +7935,7 @@ textarea:focus {
   font-size: 13px;
   color: var(--text-primary);
   text-align: right;
+  flex-grow: 1;
 }
 
 .dapp-tx-row-value.highlight {

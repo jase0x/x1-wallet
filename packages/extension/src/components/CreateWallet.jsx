@@ -446,13 +446,14 @@ export default function CreateWallet({ onComplete, onBack, passwordProtection: p
           <button className="create-option" onClick={switchToCustom}>
             <div className="create-option-icon">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--x1-blue)" strokeWidth="2">
-                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
               </svg>
             </div>
             <div className="create-option-text">
-              <span className="create-option-title">Create Custom Phrase</span>
-              <span className="create-option-desc">Select words from BIP-39 wordlist</span>
+              <span className="create-option-title">Use Existing Phrase</span>
+              <span className="create-option-desc">Enter your existing seed phrase</span>
             </div>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M9 18l6-6-6-6" />
@@ -563,8 +564,8 @@ export default function CreateWallet({ onComplete, onBack, passwordProtection: p
           </svg>
         </button>
 
-        <h2>Custom Seed Phrase</h2>
-        <p className="seed-subtitle">Enter {seedLength} words from the BIP-39 wordlist</p>
+        <h2>Enter Your Seed Phrase</h2>
+        <p className="seed-subtitle">Enter your existing {seedLength}-word recovery phrase</p>
 
         <div className="seed-length-selector">
           <button 

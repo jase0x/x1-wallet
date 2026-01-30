@@ -82,6 +82,42 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
   const [copied, setCopied] = useState(false);
   const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
   const [appVersion, setAppVersion] = useState('0.0.0');
+  const [connectedSites, setConnectedSites] = useState([]);
+  
+  // Load connected sites
+  useEffect(() => {
+    const loadConnectedSites = async () => {
+      try {
+        if (typeof chrome !== 'undefined' && chrome.storage) {
+          const result = await chrome.storage.local.get('x1wallet_connected_sites');
+          const sites = result.x1wallet_connected_sites || {};
+          setConnectedSites(Object.entries(sites).map(([origin, data]) => ({
+            origin,
+            connectedAt: data.connectedAt,
+            publicKey: data.publicKey
+          })));
+        }
+      } catch (e) {
+        logger.error('[Settings] Error loading connected sites:', e);
+      }
+    };
+    loadConnectedSites();
+  }, [subScreen]); // Reload when returning to main screen
+  
+  // Disconnect a site
+  const disconnectSite = async (origin) => {
+    try {
+      if (typeof chrome !== 'undefined' && chrome.storage) {
+        const result = await chrome.storage.local.get('x1wallet_connected_sites');
+        const sites = result.x1wallet_connected_sites || {};
+        delete sites[origin];
+        await chrome.storage.local.set({ x1wallet_connected_sites: sites });
+        setConnectedSites(prev => prev.filter(s => s.origin !== origin));
+      }
+    } catch (e) {
+      logger.error('[Settings] Error disconnecting site:', e);
+    }
+  };
   
   // Load version from manifest
   useEffect(() => {
@@ -426,16 +462,23 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
   }
 
   if (subScreen === 'currency') {
-    const currencies = [
+    const currentNetwork = wallet?.network || 'X1 Mainnet';
+    const isSolana = currentNetwork.includes('Solana');
+    const nativeSymbol = isSolana ? 'SOL' : 'XNT';
+    const isNativeSelected = currency === 'NATIVE';
+    
+    const fiatCurrencies = [
       { code: 'USD', name: 'US Dollar', symbol: '$' },
       { code: 'EUR', name: 'Euro', symbol: '€' },
       { code: 'GBP', name: 'British Pound', symbol: '£' },
+      { code: 'PLN', name: 'Polish Złoty', symbol: 'zł' },
       { code: 'JPY', name: 'Japanese Yen', symbol: '¥' },
       { code: 'CAD', name: 'Canadian Dollar', symbol: 'C$' },
       { code: 'AUD', name: 'Australian Dollar', symbol: 'A$' },
       { code: 'CNY', name: 'Chinese Yuan', symbol: '¥' },
       { code: 'KRW', name: 'Korean Won', symbol: '₩' },
     ];
+    
     return (
       <div className="screen settings-screen">
         <div className="settings-header">
@@ -447,19 +490,44 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
           <h2>Currency</h2>
         </div>
         <div className="settings-content">
-          <div className="radio-group">
-            {currencies.map(c => (
-              <div key={c.code} className={`radio-option ${currency === c.code ? 'selected' : ''}`} onClick={() => setCurrency(c.code)}>
-                <div className="radio-option-text">
-                  <span>{c.symbol} {c.code}</span>
-                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}> - {c.name}</span>
-                </div>
-                <div className="radio-option-check">
-                  {currency === c.code && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12" /></svg>}
+          {/* Native Token Toggle */}
+          <div className="settings-section">
+            <div className="settings-item" onClick={() => setCurrency(isNativeSelected ? 'USD' : 'NATIVE')}>
+              <div className="settings-item-left">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 6v12M9 9h4.5a2.5 2.5 0 0 1 0 5H9" />
+                </svg>
+                <div className="settings-item-text">
+                  <span>Show Native Token</span>
+                  <span className="settings-item-desc">Display balance in {nativeSymbol} as primary</span>
                 </div>
               </div>
-            ))}
+              <div className={`toggle ${isNativeSelected ? 'active' : ''}`}>
+                <div className="toggle-handle" />
+              </div>
+            </div>
           </div>
+          
+          {/* Fiat Currency Selection */}
+          {!isNativeSelected && (
+            <div className="settings-section">
+              <h3>Fiat Currency</h3>
+              <div className="radio-group">
+                {fiatCurrencies.map(c => (
+                  <div key={c.code} className={`radio-option ${currency === c.code ? 'selected' : ''}`} onClick={() => setCurrency(c.code)}>
+                    <div className="radio-option-text">
+                      <span>{c.symbol} {c.code}</span>
+                      <span style={{ fontSize: 12, color: 'var(--text-muted)' }}> - {c.name}</span>
+                    </div>
+                    <div className="radio-option-check">
+                      {currency === c.code && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12" /></svg>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -1326,156 +1394,6 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
       </div>
     );
   }
-
-  // Notifications sub-screen
-  if (subScreen === 'notifications') {
-    const requestPermission = async () => {
-      if (typeof Notification === 'undefined') {
-        alert('Notifications are not supported in this browser.');
-        return;
-      }
-      
-      try {
-        const permission = await Notification.requestPermission();
-        setNotifPermission(permission);
-        if (permission === 'granted') {
-          setNotifications(true);
-          // Test notification
-          new Notification('X1 Wallet', {
-            body: 'Notifications enabled successfully!',
-            icon: '/icons/icon128.png'
-          });
-        }
-      } catch (err) {
-        logger.error('Failed to request notification permission:', err);
-      }
-    };
-    
-    const testNotification = () => {
-      if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-        new Notification('X1 Wallet', {
-          body: 'This is a test notification.',
-          icon: '/icons/icon128.png'
-        });
-      }
-    };
-    
-    return (
-      <div className="screen settings-screen">
-        <div className="settings-header">
-          <button className="back-btn" onClick={() => setSubScreen(null)}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M19 12H5M12 19l-7-7 7-7" />
-            </svg>
-          </button>
-          <h2>Notifications</h2>
-        </div>
-        <div className="settings-content">
-          <div className="settings-section">
-            <div className="settings-item" onClick={() => setNotifications(!notifications)}>
-              <div className="settings-item-left">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                  <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-                </svg>
-                <div className="settings-item-text">
-                  <span>Enable Notifications</span>
-                  <span className="settings-item-desc">Receive alerts for transactions and updates</span>
-                </div>
-              </div>
-              <div className={`toggle ${notifications ? 'active' : ''}`}>
-                <div className="toggle-handle" />
-              </div>
-            </div>
-          </div>
-          
-          {notifications && (
-            <div className="settings-section">
-              <h3>Notification Types</h3>
-              <div className="settings-item" onClick={() => { setTxAlerts(!txAlerts); storage.set('txAlerts', !txAlerts); }}>
-                <div className="settings-item-left">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <line x1="12" y1="1" x2="12" y2="23" />
-                    <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
-                  </svg>
-                  <div className="settings-item-text">
-                    <span>Transaction Alerts</span>
-                    <span className="settings-item-desc">Incoming and outgoing transactions</span>
-                  </div>
-                </div>
-                <div className={`toggle ${txAlerts ? 'active' : ''}`}>
-                  <div className="toggle-handle" />
-                </div>
-              </div>
-              <div className="settings-item" onClick={() => { setPriceAlerts(!priceAlerts); storage.set('priceAlerts', !priceAlerts); }}>
-                <div className="settings-item-left">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-                  </svg>
-                  <div className="settings-item-text">
-                    <span>Price Alerts</span>
-                    <span className="settings-item-desc">Significant price changes</span>
-                  </div>
-                </div>
-                <div className={`toggle ${priceAlerts ? 'active' : ''}`}>
-                  <div className="toggle-handle" />
-                </div>
-              </div>
-              <div className="settings-item" onClick={() => { setSecurityAlerts(!securityAlerts); storage.set('securityAlerts', !securityAlerts); }}>
-                <div className="settings-item-left">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <circle cx="12" cy="12" r="10" />
-                    <line x1="12" y1="8" x2="12" y2="12" />
-                    <line x1="12" y1="16" x2="12.01" y2="16" />
-                  </svg>
-                  <div className="settings-item-text">
-                    <span>Security Alerts</span>
-                    <span className="settings-item-desc">Login attempts and security events</span>
-                  </div>
-                </div>
-                <div className={`toggle ${securityAlerts ? 'active' : ''}`}>
-                  <div className="toggle-handle" />
-                </div>
-              </div>
-            </div>
-          )}
-          
-          {typeof Notification !== 'undefined' && (
-            <div className="settings-section">
-              <h3>Browser Permission</h3>
-              <div className="permission-status">
-                <span className={`permission-badge ${notifPermission}`}>
-                  {notifPermission === 'granted' ? '✓ Granted' : 
-                   notifPermission === 'denied' ? '✗ Denied' : '? Not Set'}
-                </span>
-              </div>
-              {notifPermission !== 'granted' && (
-                <button className="btn-primary" onClick={requestPermission} style={{ marginTop: 12 }}>
-                  Enable Browser Notifications
-                </button>
-              )}
-              {notifPermission === 'granted' && (
-                <button className="btn-secondary" onClick={testNotification} style={{ marginTop: 12 }}>
-                  Send Test Notification
-                </button>
-              )}
-              {notifPermission === 'denied' && (
-                <div className="info-box" style={{ marginTop: 12 }}>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--x1-blue)" strokeWidth="2">
-                    <circle cx="12" cy="12" r="10" />
-                    <line x1="12" y1="16" x2="12" y2="12" />
-                    <line x1="12" y1="8" x2="12.01" y2="8" />
-                  </svg>
-                  <span>Notifications are blocked. Please enable them in your browser settings.</span>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
   if (subScreen === 'explorer') {
     const currentNetwork = wallet?.network || 'X1 Mainnet';
     const isSolana = currentNetwork.includes('Solana');
@@ -2137,14 +2055,65 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
               <span>Warning: Transactions won't be verified before sending. Failed transactions will still consume network fees.</span>
             </div>
           )}
-          <div className="settings-item-info">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2">
-              <circle cx="12" cy="12" r="10" />
-              <line x1="12" y1="16" x2="12" y2="12" />
-              <line x1="12" y1="8" x2="12.01" y2="8" />
-            </svg>
-            <span>Seed phrases and private keys are managed per-wallet. Click the wallet selector → Edit to access them.</span>
-          </div>
+        </div>
+
+        {/* Connected Sites */}
+        <div className="settings-section">
+          <h3>Connected Sites</h3>
+          {connectedSites.length === 0 ? (
+            <div className="settings-item-info">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="16" x2="12" y2="12" />
+                <line x1="12" y1="8" x2="12.01" y2="8" />
+              </svg>
+              <span>No sites connected. Connect to dApps to see them here.</span>
+            </div>
+          ) : (
+            connectedSites.map((site) => (
+              <div key={site.origin} className="settings-item connected-site-item">
+                <div className="settings-item-left">
+                  <div style={{ 
+                    width: 32, 
+                    height: 32, 
+                    borderRadius: 8, 
+                    background: 'var(--bg-tertiary)', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center',
+                    marginRight: 8,
+                    flexShrink: 0
+                  }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="2">
+                      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                    </svg>
+                  </div>
+                  <div style={{ overflow: 'hidden' }}>
+                    <span style={{ display: 'block', fontWeight: 500 }}>{new URL(site.origin).hostname}</span>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                      Connected {site.connectedAt ? new Date(site.connectedAt).toLocaleDateString() : 'recently'}
+                    </span>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => disconnectSite(site.origin)}
+                  style={{
+                    background: 'rgba(239, 68, 68, 0.1)',
+                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                    borderRadius: 8,
+                    padding: '6px 12px',
+                    color: 'var(--error)',
+                    fontSize: 12,
+                    fontWeight: 500,
+                    cursor: 'pointer'
+                  }}
+                >
+                  Disconnect
+                </button>
+              </div>
+            ))
+          )}
         </div>
 
         {/* Preferences */}
@@ -2161,21 +2130,6 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
               <div className="toggle-handle" />
             </div>
           </div>
-          <div className="settings-item" onClick={() => setSubScreen('notifications')}>
-            <div className="settings-item-left">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-              </svg>
-              <span>Notifications</span>
-            </div>
-            <div className="settings-item-right">
-              <span className="settings-value">{notifications ? 'On' : 'Off'}</span>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M9 18l6-6-6-6" />
-              </svg>
-            </div>
-          </div>
           <div className="settings-item" onClick={() => setSubScreen('currency')}>
             <div className="settings-item-left">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -2185,7 +2139,7 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
               <span>Currency</span>
             </div>
             <div className="settings-item-right">
-              <span className="settings-value">{currency}</span>
+              <span className="settings-value">{currency === 'NATIVE' ? 'Native' : currency}</span>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M9 18l6-6-6-6" />
               </svg>

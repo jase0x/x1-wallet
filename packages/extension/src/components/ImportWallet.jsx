@@ -2,36 +2,73 @@
 import { logger, getUserFriendlyError, ErrorMessages } from '@x1-wallet/core';
 import React, { useState, useRef, useEffect } from 'react';
 import { validateMnemonic, WORDLIST } from '@x1-wallet/core/utils/bip39';
+import { mnemonicToKeypair } from '@x1-wallet/core/utils/bip44';
+import { encodeBase58 } from '@x1-wallet/core/utils/base58';
+import { NETWORKS } from '@x1-wallet/core/services/networks';
 
-export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPassword, existingWallets = [] }) {
-  const [importType, setImportType] = useState('phrase'); // 'phrase' or 'privatekey'
+// Derivation path schemes for Solana
+const DERIVATION_SCHEMES = {
+  STANDARD: {
+    id: 'standard',
+    name: 'Standard (Phantom)',
+    description: "m/44'/501'/<account>'/0'",
+    getPath: (index) => `m/44'/501'/${index}'/0'`
+  },
+  LEGACY: {
+    id: 'legacy', 
+    name: 'Legacy (Solflare)',
+    description: "m/44'/501'/<account>'",
+    getPath: (index) => `m/44'/501'/${index}'`
+  }
+};
+
+export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey, onCompleteMultiple, onCompleteWatchOnly, sessionPassword, existingWallets = [], initialImportType = 'phrase' }) {
+  const [importType, setImportType] = useState(initialImportType); // 'phrase', 'privatekey', or 'watchonly'
   const [seedLength, setSeedLength] = useState(12);
   const [words, setWords] = useState(Array(12).fill(''));
   
-  // Compute next wallet number from existing wallets
+  // Watch-only address state
+  const [watchAddress, setWatchAddress] = useState('');
+  
+  // Multi-wallet selection state
+  const [derivedAddresses, setDerivedAddresses] = useState([]);
+  const [selectedAddresses, setSelectedAddresses] = useState(new Set()); // No default selection
+  const [loadingAddresses, setLoadingAddresses] = useState(false);
+  const [addressBalances, setAddressBalances] = useState({});
+  const [scanMode, setScanMode] = useState('default'); // 'default', 'scan', 'custom'
+  const [isScanning, setIsScanning] = useState(false);
+  
+  // Compute next available wallet number (fills gaps)
   const getNextWalletNumber = () => {
-    let maxNumber = 0;
+    const usedNumbers = new Set();
     existingWallets.forEach(w => {
-      // Match patterns like "Wallet 1", "My Wallet 2", "Imported Wallet 3", etc.
-      const match = w.name?.match(/(\d+)\s*$/);
+      // Match patterns like "Wallet 1", "Wallet 2", etc.
+      const match = w.name?.match(/^Wallet\s+(\d+)$/i);
       if (match) {
-        const num = parseInt(match[1], 10);
-        if (num > maxNumber) maxNumber = num;
+        usedNumbers.add(parseInt(match[1], 10));
       }
     });
-    // If no numbered wallets found, use wallet count
-    return Math.max(maxNumber, existingWallets.length) + 1;
+    
+    // Find first available number starting from 1
+    let num = 1;
+    while (usedNumbers.has(num)) {
+      num++;
+    }
+    return num;
   };
   
   const nextWalletNumber = getNextWalletNumber();
   const suggestedName = `Wallet ${nextWalletNumber}`;
   
   const [walletName, setWalletName] = useState('');
-  const [step, setStep] = useState('import'); // import, name, password, verify-password, name-pk, password-pk, verify-password-pk
+  const [step, setStep] = useState('import'); // import, select-derivation, select-addresses, name, password, verify-password, name-pk, password-pk, verify-password-pk
   const [error, setError] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [activeInput, setActiveInput] = useState(-1);
   const inputRefs = useRef([]);
+  
+  // Custom derivation path state
+  const [customPath, setCustomPath] = useState("m/44'/501'/0'/0'");
   
   // Private key state
   const [privateKeyInput, setPrivateKeyInput] = useState('');
@@ -185,6 +222,303 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey,
       setError('Invalid seed phrase checksum');
       return;
     }
+    
+    // Go to derivation path selection
+    setError('');
+    setStep('select-derivation');
+  };
+  
+  // Handle derivation path selection
+  const handleDerivationSelect = async (mode) => {
+    setScanMode(mode);
+    setLoadingAddresses(true);
+    setError('');
+    
+    const phrase = words.join(' ');
+    
+    try {
+      if (mode === 'scan') {
+        // Scan all derivation paths for accounts with balances
+        await scanAllPaths(phrase);
+      } else if (mode === 'custom') {
+        // Custom path - derive single account
+        // For now, just use index 0 with standard derivation
+        // TODO: Add proper custom path derivation when mnemonicToKeypairWithPath is available
+        const addresses = [];
+        const { publicKey } = await mnemonicToKeypair(phrase, 0);
+        const address = encodeBase58(publicKey);
+        addresses.push({ 
+          index: 0, 
+          accountIndex: 0,
+          publicKey: address, 
+          path: customPath,
+          scheme: 'custom',
+          uniqueKey: `custom-0`
+        });
+        setDerivedAddresses(addresses);
+        setSelectedAddresses(new Set([0]));
+        fetchAddressBalances(addresses);
+      } else {
+        // Default mode - derive first 5 accounts on standard path
+        const addresses = [];
+        for (let i = 0; i < 5; i++) {
+          const { publicKey } = await mnemonicToKeypair(phrase, i);
+          const address = encodeBase58(publicKey);
+          addresses.push({ 
+            index: i, 
+            accountIndex: i,
+            publicKey: address, 
+            path: DERIVATION_SCHEMES.STANDARD.getPath(i),
+            scheme: 'standard',
+            uniqueKey: `standard-${i}`
+          });
+        }
+        setDerivedAddresses(addresses);
+        setSelectedAddresses(new Set()); // No default selection - user must choose
+        
+        // Fetch balances in background
+        fetchAddressBalances(addresses);
+      }
+      
+      setStep('select-addresses');
+    } catch (err) {
+      logger.error('[ImportWallet] Failed to derive addresses:', err);
+      setError('Failed to derive addresses from seed phrase');
+    } finally {
+      setLoadingAddresses(false);
+    }
+  };
+  
+  // Scan all derivation paths to find accounts with balances
+  const scanAllPaths = async (phrase) => {
+    setIsScanning(true);
+    const allAddresses = [];
+    const seenPublicKeys = new Set();
+    
+    // Get network config for balance checking
+    let network = localStorage.getItem('x1wallet_network');
+    if (network && network.startsWith('"')) {
+      try { network = JSON.parse(network); } catch (e) { /* ignore */ }
+    }
+    network = network || 'X1 Mainnet';
+    const networkConfig = NETWORKS[network];
+    
+    // Check balance for an address
+    const checkBalance = async (publicKey) => {
+      if (!networkConfig?.rpcUrl) return 0;
+      try {
+        const response = await fetch(networkConfig.rpcUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'getBalance',
+            params: [publicKey, { commitment: 'confirmed' }]
+          })
+        });
+        if (!response.ok) return 0;
+        const data = await response.json();
+        return (data.result?.value || 0) / Math.pow(10, networkConfig.decimals || 9);
+      } catch {
+        return 0;
+      }
+    };
+    
+    // Derive using standard path (Phantom style: m/44'/501'/{i}'/0')
+    const deriveStandard = async (index) => {
+      const { publicKey } = await mnemonicToKeypair(phrase, index);
+      return encodeBase58(publicKey);
+    };
+    
+    // Derive using legacy path (Solflare style: m/44'/501'/{i}')
+    // Note: mnemonicToKeypair uses standard path, so legacy may derive same address
+    // We'll try both and deduplicate
+    const deriveLegacy = async (index) => {
+      // Try to use mnemonicToKeypairWithPath if available, otherwise skip legacy
+      try {
+        const { mnemonicToKeypairWithPath } = await import('@x1-wallet/core/utils/bip44');
+        if (mnemonicToKeypairWithPath) {
+          const { publicKey } = await mnemonicToKeypairWithPath(phrase, DERIVATION_SCHEMES.LEGACY.getPath(index));
+          return encodeBase58(publicKey);
+        }
+      } catch {
+        // Legacy derivation not available - standard only
+      }
+      return null;
+    };
+    
+    const balances = {};
+    let globalIndex = 0;
+    let consecutiveEmpty = 0;
+    const MAX_EMPTY = 5; // Stop after 5 consecutive accounts with no balance
+    const MAX_ACCOUNTS = 20; // Max accounts to scan per path
+    
+    // Scan standard path first (most common)
+    logger.log('[ImportWallet] Scanning standard path...');
+    for (let i = 0; i < MAX_ACCOUNTS && consecutiveEmpty < MAX_EMPTY; i++) {
+      try {
+        const publicKey = await deriveStandard(i);
+        if (seenPublicKeys.has(publicKey)) continue;
+        seenPublicKeys.add(publicKey);
+        
+        const balance = await checkBalance(publicKey);
+        const uniqueKey = `standard-${i}`;
+        const addrEntry = {
+          index: globalIndex,
+          accountIndex: i,
+          publicKey,
+          path: DERIVATION_SCHEMES.STANDARD.getPath(i),
+          scheme: 'standard',
+          schemeName: DERIVATION_SCHEMES.STANDARD.name,
+          uniqueKey,
+          balance // Store balance on address entry for sorting
+        };
+        
+        allAddresses.push(addrEntry);
+        balances[uniqueKey] = balance;
+        globalIndex++;
+        
+        if (balance > 0) {
+          consecutiveEmpty = 0;
+        } else {
+          consecutiveEmpty++;
+        }
+      } catch (err) {
+        logger.warn('[ImportWallet] Error deriving standard path:', i, err);
+        break;
+      }
+    }
+    
+    // Try legacy path (Solflare style)
+    logger.log('[ImportWallet] Scanning legacy path...');
+    consecutiveEmpty = 0;
+    for (let i = 0; i < MAX_ACCOUNTS && consecutiveEmpty < MAX_EMPTY; i++) {
+      try {
+        const publicKey = await deriveLegacy(i);
+        if (!publicKey || seenPublicKeys.has(publicKey)) {
+          // Legacy derivation not available or duplicate
+          if (i === 0) break; // If first one fails, legacy not supported
+          continue;
+        }
+        seenPublicKeys.add(publicKey);
+        
+        const balance = await checkBalance(publicKey);
+        const uniqueKey = `legacy-${i}`;
+        const addrEntry = {
+          index: globalIndex,
+          accountIndex: i,
+          publicKey,
+          path: DERIVATION_SCHEMES.LEGACY.getPath(i),
+          scheme: 'legacy',
+          schemeName: DERIVATION_SCHEMES.LEGACY.name,
+          uniqueKey,
+          balance // Store balance on address entry for sorting
+        };
+        
+        allAddresses.push(addrEntry);
+        balances[uniqueKey] = balance;
+        globalIndex++;
+        
+        if (balance > 0) {
+          consecutiveEmpty = 0;
+        } else {
+          consecutiveEmpty++;
+        }
+      } catch (err) {
+        logger.warn('[ImportWallet] Error deriving legacy path:', i, err);
+        break;
+      }
+    }
+    
+    // Sort: accounts with balance first, then by scheme and index
+    allAddresses.sort((a, b) => {
+      const balA = a.balance || 0;
+      const balB = b.balance || 0;
+      if (balA > 0 && balB === 0) return -1;
+      if (balB > 0 && balA === 0) return 1;
+      if (a.scheme !== b.scheme) return a.scheme === 'standard' ? -1 : 1;
+      return a.accountIndex - b.accountIndex;
+    });
+    
+    // Re-index after sorting and build final balances map by new index
+    const finalBalances = {};
+    const autoSelect = new Set();
+    allAddresses.forEach((addr, idx) => {
+      addr.index = idx;
+      finalBalances[idx] = balances[addr.uniqueKey] || 0;
+      if (finalBalances[idx] > 0) {
+        autoSelect.add(idx);
+      }
+    });
+    
+    setDerivedAddresses(allAddresses);
+    setAddressBalances(finalBalances);
+    setSelectedAddresses(autoSelect);
+    setIsScanning(false);
+  };
+  
+  // Fetch balances for derived addresses
+  const fetchAddressBalances = async (addresses) => {
+    // Get network from localStorage - handle both raw and JSON formats
+    let network = localStorage.getItem('x1wallet_network');
+    if (network && network.startsWith('"')) {
+      try { network = JSON.parse(network); } catch (e) { /* ignore */ }
+    }
+    network = network || 'X1 Mainnet';
+    
+    const networkConfig = NETWORKS[network];
+    if (!networkConfig || !networkConfig.rpcUrl) return;
+    
+    const balances = {};
+    for (const addr of addresses) {
+      try {
+        const response = await fetch(networkConfig.rpcUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'getBalance',
+            params: [addr.publicKey, { commitment: 'confirmed' }]
+          })
+        });
+        
+        if (!response.ok) continue;
+        
+        const data = await response.json();
+        
+        if (data.result?.value !== undefined) {
+          balances[addr.index] = data.result.value / Math.pow(10, networkConfig.decimals || 9);
+        }
+      } catch (e) {
+        // Ignore balance fetch errors
+      }
+    }
+    
+    setAddressBalances(prev => ({ ...prev, ...balances }));
+  };
+  
+  // Toggle address selection
+  const toggleAddressSelection = (index) => {
+    setSelectedAddresses(prev => {
+      const next = new Set(prev);
+      if (next.has(index)) {
+        // Don't allow deselecting if it's the only one
+        if (next.size > 1) next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return next;
+    });
+  };
+  
+  // Continue from address selection
+  const handleAddressSelectionContinue = () => {
+    if (selectedAddresses.size === 0) {
+      setError('Please select at least one address');
+      return;
+    }
     setStep('name');
   };
 
@@ -212,9 +546,23 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey,
 
   // Move to password step after naming (or verify if password exists, or skip if not required)
   const handleNameContinue = async () => {
+    // Build completion data based on selected addresses
+    const completionData = {
+      mnemonic: words.join(' '),
+      walletName: walletName || suggestedName,
+      selectedAddresses: Array.from(selectedAddresses).sort((a, b) => a - b),
+      derivedAddresses: derivedAddresses.filter(a => selectedAddresses.has(a.index))
+    };
+    
     if (!passwordRequired) {
       // Password protection is OFF - complete without password
-      onComplete(words.join(' '), walletName || suggestedName, null);
+      if (onCompleteMultiple && completionData.selectedAddresses.length > 1) {
+        onCompleteMultiple(completionData.mnemonic, completionData.walletName, null, completionData.derivedAddresses);
+      } else {
+        // Single address - use standard completion
+        const firstAddr = completionData.derivedAddresses[0];
+        onComplete(completionData.mnemonic, completionData.walletName, null, firstAddr?.index || 0);
+      }
       return;
     }
     
@@ -225,7 +573,12 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey,
         const isValid = await checkPassword(sessionPassword);
         if (isValid) {
           // Session password is valid - complete with it
-          onComplete(words.join(' '), walletName || suggestedName, sessionPassword);
+          if (onCompleteMultiple && completionData.selectedAddresses.length > 1) {
+            onCompleteMultiple(completionData.mnemonic, completionData.walletName, sessionPassword, completionData.derivedAddresses);
+          } else {
+            const firstAddr = completionData.derivedAddresses[0];
+            onComplete(completionData.mnemonic, completionData.walletName, sessionPassword, firstAddr?.index || 0);
+          }
           return;
         }
       } catch (e) {
@@ -265,7 +618,13 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey,
       }
       
       // Password verified - complete import with password for encryption
-      onComplete(words.join(' '), walletName || suggestedName, password);
+      const selectedAddrsArray = derivedAddresses.filter(a => selectedAddresses.has(a.index));
+      if (onCompleteMultiple && selectedAddrsArray.length > 1) {
+        onCompleteMultiple(words.join(' '), walletName || suggestedName, password, selectedAddrsArray);
+      } else {
+        const firstAddr = selectedAddrsArray[0];
+        onComplete(words.join(' '), walletName || suggestedName, password, firstAddr?.index || 0);
+      }
     } catch (err) {
       logger.error('Password verification error:', err);
       // If verification throws an error, it might mean no valid password exists
@@ -291,7 +650,13 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey,
       return;
     }
     
-    onComplete(words.join(' '), walletName || suggestedName, password);
+    const selectedAddrsArray = derivedAddresses.filter(a => selectedAddresses.has(a.index));
+    if (onCompleteMultiple && selectedAddrsArray.length > 1) {
+      onCompleteMultiple(words.join(' '), walletName || suggestedName, password, selectedAddrsArray);
+    } else {
+      const firstAddr = selectedAddrsArray[0];
+      onComplete(words.join(' '), walletName || suggestedName, password, firstAddr?.index || 0);
+    }
   };
   
   // Private Key Import (handles base58 and byte array formats)
@@ -530,13 +895,420 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey,
     }
   };
 
+  // Load more addresses from seed (standard path only)
+  const loadMoreAddresses = async () => {
+    if (scanMode === 'scan') return; // Don't allow load more in scan mode
+    
+    setLoadingAddresses(true);
+    try {
+      const phrase = words.join(' ');
+      // Find highest account index in standard scheme
+      const standardAddresses = derivedAddresses.filter(a => a.scheme === 'standard');
+      const maxIndex = standardAddresses.length > 0 
+        ? Math.max(...standardAddresses.map(a => a.accountIndex ?? a.index)) 
+        : -1;
+      const startIndex = maxIndex + 1;
+      const newAddresses = [];
+      
+      for (let i = startIndex; i < startIndex + 5; i++) {
+        const { publicKey } = await mnemonicToKeypair(phrase, i);
+        const address = encodeBase58(publicKey);
+        newAddresses.push({ 
+          index: derivedAddresses.length + (i - startIndex), 
+          accountIndex: i,
+          publicKey: address, 
+          path: DERIVATION_SCHEMES.STANDARD.getPath(i),
+          scheme: 'standard',
+          uniqueKey: `standard-${i}`
+        });
+      }
+      
+      setDerivedAddresses(prev => [...prev, ...newAddresses]);
+      
+      // Fetch balances for new addresses
+      fetchAddressBalances(newAddresses);
+    } catch (err) {
+      logger.error('[ImportWallet] Failed to load more addresses:', err);
+    } finally {
+      setLoadingAddresses(false);
+    }
+  };
+
+  // Select derivation path step - styled like hardware wallet
+  if (step === 'select-derivation') {
+    return (
+      <div className="screen hardware-screen no-nav" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <button className="back-btn" onClick={() => setStep('import')} style={{ alignSelf: 'flex-start', flexShrink: 0 }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M19 12H5M12 19l-7-7 7-7" />
+          </svg>
+        </button>
+
+        <h2 style={{ marginBottom: 8, textAlign: 'center', flexShrink: 0 }}>Select Derivation Path</h2>
+        <p style={{ margin: '0 0 24px 0', fontSize: 14, color: 'var(--text-muted)', textAlign: 'center', flexShrink: 0 }}>
+          Choose how to set up your wallet
+        </p>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, flex: '1 1 auto' }}>
+          {/* Default Option */}
+          <button
+            onClick={() => handleDerivationSelect('default')}
+            disabled={loadingAddresses}
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'flex-start',
+              gap: 4,
+              padding: 16,
+              background: 'var(--bg-secondary)',
+              border: '1px solid var(--border-color)',
+              borderRadius: 12,
+              cursor: loadingAddresses ? 'not-allowed' : 'pointer',
+              textAlign: 'left',
+              position: 'relative'
+            }}
+          >
+            <span style={{
+              position: 'absolute',
+              top: 12,
+              right: 12,
+              fontSize: 10,
+              fontWeight: 600,
+              color: '#fff',
+              background: 'var(--x1-blue)',
+              padding: '3px 8px',
+              borderRadius: 4,
+              textTransform: 'uppercase'
+            }}>
+              Recommended
+            </span>
+            <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>
+              Default
+            </span>
+            <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+              Extended derivation path for most wallets
+            </span>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'monospace', marginTop: 4 }}>
+              m/44'/501'/&#123;account&#125;'/0'
+            </span>
+          </button>
+
+          {/* Scan to Find Option */}
+          <button
+            onClick={() => handleDerivationSelect('scan')}
+            disabled={loadingAddresses}
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'flex-start',
+              gap: 4,
+              padding: 16,
+              background: 'var(--bg-secondary)',
+              border: '1px solid var(--border-color)',
+              borderRadius: 12,
+              cursor: loadingAddresses ? 'not-allowed' : 'pointer',
+              textAlign: 'left'
+            }}
+          >
+            <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>
+              Scan to Find
+            </span>
+            <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+              Search Solflare, deprecated, and legacy paths for existing accounts
+            </span>
+          </button>
+
+          {/* Custom Path Option */}
+          <button
+            onClick={() => {
+              // Show custom path input
+              const path = prompt("Enter derivation path:", customPath);
+              if (path) {
+                setCustomPath(path);
+                handleDerivationSelect('custom');
+              }
+            }}
+            disabled={loadingAddresses}
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'flex-start',
+              gap: 4,
+              padding: 16,
+              background: 'var(--bg-secondary)',
+              border: '1px solid var(--border-color)',
+              borderRadius: 12,
+              cursor: loadingAddresses ? 'not-allowed' : 'pointer',
+              textAlign: 'left'
+            }}
+          >
+            <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>
+              Custom Path
+            </span>
+            <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+              Enter a specific path (e.g., m/44'/501'/0'/0')
+            </span>
+          </button>
+        </div>
+
+        {/* Loading indicator */}
+        {loadingAddresses && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
+            padding: 16,
+            color: 'var(--text-muted)',
+            fontSize: 13
+          }}>
+            <div style={{
+              width: 16,
+              height: 16,
+              border: '2px solid var(--border-color)',
+              borderTopColor: 'var(--x1-blue)',
+              borderRadius: '50%',
+              animation: 'spin 1s linear infinite'
+            }} />
+            {scanMode === 'scan' ? 'Scanning for accounts...' : 'Loading accounts...'}
+          </div>
+        )}
+
+        {error && <div className="error-message" style={{ marginTop: 12 }}>{error}</div>}
+      </div>
+    );
+  }
+
+  // Select addresses step - styled like hardware wallet
+  if (step === 'select-addresses') {
+    // Get network - handle both raw and JSON formats
+    let network = localStorage.getItem('x1wallet_network');
+    if (network && network.startsWith('"')) {
+      try { network = JSON.parse(network); } catch (e) { /* ignore */ }
+    }
+    network = network || 'X1 Mainnet';
+    
+    const networkConfig = NETWORKS[network];
+    const symbol = networkConfig?.symbol || 'XNT';
+    
+    // Check if address is already imported
+    const isAlreadyImported = (publicKey) => {
+      return existingWallets.some(w => 
+        w.publicKey === publicKey || 
+        w.addresses?.some(a => a.publicKey === publicKey)
+      );
+    };
+    
+    return (
+      <div className="screen hardware-screen no-nav" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <button className="back-btn" onClick={() => setStep('select-derivation')} style={{ alignSelf: 'flex-start', flexShrink: 0 }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M19 12H5M12 19l-7-7 7-7" />
+          </svg>
+        </button>
+
+        <h2 style={{ marginBottom: 6, textAlign: 'left', flexShrink: 0 }}>Select Accounts</h2>
+        <p style={{ margin: '0 0 8px 0', fontSize: 14, color: 'var(--text-muted)', flexShrink: 0 }}>
+          {scanMode === 'scan' 
+            ? 'Accounts found across all derivation paths' 
+            : 'Choose accounts to import'}
+        </p>
+        {selectedAddresses.size > 0 && (
+          <p style={{ margin: '0 0 12px 0', fontSize: 13, color: 'var(--x1-blue)', flexShrink: 0 }}>
+            {selectedAddresses.size} account{selectedAddresses.size > 1 ? 's' : ''} selected
+          </p>
+        )}
+        
+        {/* Scanning indicator */}
+        {isScanning && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
+            padding: '12px',
+            background: 'var(--bg-secondary)',
+            borderRadius: 8,
+            marginBottom: 12,
+            color: 'var(--text-muted)',
+            fontSize: 13
+          }}>
+            <div style={{
+              width: 16,
+              height: 16,
+              border: '2px solid var(--border-color)',
+              borderTopColor: 'var(--x1-blue)',
+              borderRadius: '50%',
+              animation: 'spin 1s linear infinite'
+            }} />
+            Scanning paths for accounts with balances...
+          </div>
+        )}
+
+        {/* Account list - flex grow with overflow when needed */}
+        <div style={{ 
+          display: 'flex', 
+          flexDirection: 'column', 
+          gap: 6, 
+          flex: '1 1 auto',
+          overflowY: 'auto',
+          minHeight: 0,
+          paddingRight: 4,
+          marginBottom: 12
+        }}>
+          {derivedAddresses.map((addr) => {
+            const alreadyImported = isAlreadyImported(addr.publicKey);
+            const isSelected = selectedAddresses.has(addr.index);
+            const balance = addressBalances[addr.index] ?? addressBalances[addr.accountIndex];
+            
+            return (
+              <div 
+                key={addr.uniqueKey || addr.index}
+                onClick={() => !alreadyImported && toggleAddressSelection(addr.index)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '8px 10px',
+                  background: alreadyImported 
+                    ? 'var(--bg-tertiary)' 
+                    : isSelected 
+                      ? 'rgba(2, 116, 251, 0.1)' 
+                      : 'var(--bg-secondary)',
+                  border: isSelected 
+                    ? '1px solid var(--x1-blue)' 
+                    : '1px solid var(--border-color)',
+                  borderRadius: 8,
+                  cursor: alreadyImported ? 'not-allowed' : 'pointer',
+                  opacity: alreadyImported ? 0.5 : 1,
+                  transition: 'all 0.15s ease',
+                  flexShrink: 0
+                }}
+              >
+                {/* Account icon */}
+                <div style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: 6,
+                  background: 'var(--bg-tertiary)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0
+                }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2">
+                    <path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4" />
+                    <path d="M4 6v12c0 1.1.9 2 2 2h14v-4" />
+                    <path d="M18 12a2 2 0 0 0-2 2c0 1.1.9 2 2 2h4v-4h-4z" />
+                  </svg>
+                </div>
+                
+                {/* Account info */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)' }}>
+                        Account {(addr.accountIndex ?? addr.index) + 1}
+                      </span>
+                      {/* Show path badge if scanning all paths */}
+                      {addr.schemeName && (
+                        <span style={{ 
+                          fontSize: 9, 
+                          color: addr.scheme === 'legacy' ? '#ffc107' : 'var(--x1-blue)', 
+                          background: addr.scheme === 'legacy' ? 'rgba(255, 193, 7, 0.1)' : 'rgba(2, 116, 251, 0.1)',
+                          padding: '1px 4px',
+                          borderRadius: 3
+                        }}>
+                          {addr.scheme === 'legacy' ? 'Legacy' : 'Standard'}
+                        </span>
+                      )}
+                    </div>
+                    {alreadyImported && (
+                      <span style={{ 
+                        fontSize: 9, 
+                        color: 'var(--text-muted)', 
+                        background: 'var(--bg-secondary)',
+                        padding: '1px 4px',
+                        borderRadius: 3
+                      }}>
+                        Added
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ 
+                    display: 'flex', 
+                    justifyContent: 'space-between', 
+                    alignItems: 'center',
+                    marginTop: 1
+                  }}>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                      {addr.publicKey.slice(0, 5)}...{addr.publicKey.slice(-5)}
+                    </span>
+                    <span style={{ 
+                      fontSize: 11, 
+                      color: balance > 0 ? 'var(--success)' : 'var(--text-muted)',
+                      fontWeight: balance > 0 ? 600 : 400
+                    }}>
+                      {balance !== undefined ? `${balance.toFixed(4)} ${symbol}` : '...'}
+                    </span>
+                  </div>
+                </div>
+                
+                {/* Checkmark when selected */}
+                {isSelected && !alreadyImported && (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--x1-blue)" strokeWidth="3">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                )}
+              </div>
+            );
+          })}
+          
+          {/* Load More - only in standard mode */}
+          {scanMode !== 'scan' && (
+            <button
+              onClick={loadMoreAddresses}
+              disabled={loadingAddresses}
+              style={{
+                padding: '6px',
+                background: 'transparent',
+                border: '1px dashed var(--border-color)',
+                borderRadius: 6,
+                color: 'var(--text-muted)',
+                fontSize: 12,
+                cursor: loadingAddresses ? 'not-allowed' : 'pointer',
+                flexShrink: 0
+              }}
+            >
+              {loadingAddresses ? 'Loading...' : '+ Load More'}
+            </button>
+          )}
+        </div>
+        
+        {error && <div className="error-message" style={{ marginBottom: 12, flexShrink: 0 }}>{error}</div>}
+        
+        <div style={{ flexShrink: 0, paddingBottom: 16 }}>
+          <button 
+            className="btn-primary" 
+            type="button" 
+            onClick={handleAddressSelectionContinue}
+            disabled={selectedAddresses.size === 0}
+            style={{ width: '100%' }}
+          >
+            Continue{selectedAddresses.size > 0 ? ` with ${selectedAddresses.size} Account${selectedAddresses.size > 1 ? 's' : ''}` : ''}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // Name step for seed phrase
   if (step === 'name') {
     return (
       <div className="screen no-nav">
         <div className="page-header">
           <div className="header-left">
-            <button className="back-btn" type="button" onClick={() => setStep('import')}>
+            <button className="back-btn" type="button" onClick={() => setStep('select-addresses')}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M19 12H5M12 19l-7-7 7-7" />
               </svg>
@@ -546,7 +1318,11 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey,
           <div className="header-right" />
         </div>
         <div className="screen-content seed-container" style={{ paddingTop: 0 }}>
-          <p className="seed-subtitle">Give your imported wallet a name</p>
+          <p className="seed-subtitle">
+            {selectedAddresses.size > 1 
+              ? `Name for ${selectedAddresses.size} wallets (will be numbered)`
+              : 'Give your imported wallet a name'}
+          </p>
           <div className="form-group" style={{ marginTop: 24 }}>
             <input type="text" className="form-input" value={walletName} onChange={e => setWalletName(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleNameContinue()} placeholder={suggestedName} autoFocus />
           </div>
@@ -1033,7 +1809,7 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey,
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
             </svg>
-            Private Key / Bytes
+            Private Key
           </button>
         </div>
       
@@ -1077,8 +1853,11 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey,
               ))}
             </div>
           )}
+          
           {error && <div className="error-message">{error}</div>}
-          <button className="btn-primary" type="button" onClick={handleContinue}>Continue</button>
+          <button className="btn-primary" type="button" onClick={handleContinue}>
+            Continue
+          </button>
         </>
       )}
       
@@ -1108,6 +1887,75 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey,
           {error && <div className="error-message" style={{ marginTop: 16 }}>{error}</div>}
           
           <button className="btn-primary" type="button" onClick={handlePrivateKeyImport} style={{ marginTop: 20 }}>Continue</button>
+        </>
+      )}
+      
+      {importType === 'watchonly' && (
+        <>
+          <div className="info-box" style={{ marginTop: 16, marginBottom: 16 }}>
+            <span>👁️</span>
+            <span>Watch-only wallets let you monitor an address without being able to send from it.</span>
+          </div>
+          
+          <div className="form-group">
+            <label>Public Address</label>
+            <input
+              type="text"
+              className="form-input"
+              placeholder="Enter Solana/X1 address to watch"
+              value={watchAddress}
+              onChange={(e) => { setWatchAddress(e.target.value); setError(''); }}
+              autoFocus
+            />
+          </div>
+          
+          <div className="form-group" style={{ marginTop: 16 }}>
+            <label>Name (optional)</label>
+            <input
+              type="text"
+              className="form-input"
+              placeholder={suggestedName}
+              value={walletName}
+              onChange={(e) => setWalletName(e.target.value)}
+            />
+          </div>
+          
+          {error && <div className="error-message" style={{ marginTop: 16 }}>{error}</div>}
+          
+          <button 
+            className="btn-primary" 
+            type="button" 
+            onClick={() => {
+              if (!watchAddress.trim()) {
+                setError('Please enter an address to watch');
+                return;
+              }
+              // Validate address format (basic Solana/X1 address validation)
+              const addr = watchAddress.trim();
+              if (addr.length < 32 || addr.length > 44) {
+                setError('Invalid address format');
+                return;
+              }
+              // Check for valid base58 characters
+              if (!/^[1-9A-HJ-NP-Za-km-z]+$/.test(addr)) {
+                setError('Address contains invalid characters');
+                return;
+              }
+              // Call the watch-only completion handler
+              if (onCompleteWatchOnly) {
+                onCompleteWatchOnly({
+                  publicKey: addr,
+                  name: walletName || suggestedName,
+                  type: 'watchonly'
+                });
+              } else {
+                setError('Watch-only wallets are not supported yet');
+              }
+            }} 
+            style={{ marginTop: 20 }}
+          >
+            Add Watch-Only Wallet
+          </button>
         </>
       )}
       </div>

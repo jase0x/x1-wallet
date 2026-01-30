@@ -366,6 +366,11 @@ export default function WalletManager({ wallet, onBack, onCreateWallet, onImport
                       <rect x="2" y="6" width="20" height="12" rx="2" />
                       <path d="M12 12h.01" />
                     </svg>
+                  ) : w.type === 'watchonly' || w.isWatchOnly ? (
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" strokeWidth="2">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                      <circle cx="12" cy="12" r="3" />
+                    </svg>
                   ) : (
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4" />
@@ -388,6 +393,7 @@ export default function WalletManager({ wallet, onBack, onCreateWallet, onImport
                   </div>
                   <span className="wallet-card-address">{w.publicKey?.slice(0, 8)}...{w.publicKey?.slice(-6)}</span>
                   {w.type === 'ledger' && <span className="wallet-badge">Ledger</span>}
+                  {(w.type === 'watchonly' || w.isWatchOnly) && <span className="wallet-badge" style={{ background: 'rgba(255, 165, 2, 0.2)', color: 'var(--warning)' }}>👁️ Watch Only</span>}
                 </div>
                 {wallet.activeWalletId === w.id && (
                   <span className="wallet-active-badge">Active</span>

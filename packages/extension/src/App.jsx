@@ -240,6 +240,126 @@ function AlertModal({ title, message, onClose, type = 'error' }) {
   );
 }
 
+// Password Prompt Modal - Themed modal for password input
+function PasswordPromptModal({ title, message, onSubmit, onCancel }) {
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const inputRef = React.useRef(null);
+  
+  React.useEffect(() => {
+    // Focus input on mount
+    if (inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, []);
+  
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (password.trim()) {
+      onSubmit(password);
+    }
+  };
+  
+  return (
+    <div className="alert-modal-overlay" onClick={onCancel}>
+      <div className="alert-modal-content" onClick={e => e.stopPropagation()}>
+        <div className="alert-modal-icon">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--x1-blue)" strokeWidth="2">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
+        </div>
+        <h3 className="alert-modal-title">{title || 'Enter Password'}</h3>
+        <p className="alert-modal-message">{message || 'Please enter your wallet password to continue.'}</p>
+        
+        <form onSubmit={handleSubmit} style={{ width: '100%' }}>
+          <div style={{ position: 'relative', marginBottom: 16 }}>
+            <input
+              ref={inputRef}
+              type={showPassword ? 'text' : 'password'}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Password"
+              className="form-input"
+              style={{
+                width: '100%',
+                padding: '14px 44px 14px 16px',
+                fontSize: 15,
+                background: 'var(--bg-primary)',
+                border: '1px solid var(--border-color)',
+                borderRadius: 12,
+                color: 'var(--text-primary)',
+                outline: 'none'
+              }}
+              autoComplete="current-password"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              style={{
+                position: 'absolute',
+                right: 12,
+                top: '50%',
+                transform: 'translateY(-50%)',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                padding: 4,
+                color: 'var(--text-muted)'
+              }}
+            >
+              {showPassword ? (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                  <line x1="1" y1="1" x2="23" y2="23" />
+                </svg>
+              ) : (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+              )}
+            </button>
+          </div>
+          
+          <div style={{ display: 'flex', gap: 12 }}>
+            <button
+              type="button"
+              onClick={onCancel}
+              style={{
+                flex: 1,
+                padding: '14px 24px',
+                fontSize: 15,
+                fontWeight: 600,
+                background: 'var(--bg-tertiary)',
+                border: '1px solid var(--border-color)',
+                borderRadius: 12,
+                color: 'var(--text-primary)',
+                cursor: 'pointer'
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="btn-primary"
+              style={{
+                flex: 1,
+                padding: '14px 24px',
+                fontSize: 15,
+                fontWeight: 600
+              }}
+              disabled={!password.trim()}
+            >
+              Confirm
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // Apply saved theme on startup
 const applySavedTheme = () => {
   try {
@@ -340,6 +460,7 @@ function App() {
   console.log('[App] wallet.wallets:', wallet.wallets?.length, 'wallet.loading:', wallet.loading, 'wallet.isEncrypted:', wallet.isEncrypted);
   const [screen, setScreen] = useState('loading');
   const [returnScreen, setReturnScreen] = useState('main');
+  const [importInitialType, setImportInitialType] = useState('phrase'); // 'phrase', 'privatekey', or 'watchonly'
   const [isLocked, setIsLocked] = useState(false);
   const [initialCheckDone, setInitialCheckDone] = useState(false);
   const [selectedToken, setSelectedToken] = useState(null);
@@ -350,6 +471,7 @@ function App() {
   const [dappRequiresReauth, setDappRequiresReauth] = useState(false);  // X1W-SEC: Track if signing needs password re-entry
   const [currentRequestId, setCurrentRequestId] = useState(null);  // X1W-SEC: Track which request is being handled
   const [alertModal, setAlertModal] = useState({ show: false, title: '', message: '', type: 'error' });
+  const [passwordPrompt, setPasswordPrompt] = useState({ show: false, title: '', message: '', resolve: null });
   const lastActivityRef = useRef(Date.now());
   const lockTimerRef = useRef(null);
   
@@ -362,6 +484,27 @@ function App() {
     setAlertModal({ show: false, title: '', message: '', type: 'error' });
   }, []);
   
+  // Password prompt helper - returns a promise that resolves with password or null
+  const promptPassword = useCallback((title, message) => {
+    return new Promise((resolve) => {
+      setPasswordPrompt({ show: true, title, message, resolve });
+    });
+  }, []);
+  
+  const handlePasswordSubmit = useCallback((password) => {
+    if (passwordPrompt.resolve) {
+      passwordPrompt.resolve(password);
+    }
+    setPasswordPrompt({ show: false, title: '', message: '', resolve: null });
+  }, [passwordPrompt.resolve]);
+  
+  const handlePasswordCancel = useCallback(() => {
+    if (passwordPrompt.resolve) {
+      passwordPrompt.resolve(null);
+    }
+    setPasswordPrompt({ show: false, title: '', message: '', resolve: null });
+  }, [passwordPrompt.resolve]);
+  
   // Function to trigger activity refresh
   const triggerActivityRefresh = useCallback(() => {
     setActivityRefreshKey(prev => prev + 1);
@@ -371,6 +514,30 @@ function App() {
   const triggerBalanceRefresh = useCallback(() => {
     setBalanceRefreshKey(prev => prev + 1);
   }, []);
+
+  // Handle visibility change - reinitialize when side panel becomes visible again
+  // This fixes the "black screen when navigating to new site" bug
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        console.log('[App] Side panel became visible, refreshing...');
+        // Trigger balance refresh to update data
+        triggerBalanceRefresh();
+        triggerActivityRefresh();
+        // Re-apply theme (in case CSS variables weren't loaded)
+        try {
+          const savedTheme = localStorage.getItem('x1wallet_darkMode');
+          const isDark = savedTheme === null ? true : JSON.parse(savedTheme);
+          document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'dark');
+        }
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [triggerBalanceRefresh, triggerActivityRefresh]);
 
   // Check for pending dApp requests
   // Supports both: 1) Approval window (URL params) and 2) In-popup approvals (port messages)
@@ -791,7 +958,7 @@ function App() {
   };
 
   // Handle wallet import - ALWAYS requires password (turns protection ON)
-  const handleImportComplete = async (mnemonic, name, password) => {
+  const handleImportComplete = async (mnemonic, name, password, derivationIndex = 0) => {
     try {
       // Import ALWAYS requires password (existing funds need protection)
       if (!password) {
@@ -807,7 +974,7 @@ function App() {
       const effectivePasswordExists = passwordExists && hasWallets;
       
       // Pass password directly to importWallet (avoids React state timing issue)
-      await wallet.importWallet(mnemonic, name, password);
+      await wallet.importWallet(mnemonic, name, password, derivationIndex);
       
       // Set up password hash if first time
       if (!effectivePasswordExists) {
@@ -824,11 +991,145 @@ function App() {
       localStorage.setItem('x1wallet_encrypted', 'true');
       
       storage.set('lastActivity', Date.now());
+      
+      // Refresh wallet balance after import
+      if (wallet.refreshBalance) {
+        logger.log('[ImportComplete] Refreshing balance...');
+        setTimeout(() => wallet.refreshBalance(), 500);
+      }
+      
       setScreen('main');
       return; // FIX: stop execution after success
     } catch (err) {
       logger.error('Failed to import wallet:', err);
       showAlert(err.message || 'Failed to import wallet', 'Import Failed', 'warning');
+    }
+  };
+
+  // Handle importing multiple wallets from same seed phrase
+  const handleImportMultiple = async (mnemonic, baseName, password, derivedAddresses) => {
+    try {
+      if (!password) {
+        throw new Error('Password is required');
+      }
+      
+      // Clear tokens immediately for instant UI update
+      setUserTokens([]);
+      
+      const { setupPassword, hasPassword: checkHasPassword } = await import('@x1-wallet/core/services/wallet');
+      const passwordExists = await checkHasPassword();
+      const hasWallets = wallet.wallets && wallet.wallets.length > 0;
+      const effectivePasswordExists = passwordExists && hasWallets;
+      
+      // Set up password hash FIRST if needed (before importing)
+      if (!effectivePasswordExists) {
+        await setupPassword(password);
+      }
+      
+      // Import each selected address as a separate wallet
+      let importedCount = 0;
+      let skippedCount = 0;
+      
+      // Determine base name - strip trailing numbers/spaces if multiple wallets
+      let cleanBaseName = baseName.trim();
+      const shouldNumber = derivedAddresses.length > 1;
+      
+      if (shouldNumber) {
+        // Remove trailing numbers and spaces (e.g., "Wallet 1" -> "Wallet", "My Wallet 2" -> "My Wallet")
+        cleanBaseName = cleanBaseName.replace(/\s*\d+\s*$/, '').trim();
+        // If name becomes empty after stripping, use default
+        if (!cleanBaseName) cleanBaseName = 'Wallet';
+      }
+      
+      // Find available numbers for this base name (fills gaps)
+      let availableNumbers = [];
+      if (shouldNumber && wallet.wallets) {
+        const regex = new RegExp(`^${cleanBaseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+(\\d+)$`, 'i');
+        const usedNumbers = new Set();
+        
+        for (const w of wallet.wallets) {
+          const match = w.name?.match(regex);
+          if (match) {
+            usedNumbers.add(parseInt(match[1], 10));
+          }
+        }
+        
+        // Find available numbers starting from 1
+        let num = 1;
+        while (availableNumbers.length < derivedAddresses.length) {
+          if (!usedNumbers.has(num)) {
+            availableNumbers.push(num);
+          }
+          num++;
+        }
+      } else if (shouldNumber) {
+        // No existing wallets, start from 1
+        availableNumbers = derivedAddresses.map((_, i) => i + 1);
+      }
+      
+      for (let i = 0; i < derivedAddresses.length; i++) {
+        const addr = derivedAddresses[i];
+        // Use sequential numbering starting from after existing wallets
+        const walletName = shouldNumber 
+          ? `${cleanBaseName} ${availableNumbers[i]}`
+          : cleanBaseName;
+        
+        // Use accountIndex for derivation (not the sorted display index)
+        // Also pass the derivation path if it differs from standard
+        const derivationIndex = addr.accountIndex ?? addr.index;
+        
+        try {
+          logger.log(`[ImportMultiple] Importing wallet ${i + 1}/${derivedAddresses.length}: ${walletName} (derivation index ${derivationIndex}, path: ${addr.path || 'standard'})`);
+          await wallet.importWallet(mnemonic, walletName, password, derivationIndex);
+          importedCount++;
+          logger.log(`[ImportMultiple] Successfully imported: ${walletName}`);
+          
+          // Small delay between imports to ensure storage is synced
+          if (i < derivedAddresses.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+        } catch (importErr) {
+          // Skip if wallet already exists
+          if (importErr.message?.includes('already been imported')) {
+            logger.log(`[ImportMultiple] Skipping already imported wallet: ${walletName}`);
+            skippedCount++;
+            continue;
+          }
+          // Re-throw other errors
+          throw importErr;
+        }
+      }
+      
+      logger.log(`[ImportMultiple] Complete: ${importedCount} imported, ${skippedCount} skipped`);
+      
+      // Cache password in session
+      setSessionPassword(password);
+      
+      // Import always turns ON password protection
+      storage.set('passwordProtection', true);
+      setPasswordProtection(true);
+      setHasPasswordAsync(true);
+      localStorage.setItem('x1wallet_encrypted', 'true');
+      
+      storage.set('lastActivity', Date.now());
+      
+      // Refresh wallet balance after import
+      if (wallet.refreshBalance) {
+        logger.log('[ImportMultiple] Refreshing balance...');
+        setTimeout(() => wallet.refreshBalance(), 500);
+      }
+      
+      // Show result message if some were skipped
+      if (skippedCount > 0 && importedCount === 0) {
+        showAlert('All selected accounts were already imported.', 'Already Imported', 'info');
+      } else if (skippedCount > 0) {
+        showAlert(`Imported ${importedCount} account${importedCount > 1 ? 's' : ''}. ${skippedCount} already existed.`, 'Import Complete', 'info');
+      }
+      
+      setScreen('main');
+    } catch (err) {
+      logger.error('Failed to import multiple wallets:', err);
+      showAlert(err.message || 'Failed to import wallets', 'Import Failed', 'warning');
     }
   };
 
@@ -906,6 +1207,88 @@ function App() {
     }
   };
 
+  // Handle watch-only wallet import
+  const handleImportWatchOnly = async (walletData) => {
+    try {
+      // Watch-only wallets don't need password since there's nothing to encrypt
+      // But if there are existing wallets with encryption, we need the password to add to encrypted storage
+      
+      // Check if wallet already exists
+      const existingWallets = wallet.wallets || [];
+      const existingMatch = existingWallets.find(w => 
+        w.publicKey === walletData.publicKey || 
+        w.addresses?.some(a => a.publicKey === walletData.publicKey)
+      );
+      if (existingMatch) {
+        showAlert(`This address is already being watched as "${existingMatch.name}"`, 'Address Already Exists', 'warning');
+        return;
+      }
+      
+      // Clear tokens immediately for instant UI update
+      setUserTokens([]);
+      
+      // Build the watch-only wallet object
+      const newWallet = {
+        id: Date.now().toString(),
+        name: walletData.name || 'Watch Wallet',
+        publicKey: walletData.publicKey,
+        privateKey: null,  // No private key for watch-only
+        mnemonic: null,    // No mnemonic
+        type: 'watchonly',
+        isWatchOnly: true,
+        createdAt: new Date().toISOString(),
+        addresses: [{
+          index: 0,
+          publicKey: walletData.publicKey,
+          privateKey: null,
+          name: 'Address 1'
+        }],
+        activeAddressIndex: 0
+      };
+      
+      // For watch-only, we can use the session password if available
+      // Or the password passed from the ImportWallet component
+      const effectivePassword = walletData.password || sessionPassword || null;
+      
+      if (existingWallets.length > 0) {
+        // If there are existing wallets, we need to use the existing password
+        const isEncrypted = localStorage.getItem('x1wallet_encrypted') === 'true';
+        if (isEncrypted && !effectivePassword) {
+          // Show themed password prompt
+          const { checkPassword } = await import('@x1-wallet/core/services/wallet');
+          const enteredPassword = await promptPassword(
+            'Enter Password',
+            'Enter your wallet password to add this watch-only address.'
+          );
+          if (!enteredPassword) {
+            showAlert('Password required to add wallet to encrypted storage', 'Password Required', 'warning');
+            return;
+          }
+          const isValid = await checkPassword(enteredPassword);
+          if (!isValid) {
+            showAlert('Incorrect password', 'Invalid Password', 'error');
+            return;
+          }
+          // Use the entered password
+          await wallet.saveWallets([...existingWallets, newWallet], enteredPassword);
+          setSessionPassword(enteredPassword); // Cache for future use
+        } else {
+          await wallet.saveWallets([...existingWallets, newWallet], effectivePassword);
+        }
+      } else {
+        // First wallet - watch-only doesn't need encryption
+        await wallet.saveWallets([newWallet], null);
+      }
+      
+      wallet.selectWallet(newWallet.id);
+      storage.set('lastActivity', Date.now());
+      setScreen('main');
+    } catch (err) {
+      logger.error('Failed to add watch-only wallet:', err);
+      showAlert('Failed to add watch-only wallet: ' + err.message, 'Add Failed', 'error');
+    }
+  };
+
   // Handle lock/reset
   // BUG FIX: Use lockWallet() to lock, NOT clearWallet() which wipes data!
   const handleLock = () => {
@@ -923,6 +1306,14 @@ function App() {
   // Navigate to import from manager
   const handleManagerImport = () => {
     setReturnScreen('main');
+    setImportInitialType('phrase');
+    setScreen('import');
+  };
+
+  // Navigate to watch-only import from manager
+  const handleManagerWatchOnly = () => {
+    setReturnScreen('main');
+    setImportInitialType('watchonly');
     setScreen('import');
   };
 
@@ -1018,7 +1409,7 @@ function App() {
   // Loading screen
   if (screen === 'loading' || wallet.loading) {
     return (
-      <div className="app loading">
+      <div className="app loading" style={{ background: '#0a0a0a', minHeight: '100vh' }}>
         <div className="spinner" />
       </div>
     );
@@ -1130,12 +1521,23 @@ function App() {
             onClose={closeAlert}
           />
         )}
+        {passwordPrompt.show && (
+          <PasswordPromptModal
+            title={passwordPrompt.title}
+            message={passwordPrompt.message}
+            onSubmit={handlePasswordSubmit}
+            onCancel={handlePasswordCancel}
+          />
+        )}
         <ImportWallet
           onComplete={handleImportComplete}
+          onCompleteMultiple={handleImportMultiple}
           onCompletePrivateKey={handleImportPrivateKey}
-          onBack={() => setScreen(returnScreen === 'manage' ? 'manage' : 'welcome')}
+          onCompleteWatchOnly={handleImportWatchOnly}
+          onBack={() => { setImportInitialType('phrase'); setScreen(returnScreen === 'manage' ? 'manage' : 'welcome'); }}
           sessionPassword={sessionPassword}
           existingWallets={wallet.wallets || []}
+          initialImportType={importInitialType}
         />
       </div>
     );
@@ -1598,11 +2000,20 @@ function App() {
           onClose={closeAlert}
         />
       )}
+      {passwordPrompt.show && (
+        <PasswordPromptModal
+          title={passwordPrompt.title}
+          message={passwordPrompt.message}
+          onSubmit={handlePasswordSubmit}
+          onCancel={handlePasswordCancel}
+        />
+      )}
       <WalletMain
         key={`${wallet.wallet?.publicKey}-${wallet.network}`}
         wallet={wallet}
         userTokens={userTokens}
         onTokensUpdate={setUserTokens}
+        onWalletSwitch={() => setUserTokens([])}
         onSend={(token) => { setSelectedToken(token || null); setScreen('send'); }}
         onReceive={() => setScreen('receive')}
         onSwap={(token) => { setSelectedToken(token || null); setScreen('swap'); }}
@@ -1612,6 +2023,7 @@ function App() {
         onCreateWallet={handleManagerCreate}
         onImportWallet={handleManagerImport}
         onHardwareWallet={handleManagerHardware}
+        onWatchOnly={handleManagerWatchOnly}
         activityRefreshKey={activityRefreshKey}
         balanceRefreshKey={balanceRefreshKey}
         onTokenClick={(token) => { setSelectedToken(token); setScreen('tokenDetail'); }}

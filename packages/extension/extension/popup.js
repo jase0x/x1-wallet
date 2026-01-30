@@ -10918,29 +10918,14 @@ async function createTokenTransferTransaction({
     if (!toTokenAccount && rpcUrl) {
       const existingATA = await findExistingATA(rpcUrl, toPubkey, mint);
       if (existingATA) {
-        logger$1.log("Found existing ATA for recipient:", existingATA);
         toTokenAccount = existingATA;
         needsCreateATA = false;
       } else {
-        logger$1.log("No existing ATA - deriving with RPC validation");
-        try {
-          toTokenAccount = await deriveATAAddressStandard(toPubkey, mint, tokenProgramId, rpcUrl, fromPubkey);
-          logger$1.log("Derived ATA with RPC validation:", toTokenAccount);
-          needsCreateATA = true;
-        } catch (deriveErr) {
-          logger$1.warn("RPC validation failed, using simple derivation:", deriveErr.message);
-          const result = await findATAAddress(toPubkey, mint, tokenProgramId);
-          toTokenAccount = result.address;
-          needsCreateATA = true;
-        }
+        toTokenAccount = await deriveATAAddressStandard(toPubkey, mint, tokenProgramId, rpcUrl, fromPubkey);
+        needsCreateATA = true;
       }
     } else if (!toTokenAccount) {
-      const result = await findATAAddress(toPubkey, mint, tokenProgramId);
-      toTokenAccount = result.address;
-      needsCreateATA = true;
-      logger$1.log("Derived ATA (no RPC):", toTokenAccount);
-    } else {
-      logger$1.log("Using provided token account:", toTokenAccount);
+      throw new Error("RPC URL is required for token transfers to new recipients");
     }
     logger$1.log("Final destination token account:", toTokenAccount);
     logger$1.log("Needs ATA creation:", needsCreateATA);
@@ -11215,9 +11200,8 @@ function buildCompressedNftTransferMessage({
   return message;
 }
 async function findExistingATA(rpcUrl, owner, mint, tokenProgramId = null) {
-  var _a2, _b2, _c, _d, _e, _f, _g;
+  var _a2, _b2, _c, _d, _e, _f;
   try {
-    logger$1.log("[findExistingATA] Looking for mint:", mint == null ? void 0 : mint.slice(0, 8), "owner:", owner == null ? void 0 : owner.slice(0, 8));
     const [response1, response2] = await Promise.all([
       fetchRpcRetry(rpcUrl, {
         jsonrpc: "2.0",
@@ -11248,46 +11232,90 @@ async function findExistingATA(rpcUrl, owner, mint, tokenProgramId = null) {
       ...((_a2 = data1.result) == null ? void 0 : _a2.value) || [],
       ...((_b2 = data2.result) == null ? void 0 : _b2.value) || []
     ];
-    logger$1.log("[findExistingATA] Found", allAccounts.length, "total token accounts");
     for (const acc of allAccounts) {
       const accMint = (_f = (_e = (_d = (_c = acc.account) == null ? void 0 : _c.data) == null ? void 0 : _d.parsed) == null ? void 0 : _e.info) == null ? void 0 : _f.mint;
       if (accMint === mint) {
-        logger$1.log("[findExistingATA] Found matching account:", (_g = acc.pubkey) == null ? void 0 : _g.slice(0, 8));
         return acc.pubkey;
       }
     }
-    logger$1.warn("[findExistingATA] No token account found for mint:", mint == null ? void 0 : mint.slice(0, 8));
     return null;
   } catch (error) {
-    logger$1.warn("[findExistingATA] Failed:", error.message);
     return null;
   }
 }
 async function deriveATAAddressWithValidation(rpcUrl, owner, mint, tokenProgramId, payer) {
-  logger$1.log("[ATA-RPC] Deriving ATA for owner:", owner);
-  logger$1.log("[ATA-RPC] Mint:", mint);
-  logger$1.log("[ATA-RPC] Token program:", tokenProgramId);
-  const address255 = await computeATAAddress(owner, mint, tokenProgramId, 255);
-  logger$1.log("[ATA-RPC] Testing bump 255:", address255);
-  const isValid255 = await validateATAWithRPC(rpcUrl, owner, mint, address255, tokenProgramId, 255, payer);
-  if (isValid255) {
-    logger$1.log("[ATA-RPC] ✓ Found valid ATA with bump 255:", address255);
-    return address255;
+  var _a2, _b2;
+  const bhResponse = await fetchRpcRetry(rpcUrl, {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "getLatestBlockhash",
+    params: [{ commitment: "finalized" }]
+  });
+  const bhData = await bhResponse.json();
+  const blockhash = (_b2 = (_a2 = bhData.result) == null ? void 0 : _a2.value) == null ? void 0 : _b2.blockhash;
+  if (!blockhash) {
+    throw new Error("Failed to get blockhash for ATA derivation");
   }
-  const bumpsToTry = [254, 253, 252, 251, 250];
-  for (const bump of bumpsToTry) {
-    await new Promise((r2) => setTimeout(r2, 200));
+  for (let bump = 255; bump >= 0; bump--) {
     const address = await computeATAAddress(owner, mint, tokenProgramId, bump);
-    logger$1.log(`[ATA-RPC] Testing bump ${bump}: ${address}`);
-    const isValid = await validateATAWithRPC(rpcUrl, owner, mint, address, tokenProgramId, bump, payer);
+    const isValid = await validateATAAddressViaRPC(rpcUrl, payer, owner, address, mint, tokenProgramId, blockhash);
     if (isValid) {
-      logger$1.log(`[ATA-RPC] ✓ Found valid ATA with bump ${bump}: ${address}`);
       return address;
     }
-    logger$1.log(`[ATA-RPC] ✗ Bump ${bump} invalid`);
+    if (bump % 5 === 0 && bump > 0) {
+      await new Promise((r2) => setTimeout(r2, 50));
+    }
   }
-  logger$1.warn("[ATA-RPC] No valid bump found, using 255 as fallback");
-  return address255;
+  throw new Error("Could not find valid ATA address after trying all 256 bumps");
+}
+async function validateATAAddressViaRPC(rpcUrl, payer, owner, ataAddress, mint, tokenProgramId, blockhash) {
+  var _a2, _b2;
+  try {
+    const message = buildCreateATAMessage(payer, owner, ataAddress, mint, tokenProgramId, blockhash);
+    const dummySignature = new Uint8Array(64);
+    const tx = new Uint8Array(1 + 64 + message.length);
+    tx[0] = 1;
+    tx.set(dummySignature, 1);
+    tx.set(message, 65);
+    const txBase64 = btoa(String.fromCharCode(...tx));
+    const response = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "simulateTransaction",
+        params: [txBase64, {
+          encoding: "base64",
+          sigVerify: false,
+          replaceRecentBlockhash: true
+        }]
+      })
+    });
+    const data = await response.json();
+    const err = (_b2 = (_a2 = data.result) == null ? void 0 : _a2.value) == null ? void 0 : _b2.err;
+    if (!err) {
+      return true;
+    }
+    if (err.InstructionError) {
+      const [instrIdx, errType] = err.InstructionError;
+      if (errType === "InvalidSeeds") return false;
+      if (errType === "IncorrectProgramId") return false;
+      if (typeof errType === "object" && errType.Custom !== void 0) {
+        if (errType.Custom === 0) return false;
+        if (errType.Custom === 1) return true;
+      }
+      if (errType === "InsufficientFunds") return true;
+      if (errType === "AccountNotFound") return true;
+    }
+    const errStr = JSON.stringify(err);
+    if (errStr.includes("seeds") || errStr.includes("Seeds")) {
+      return false;
+    }
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 async function computeATAAddress(owner, mint, tokenProgramId, bump) {
   const ownerBytes = decodeToFixedSize$1(owner, 32);
@@ -11342,11 +11370,14 @@ async function findATAAddress(owner, mint, tokenProgramId) {
     const hash = await crypto.subtle.digest("SHA-256", buffer2);
     const hashBytes = new Uint8Array(hash);
     if (!isOnCurve(hashBytes)) {
-      console.log("[ATA] Found valid PDA at bump:", bump, "address:", encodeBase58(hashBytes));
+      logger$1.log("[ATA] Found valid PDA at bump:", bump, "address:", encodeBase58(hashBytes));
       return { address: encodeBase58(hashBytes), bump };
     }
+    if (bump % 10 === 0 && bump < 250) {
+      logger$1.log("[ATA] Still searching... at bump", bump);
+    }
   }
-  throw new Error("Could not find valid PDA for ATA");
+  throw new Error("Could not find valid PDA for ATA - all 256 bumps resulted in on-curve addresses");
 }
 function isOnCurve(bytes) {
   let allZero = true;
@@ -11356,7 +11387,11 @@ function isOnCurve(bytes) {
     if (bytes[i] !== 255) allOne = false;
   }
   if (allZero || allOne) return true;
-  return false;
+  const lastByte = bytes[31] & 127;
+  if (lastByte >= 126) {
+    return false;
+  }
+  return true;
 }
 async function fetchRpcRetry(rpcUrl, body, maxRetries = 5) {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -11381,80 +11416,6 @@ async function fetchRpcRetry(rpcUrl, body, maxRetries = 5) {
     }
   }
   throw new Error("RPC request failed after max retries");
-}
-async function validateATAWithRPC(rpcUrl, owner, mint, ataAddress, tokenProgramId, bump, payer) {
-  var _a2, _b2, _c, _d;
-  try {
-    const bhResponse = await fetchRpcRetry(rpcUrl, {
-      jsonrpc: "2.0",
-      id: 1,
-      method: "getLatestBlockhash",
-      params: [{ commitment: "finalized" }]
-    });
-    const bhData = await bhResponse.json();
-    const blockhash = (_b2 = (_a2 = bhData.result) == null ? void 0 : _a2.value) == null ? void 0 : _b2.blockhash;
-    if (!blockhash) {
-      logger$1.warn("[ATA-RPC] Failed to get blockhash");
-      return false;
-    }
-    const message = buildCreateATAMessage(payer, owner, ataAddress, mint, tokenProgramId, blockhash);
-    const dummySignature = new Uint8Array(64);
-    const tx = new Uint8Array(1 + 64 + message.length);
-    tx[0] = 1;
-    tx.set(dummySignature, 1);
-    tx.set(message, 65);
-    const txBase64 = btoa(String.fromCharCode(...tx));
-    const response = await fetchRpcRetry(rpcUrl, {
-      jsonrpc: "2.0",
-      id: 1,
-      method: "simulateTransaction",
-      params: [txBase64, {
-        encoding: "base64",
-        sigVerify: false,
-        replaceRecentBlockhash: true
-      }]
-    });
-    const data = await response.json();
-    const err = (_d = (_c = data.result) == null ? void 0 : _c.value) == null ? void 0 : _d.err;
-    logger$1.log(`[ATA-RPC] Bump ${bump} simulation result:`, err ? JSON.stringify(err) : "OK");
-    if (!err) {
-      return true;
-    }
-    if (err.InstructionError) {
-      const [instrIndex, errType] = err.InstructionError;
-      if (typeof errType === "object" && "Custom" in errType) {
-        return false;
-      }
-      if (errType === "InvalidSeeds") {
-        return false;
-      }
-      if (errType === "IncorrectProgramId") {
-        return false;
-      }
-      if (errType === "InvalidAccountData") {
-        return false;
-      }
-      if (errType === "AccountNotFound") {
-        logger$1.warn("AccountNotFound with real payer - checking mint");
-        return true;
-      }
-      if (errType === "InsufficientFunds") {
-        return true;
-      }
-      if (errType === "AccountLoadedTwice") {
-        logger$1.warn("AccountLoadedTwice error - check message construction");
-        return false;
-      }
-    }
-    const errStr = JSON.stringify(err);
-    if (errStr.includes("InvalidSeeds") || errStr.includes("seeds")) {
-      return false;
-    }
-    return true;
-  } catch (error) {
-    logger$1.warn("Validation error for bump", bump, ":", error);
-    return false;
-  }
 }
 function buildCreateATAMessage(payer, owner, ataAddress, mint, tokenProgramId, blockhash) {
   const payerBytes = decodeToFixedSize$1(payer, 32);
@@ -16167,6 +16128,12 @@ function useWallet() {
     }
   }, [encryptionPassword]);
   reactExports.useEffect(() => {
+    const safetyTimeout = setTimeout(() => {
+      if (loading) {
+        console.warn("[useWallet] Loading timeout - forcing ready state");
+        setLoading(false);
+      }
+    }, 5e3);
     const loadWallets2 = async () => {
       try {
         const saved = localStorage.getItem(STORAGE_KEY);
@@ -16242,8 +16209,12 @@ function useWallet() {
         logger$1.error("Failed to load wallets:", e);
       }
       setLoading(false);
+      clearTimeout(safetyTimeout);
     };
     loadWallets2();
+    return () => {
+      clearTimeout(safetyTimeout);
+    };
   }, []);
   const unlockWallet = reactExports.useCallback(async (password) => {
     if (!password) throw new Error("Password is required");
@@ -16366,10 +16337,12 @@ function useWallet() {
     return wallet.addresses[idx] || wallet.addresses[0];
   }, []);
   const activeAddress = activeWallet ? getActiveAddress(activeWallet) : null;
-  const createWallet = reactExports.useCallback(async (mnemonic, name = null, password = null) => {
+  const createWallet = reactExports.useCallback(async (mnemonic, name = null, password = null, derivationIndex = 0) => {
+    logger$1.log(`[createWallet] Starting: name=${name}, derivationIndex=${derivationIndex}`);
     const hasEncryption = Boolean(encryptionPassword) || localStorage.getItem(ENCRYPTION_ENABLED_KEY) === "true";
     if (!hasEncryption) {
       if (password && wallets.length === 0) {
+        logger$1.log("[createWallet] Enabling encryption for first wallet");
         await enableEncryption(password);
       } else {
         throw new Error("Please set a password before creating a wallet. Your wallet data must be encrypted.");
@@ -16377,13 +16350,32 @@ function useWallet() {
     }
     const effectivePassword = password || encryptionPassword;
     try {
-      const keypair = await mnemonicToKeypair(mnemonic, 0);
+      const keypair = await mnemonicToKeypair(mnemonic, derivationIndex);
       const publicKey = encodeBase58(keypair.publicKey);
       const privateKey = encodeBase58(keypair.secretKey);
-      let currentWallets = wallets;
+      logger$1.log(`[createWallet] Derived publicKey: ${publicKey.slice(0, 8)}...`);
+      let currentWallets = [];
       const savedData = localStorage.getItem(STORAGE_KEY);
-      if (!savedData || savedData === "[]" || savedData === "null") {
-        currentWallets = [];
+      logger$1.log(`[createWallet] Storage data exists: ${!!savedData}, encrypted: ${savedData ? isEncrypted(savedData) : "N/A"}`);
+      if (savedData && savedData !== "[]" && savedData !== "null") {
+        if (isEncrypted(savedData)) {
+          try {
+            const decrypted = await decryptData(savedData, effectivePassword);
+            currentWallets = JSON.parse(decrypted);
+            logger$1.log(`[createWallet] Decrypted ${currentWallets.length} existing wallets from storage`);
+          } catch (e) {
+            logger$1.error("[createWallet] Failed to decrypt existing wallets:", e);
+            currentWallets = wallets;
+            logger$1.log(`[createWallet] Falling back to React state: ${currentWallets.length} wallets`);
+          }
+        } else {
+          try {
+            currentWallets = JSON.parse(savedData);
+            logger$1.log(`[createWallet] Loaded ${currentWallets.length} unencrypted wallets`);
+          } catch (e) {
+            currentWallets = [];
+          }
+        }
       }
       if (currentWallets.length > 0) {
         const existingWallet = currentWallets.find(
@@ -16393,18 +16385,21 @@ function useWallet() {
           }
         );
         if (existingWallet) {
+          logger$1.log(`[createWallet] Wallet already exists: ${existingWallet.name}`);
           throw new Error("This wallet has already been imported");
         }
       }
       const walletName = name || "My Wallet";
       const newWallet = {
-        id: Date.now().toString(),
+        id: Date.now().toString() + "_" + derivationIndex,
+        // Add derivationIndex to ensure unique IDs in batch
         name: walletName,
         mnemonic,
         type: "local",
+        derivationIndex,
         createdAt: (/* @__PURE__ */ new Date()).toISOString(),
         addresses: [{
-          index: 0,
+          index: derivationIndex,
           publicKey,
           privateKey,
           name: "Address 1"
@@ -16412,17 +16407,19 @@ function useWallet() {
         activeAddressIndex: 0
       };
       const newWallets = [...currentWallets, newWallet];
+      logger$1.log(`[createWallet] Saving ${newWallets.length} wallets (was ${currentWallets.length})`);
       await saveWallets(newWallets, effectivePassword);
       setActiveWalletId(newWallet.id);
       localStorage.setItem(ACTIVE_KEY, newWallet.id);
+      logger$1.log(`[createWallet] Successfully created wallet: ${walletName}`);
       return newWallet;
     } catch (e) {
-      logger$1.error("Failed to create wallet:", e);
+      logger$1.error("[createWallet] Failed to create wallet:", e);
       throw e;
     }
   }, [wallets, saveWallets, encryptionPassword, enableEncryption]);
-  const importWallet = reactExports.useCallback(async (mnemonic, name = null, password = null) => {
-    return createWallet(mnemonic, name, password);
+  const importWallet = reactExports.useCallback(async (mnemonic, name = null, password = null, derivationIndex = 0) => {
+    return createWallet(mnemonic, name, password, derivationIndex);
   }, [createWallet]);
   const addAddress = reactExports.useCallback(async (walletId, addressName = null) => {
     const wallet = wallets.find((w2) => w2.id === walletId);
@@ -16592,6 +16589,52 @@ function useWallet() {
       setTimeout(() => resolve(newWallet), 100);
     });
   }, [wallets, saveWallets, encryptionPassword, enableEncryption]);
+  const addWatchOnlyWallet = reactExports.useCallback(async (publicKey, name = "Watch Wallet", password = null) => {
+    const currentWallets = wallets.length > 0 ? wallets : [];
+    const existingWallet = currentWallets.find(
+      (w2) => {
+        var _a2;
+        return ((_a2 = w2.addresses) == null ? void 0 : _a2.some((a) => a.publicKey === publicKey)) || w2.publicKey === publicKey;
+      }
+    );
+    if (existingWallet) {
+      throw new Error(`This address is already being watched as "${existingWallet.name}"`);
+    }
+    const effectivePassword = password || encryptionPassword;
+    if (currentWallets.length > 0 && !effectivePassword) {
+      const isEncrypted2 = localStorage.getItem(ENCRYPTION_ENABLED_KEY) === "true";
+      if (isEncrypted2) {
+        throw new Error("Password required to add wallet to encrypted storage");
+      }
+    }
+    if (currentWallets.length === 0 && password) {
+      await enableEncryption(password);
+    }
+    const newWallet = {
+      id: Date.now().toString(),
+      name,
+      type: "watchonly",
+      isWatchOnly: true,
+      isHardware: false,
+      mnemonic: null,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+      addresses: [{
+        index: 0,
+        publicKey,
+        privateKey: null,
+        name: "Address 1"
+      }],
+      activeAddressIndex: 0
+    };
+    logger$1.log("Adding watch-only wallet:", newWallet.name);
+    const newWallets = [...currentWallets, newWallet];
+    await saveWallets(newWallets, effectivePassword);
+    localStorage.setItem(ACTIVE_KEY, newWallet.id);
+    setActiveWalletId(newWallet.id);
+    return new Promise((resolve) => {
+      setTimeout(() => resolve(newWallet), 100);
+    });
+  }, [wallets, saveWallets, encryptionPassword, enableEncryption]);
   const switchWallet = reactExports.useCallback((walletId) => {
     setActiveWalletId(walletId);
     localStorage.setItem(ACTIVE_KEY, walletId);
@@ -16600,11 +16643,16 @@ function useWallet() {
     }
   }, []);
   const selectWallet = switchWallet;
+  const lastNotifiedPublicKey = reactExports.useRef(null);
   reactExports.useEffect(() => {
     if (!(activeAddress == null ? void 0 : activeAddress.publicKey)) return;
+    if (lastNotifiedPublicKey.current === activeAddress.publicKey) {
+      return;
+    }
     if (typeof window !== "undefined" && window.location.search.includes("request=")) {
       return;
     }
+    lastNotifiedPublicKey.current = activeAddress.publicKey;
     if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
       chrome.runtime.sendMessage({
         type: "account-changed",
@@ -16803,6 +16851,7 @@ function useWallet() {
     createWallet,
     importWallet,
     addHardwareWallet,
+    addWatchOnlyWallet,
     switchWallet,
     selectWallet,
     updateWallet,
@@ -17225,12 +17274,13 @@ function CreateWallet({ onComplete, onBack, passwordProtection: propPasswordProt
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "create-option", onClick: switchToCustom, children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "create-option-icon", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "24", height: "24", viewBox: "0 0 24 24", fill: "none", stroke: "var(--x1-blue)", strokeWidth: "2", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" })
+            /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("polyline", { points: "7 10 12 15 17 10" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "12", y1: "15", x2: "12", y2: "3" })
           ] }) }),
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "create-option-text", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "create-option-title", children: "Create Custom Phrase" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "create-option-desc", children: "Select words from BIP-39 wordlist" })
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "create-option-title", children: "Use Existing Phrase" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "create-option-desc", children: "Enter your existing seed phrase" })
           ] }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M9 18l6-6-6-6" }) })
         ] })
@@ -17302,11 +17352,11 @@ function CreateWallet({ onComplete, onBack, passwordProtection: propPasswordProt
   if (step === "custom") {
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen seed-container no-nav", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", onClick: () => setStep("choose"), style: { alignSelf: "flex-start", marginBottom: 16 }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "Custom Seed Phrase" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "Enter Your Seed Phrase" }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "seed-subtitle", children: [
-        "Enter ",
+        "Enter your existing ",
         seedLength,
-        " words from the BIP-39 wordlist"
+        "-word recovery phrase"
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "seed-length-selector", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -17607,21 +17657,45 @@ function CreateWallet({ onComplete, onBack, passwordProtection: propPasswordProt
   }
   return null;
 }
-function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPassword, existingWallets = [] }) {
-  const [importType, setImportType] = reactExports.useState("phrase");
+const DERIVATION_SCHEMES$1 = {
+  STANDARD: {
+    id: "standard",
+    name: "Standard (Phantom)",
+    description: "m/44'/501'/<account>'/0'",
+    getPath: (index) => `m/44'/501'/${index}'/0'`
+  },
+  LEGACY: {
+    id: "legacy",
+    name: "Legacy (Solflare)",
+    description: "m/44'/501'/<account>'",
+    getPath: (index) => `m/44'/501'/${index}'`
+  }
+};
+function ImportWallet({ onComplete, onBack, onCompletePrivateKey, onCompleteMultiple, onCompleteWatchOnly, sessionPassword, existingWallets = [], initialImportType = "phrase" }) {
+  const [importType, setImportType] = reactExports.useState(initialImportType);
   const [seedLength, setSeedLength] = reactExports.useState(12);
   const [words, setWords] = reactExports.useState(Array(12).fill(""));
+  const [watchAddress, setWatchAddress] = reactExports.useState("");
+  const [derivedAddresses, setDerivedAddresses] = reactExports.useState([]);
+  const [selectedAddresses, setSelectedAddresses] = reactExports.useState(/* @__PURE__ */ new Set());
+  const [loadingAddresses, setLoadingAddresses] = reactExports.useState(false);
+  const [addressBalances, setAddressBalances] = reactExports.useState({});
+  const [scanMode, setScanMode] = reactExports.useState("default");
+  const [isScanning, setIsScanning] = reactExports.useState(false);
   const getNextWalletNumber = () => {
-    let maxNumber = 0;
+    const usedNumbers = /* @__PURE__ */ new Set();
     existingWallets.forEach((w2) => {
       var _a2;
-      const match = (_a2 = w2.name) == null ? void 0 : _a2.match(/(\d+)\s*$/);
+      const match = (_a2 = w2.name) == null ? void 0 : _a2.match(/^Wallet\s+(\d+)$/i);
       if (match) {
-        const num = parseInt(match[1], 10);
-        if (num > maxNumber) maxNumber = num;
+        usedNumbers.add(parseInt(match[1], 10));
       }
     });
-    return Math.max(maxNumber, existingWallets.length) + 1;
+    let num = 1;
+    while (usedNumbers.has(num)) {
+      num++;
+    }
+    return num;
   };
   const nextWalletNumber = getNextWalletNumber();
   const suggestedName = `Wallet ${nextWalletNumber}`;
@@ -17631,6 +17705,7 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPasswor
   const [suggestions, setSuggestions] = reactExports.useState([]);
   const [activeInput, setActiveInput] = reactExports.useState(-1);
   const inputRefs = reactExports.useRef([]);
+  const [customPath, setCustomPath] = reactExports.useState("m/44'/501'/0'/0'");
   const [privateKeyInput, setPrivateKeyInput] = reactExports.useState("");
   const [password, setPassword] = reactExports.useState("");
   const [confirmPassword, setConfirmPassword] = reactExports.useState("");
@@ -17756,6 +17831,256 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPasswor
       setError("Invalid seed phrase checksum");
       return;
     }
+    setError("");
+    setStep("select-derivation");
+  };
+  const handleDerivationSelect = async (mode) => {
+    setScanMode(mode);
+    setLoadingAddresses(true);
+    setError("");
+    const phrase = words.join(" ");
+    try {
+      if (mode === "scan") {
+        await scanAllPaths(phrase);
+      } else if (mode === "custom") {
+        const addresses = [];
+        const { publicKey } = await mnemonicToKeypair(phrase, 0);
+        const address = encodeBase58(publicKey);
+        addresses.push({
+          index: 0,
+          accountIndex: 0,
+          publicKey: address,
+          path: customPath,
+          scheme: "custom",
+          uniqueKey: `custom-0`
+        });
+        setDerivedAddresses(addresses);
+        setSelectedAddresses(/* @__PURE__ */ new Set([0]));
+        fetchAddressBalances(addresses);
+      } else {
+        const addresses = [];
+        for (let i = 0; i < 5; i++) {
+          const { publicKey } = await mnemonicToKeypair(phrase, i);
+          const address = encodeBase58(publicKey);
+          addresses.push({
+            index: i,
+            accountIndex: i,
+            publicKey: address,
+            path: DERIVATION_SCHEMES$1.STANDARD.getPath(i),
+            scheme: "standard",
+            uniqueKey: `standard-${i}`
+          });
+        }
+        setDerivedAddresses(addresses);
+        setSelectedAddresses(/* @__PURE__ */ new Set());
+        fetchAddressBalances(addresses);
+      }
+      setStep("select-addresses");
+    } catch (err) {
+      logger$1.error("[ImportWallet] Failed to derive addresses:", err);
+      setError("Failed to derive addresses from seed phrase");
+    } finally {
+      setLoadingAddresses(false);
+    }
+  };
+  const scanAllPaths = async (phrase) => {
+    setIsScanning(true);
+    const allAddresses = [];
+    const seenPublicKeys = /* @__PURE__ */ new Set();
+    let network = localStorage.getItem("x1wallet_network");
+    if (network && network.startsWith('"')) {
+      try {
+        network = JSON.parse(network);
+      } catch (e) {
+      }
+    }
+    network = network || "X1 Mainnet";
+    const networkConfig = NETWORKS[network];
+    const checkBalance = async (publicKey) => {
+      var _a2;
+      if (!(networkConfig == null ? void 0 : networkConfig.rpcUrl)) return 0;
+      try {
+        const response = await fetch(networkConfig.rpcUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "getBalance",
+            params: [publicKey, { commitment: "confirmed" }]
+          })
+        });
+        if (!response.ok) return 0;
+        const data = await response.json();
+        return (((_a2 = data.result) == null ? void 0 : _a2.value) || 0) / Math.pow(10, networkConfig.decimals || 9);
+      } catch {
+        return 0;
+      }
+    };
+    const deriveStandard = async (index) => {
+      const { publicKey } = await mnemonicToKeypair(phrase, index);
+      return encodeBase58(publicKey);
+    };
+    const deriveLegacy = async (index) => {
+      try {
+        const { mnemonicToKeypairWithPath } = await __vitePreload(async () => {
+          const { mnemonicToKeypairWithPath: mnemonicToKeypairWithPath2 } = await Promise.resolve().then(() => bip44);
+          return { mnemonicToKeypairWithPath: mnemonicToKeypairWithPath2 };
+        }, true ? void 0 : void 0);
+        if (mnemonicToKeypairWithPath) {
+          const { publicKey } = await mnemonicToKeypairWithPath(phrase, DERIVATION_SCHEMES$1.LEGACY.getPath(index));
+          return encodeBase58(publicKey);
+        }
+      } catch {
+      }
+      return null;
+    };
+    const balances = {};
+    let globalIndex = 0;
+    let consecutiveEmpty = 0;
+    const MAX_EMPTY = 5;
+    const MAX_ACCOUNTS = 20;
+    logger$1.log("[ImportWallet] Scanning standard path...");
+    for (let i = 0; i < MAX_ACCOUNTS && consecutiveEmpty < MAX_EMPTY; i++) {
+      try {
+        const publicKey = await deriveStandard(i);
+        if (seenPublicKeys.has(publicKey)) continue;
+        seenPublicKeys.add(publicKey);
+        const balance = await checkBalance(publicKey);
+        const uniqueKey = `standard-${i}`;
+        const addrEntry = {
+          index: globalIndex,
+          accountIndex: i,
+          publicKey,
+          path: DERIVATION_SCHEMES$1.STANDARD.getPath(i),
+          scheme: "standard",
+          schemeName: DERIVATION_SCHEMES$1.STANDARD.name,
+          uniqueKey,
+          balance
+          // Store balance on address entry for sorting
+        };
+        allAddresses.push(addrEntry);
+        balances[uniqueKey] = balance;
+        globalIndex++;
+        if (balance > 0) {
+          consecutiveEmpty = 0;
+        } else {
+          consecutiveEmpty++;
+        }
+      } catch (err) {
+        logger$1.warn("[ImportWallet] Error deriving standard path:", i, err);
+        break;
+      }
+    }
+    logger$1.log("[ImportWallet] Scanning legacy path...");
+    consecutiveEmpty = 0;
+    for (let i = 0; i < MAX_ACCOUNTS && consecutiveEmpty < MAX_EMPTY; i++) {
+      try {
+        const publicKey = await deriveLegacy(i);
+        if (!publicKey || seenPublicKeys.has(publicKey)) {
+          if (i === 0) break;
+          continue;
+        }
+        seenPublicKeys.add(publicKey);
+        const balance = await checkBalance(publicKey);
+        const uniqueKey = `legacy-${i}`;
+        const addrEntry = {
+          index: globalIndex,
+          accountIndex: i,
+          publicKey,
+          path: DERIVATION_SCHEMES$1.LEGACY.getPath(i),
+          scheme: "legacy",
+          schemeName: DERIVATION_SCHEMES$1.LEGACY.name,
+          uniqueKey,
+          balance
+          // Store balance on address entry for sorting
+        };
+        allAddresses.push(addrEntry);
+        balances[uniqueKey] = balance;
+        globalIndex++;
+        if (balance > 0) {
+          consecutiveEmpty = 0;
+        } else {
+          consecutiveEmpty++;
+        }
+      } catch (err) {
+        logger$1.warn("[ImportWallet] Error deriving legacy path:", i, err);
+        break;
+      }
+    }
+    allAddresses.sort((a, b) => {
+      const balA = a.balance || 0;
+      const balB = b.balance || 0;
+      if (balA > 0 && balB === 0) return -1;
+      if (balB > 0 && balA === 0) return 1;
+      if (a.scheme !== b.scheme) return a.scheme === "standard" ? -1 : 1;
+      return a.accountIndex - b.accountIndex;
+    });
+    const finalBalances = {};
+    const autoSelect = /* @__PURE__ */ new Set();
+    allAddresses.forEach((addr, idx) => {
+      addr.index = idx;
+      finalBalances[idx] = balances[addr.uniqueKey] || 0;
+      if (finalBalances[idx] > 0) {
+        autoSelect.add(idx);
+      }
+    });
+    setDerivedAddresses(allAddresses);
+    setAddressBalances(finalBalances);
+    setSelectedAddresses(autoSelect);
+    setIsScanning(false);
+  };
+  const fetchAddressBalances = async (addresses) => {
+    var _a2;
+    let network = localStorage.getItem("x1wallet_network");
+    if (network && network.startsWith('"')) {
+      try {
+        network = JSON.parse(network);
+      } catch (e) {
+      }
+    }
+    network = network || "X1 Mainnet";
+    const networkConfig = NETWORKS[network];
+    if (!networkConfig || !networkConfig.rpcUrl) return;
+    const balances = {};
+    for (const addr of addresses) {
+      try {
+        const response = await fetch(networkConfig.rpcUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "getBalance",
+            params: [addr.publicKey, { commitment: "confirmed" }]
+          })
+        });
+        if (!response.ok) continue;
+        const data = await response.json();
+        if (((_a2 = data.result) == null ? void 0 : _a2.value) !== void 0) {
+          balances[addr.index] = data.result.value / Math.pow(10, networkConfig.decimals || 9);
+        }
+      } catch (e) {
+      }
+    }
+    setAddressBalances((prev) => ({ ...prev, ...balances }));
+  };
+  const toggleAddressSelection = (index) => {
+    setSelectedAddresses((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) {
+        if (next.size > 1) next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return next;
+    });
+  };
+  const handleAddressSelectionContinue = () => {
+    if (selectedAddresses.size === 0) {
+      setError("Please select at least one address");
+      return;
+    }
     setStep("name");
   };
   const validatePassword = (pwd) => {
@@ -17778,8 +18103,19 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPasswor
     return null;
   };
   const handleNameContinue = async () => {
+    const completionData = {
+      mnemonic: words.join(" "),
+      walletName: walletName || suggestedName,
+      selectedAddresses: Array.from(selectedAddresses).sort((a, b) => a - b),
+      derivedAddresses: derivedAddresses.filter((a) => selectedAddresses.has(a.index))
+    };
     if (!passwordRequired) {
-      onComplete(words.join(" "), walletName || suggestedName, null);
+      if (onCompleteMultiple && completionData.selectedAddresses.length > 1) {
+        onCompleteMultiple(completionData.mnemonic, completionData.walletName, null, completionData.derivedAddresses);
+      } else {
+        const firstAddr = completionData.derivedAddresses[0];
+        onComplete(completionData.mnemonic, completionData.walletName, null, (firstAddr == null ? void 0 : firstAddr.index) || 0);
+      }
       return;
     }
     if (sessionPassword) {
@@ -17790,7 +18126,12 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPasswor
         }, true ? [] : void 0);
         const isValid = await checkPassword(sessionPassword);
         if (isValid) {
-          onComplete(words.join(" "), walletName || suggestedName, sessionPassword);
+          if (onCompleteMultiple && completionData.selectedAddresses.length > 1) {
+            onCompleteMultiple(completionData.mnemonic, completionData.walletName, sessionPassword, completionData.derivedAddresses);
+          } else {
+            const firstAddr = completionData.derivedAddresses[0];
+            onComplete(completionData.mnemonic, completionData.walletName, sessionPassword, (firstAddr == null ? void 0 : firstAddr.index) || 0);
+          }
           return;
         }
       } catch (e) {
@@ -17824,7 +18165,13 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPasswor
         setVerifying(false);
         return;
       }
-      onComplete(words.join(" "), walletName || suggestedName, password);
+      const selectedAddrsArray = derivedAddresses.filter((a) => selectedAddresses.has(a.index));
+      if (onCompleteMultiple && selectedAddrsArray.length > 1) {
+        onCompleteMultiple(words.join(" "), walletName || suggestedName, password, selectedAddrsArray);
+      } else {
+        const firstAddr = selectedAddrsArray[0];
+        onComplete(words.join(" "), walletName || suggestedName, password, (firstAddr == null ? void 0 : firstAddr.index) || 0);
+      }
     } catch (err) {
       logger$1.error("Password verification error:", err);
       logger$1.log("[ImportWallet] Verification failed, falling back to password creation");
@@ -17844,7 +18191,13 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPasswor
       setError("Passwords do not match");
       return;
     }
-    onComplete(words.join(" "), walletName || suggestedName, password);
+    const selectedAddrsArray = derivedAddresses.filter((a) => selectedAddresses.has(a.index));
+    if (onCompleteMultiple && selectedAddrsArray.length > 1) {
+      onCompleteMultiple(words.join(" "), walletName || suggestedName, password, selectedAddrsArray);
+    } else {
+      const firstAddr = selectedAddrsArray[0];
+      onComplete(words.join(" "), walletName || suggestedName, password, (firstAddr == null ? void 0 : firstAddr.index) || 0);
+    }
   };
   const handlePrivateKeyImport = async () => {
     setError("");
@@ -17899,8 +18252,8 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPasswor
         publicKey = keyBytes.slice(32);
       }
       const { encodeBase58: encodeBase582 } = await __vitePreload(async () => {
-        const { encodeBase58: encodeBase583 } = await Promise.resolve().then(() => base58);
-        return { encodeBase58: encodeBase583 };
+        const { encodeBase58: encodeBase5822 } = await Promise.resolve().then(() => base58);
+        return { encodeBase58: encodeBase5822 };
       }, true ? void 0 : void 0);
       const privateKeyBase58 = encodeBase582(secretKey);
       setPrivateKeyInput(privateKeyBase58);
@@ -17971,8 +18324,8 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPasswor
     try {
       const trimmedInput = privateKeyInput.trim();
       const { decodeBase58: decodeBase582, encodeBase58: encodeBase582 } = await __vitePreload(async () => {
-        const { decodeBase58: decodeBase583, encodeBase58: encodeBase583 } = await Promise.resolve().then(() => base58);
-        return { decodeBase58: decodeBase583, encodeBase58: encodeBase583 };
+        const { decodeBase58: decodeBase583, encodeBase58: encodeBase5822 } = await Promise.resolve().then(() => base58);
+        return { decodeBase58: decodeBase583, encodeBase58: encodeBase5822 };
       }, true ? void 0 : void 0);
       let keyBytes;
       if (trimmedInput.startsWith("[")) {
@@ -18021,8 +18374,8 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPasswor
     try {
       const trimmedKey = privateKeyInput.trim();
       const { decodeBase58: decodeBase582, encodeBase58: encodeBase582 } = await __vitePreload(async () => {
-        const { decodeBase58: decodeBase583, encodeBase58: encodeBase583 } = await Promise.resolve().then(() => base58);
-        return { decodeBase58: decodeBase583, encodeBase58: encodeBase583 };
+        const { decodeBase58: decodeBase583, encodeBase58: encodeBase5822 } = await Promise.resolve().then(() => base58);
+        return { decodeBase58: decodeBase583, encodeBase58: encodeBase5822 };
       }, true ? void 0 : void 0);
       const decoded = decodeBase582(trimmedKey);
       let secretKey = decoded;
@@ -18051,15 +18404,342 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPasswor
       setError("Failed to complete import: " + err.message);
     }
   };
+  const loadMoreAddresses = async () => {
+    if (scanMode === "scan") return;
+    setLoadingAddresses(true);
+    try {
+      const phrase = words.join(" ");
+      const standardAddresses = derivedAddresses.filter((a) => a.scheme === "standard");
+      const maxIndex = standardAddresses.length > 0 ? Math.max(...standardAddresses.map((a) => a.accountIndex ?? a.index)) : -1;
+      const startIndex = maxIndex + 1;
+      const newAddresses = [];
+      for (let i = startIndex; i < startIndex + 5; i++) {
+        const { publicKey } = await mnemonicToKeypair(phrase, i);
+        const address = encodeBase58(publicKey);
+        newAddresses.push({
+          index: derivedAddresses.length + (i - startIndex),
+          accountIndex: i,
+          publicKey: address,
+          path: DERIVATION_SCHEMES$1.STANDARD.getPath(i),
+          scheme: "standard",
+          uniqueKey: `standard-${i}`
+        });
+      }
+      setDerivedAddresses((prev) => [...prev, ...newAddresses]);
+      fetchAddressBalances(newAddresses);
+    } catch (err) {
+      logger$1.error("[ImportWallet] Failed to load more addresses:", err);
+    } finally {
+      setLoadingAddresses(false);
+    }
+  };
+  if (step === "select-derivation") {
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen hardware-screen no-nav", style: { display: "flex", flexDirection: "column", height: "100%" }, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", onClick: () => setStep("import"), style: { alignSelf: "flex-start", flexShrink: 0 }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { style: { marginBottom: 8, textAlign: "center", flexShrink: 0 }, children: "Select Derivation Path" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { style: { margin: "0 0 24px 0", fontSize: 14, color: "var(--text-muted)", textAlign: "center", flexShrink: 0 }, children: "Choose how to set up your wallet" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: 12, flex: "1 1 auto" }, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "button",
+          {
+            onClick: () => handleDerivationSelect("default"),
+            disabled: loadingAddresses,
+            style: {
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-start",
+              gap: 4,
+              padding: 16,
+              background: "var(--bg-secondary)",
+              border: "1px solid var(--border-color)",
+              borderRadius: 12,
+              cursor: loadingAddresses ? "not-allowed" : "pointer",
+              textAlign: "left",
+              position: "relative"
+            },
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: {
+                position: "absolute",
+                top: 12,
+                right: 12,
+                fontSize: 10,
+                fontWeight: 600,
+                color: "#fff",
+                background: "var(--x1-blue)",
+                padding: "3px 8px",
+                borderRadius: 4,
+                textTransform: "uppercase"
+              }, children: "Recommended" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }, children: "Default" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 13, color: "var(--text-muted)" }, children: "Extended derivation path for most wallets" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 12, color: "var(--text-muted)", fontFamily: "monospace", marginTop: 4 }, children: "m/44'/501'/{account}'/0'" })
+            ]
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "button",
+          {
+            onClick: () => handleDerivationSelect("scan"),
+            disabled: loadingAddresses,
+            style: {
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-start",
+              gap: 4,
+              padding: 16,
+              background: "var(--bg-secondary)",
+              border: "1px solid var(--border-color)",
+              borderRadius: 12,
+              cursor: loadingAddresses ? "not-allowed" : "pointer",
+              textAlign: "left"
+            },
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }, children: "Scan to Find" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 13, color: "var(--text-muted)" }, children: "Search Solflare, deprecated, and legacy paths for existing accounts" })
+            ]
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "button",
+          {
+            onClick: () => {
+              const path = prompt("Enter derivation path:", customPath);
+              if (path) {
+                setCustomPath(path);
+                handleDerivationSelect("custom");
+              }
+            },
+            disabled: loadingAddresses,
+            style: {
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-start",
+              gap: 4,
+              padding: 16,
+              background: "var(--bg-secondary)",
+              border: "1px solid var(--border-color)",
+              borderRadius: 12,
+              cursor: loadingAddresses ? "not-allowed" : "pointer",
+              textAlign: "left"
+            },
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }, children: "Custom Path" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 13, color: "var(--text-muted)" }, children: "Enter a specific path (e.g., m/44'/501'/0'/0')" })
+            ]
+          }
+        )
+      ] }),
+      loadingAddresses && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+        padding: 16,
+        color: "var(--text-muted)",
+        fontSize: 13
+      }, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: {
+          width: 16,
+          height: 16,
+          border: "2px solid var(--border-color)",
+          borderTopColor: "var(--x1-blue)",
+          borderRadius: "50%",
+          animation: "spin 1s linear infinite"
+        } }),
+        scanMode === "scan" ? "Scanning for accounts..." : "Loading accounts..."
+      ] }),
+      error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", style: { marginTop: 12 }, children: error })
+    ] });
+  }
+  if (step === "select-addresses") {
+    let network = localStorage.getItem("x1wallet_network");
+    if (network && network.startsWith('"')) {
+      try {
+        network = JSON.parse(network);
+      } catch (e) {
+      }
+    }
+    network = network || "X1 Mainnet";
+    const networkConfig = NETWORKS[network];
+    const symbol = (networkConfig == null ? void 0 : networkConfig.symbol) || "XNT";
+    const isAlreadyImported = (publicKey) => {
+      return existingWallets.some(
+        (w2) => {
+          var _a2;
+          return w2.publicKey === publicKey || ((_a2 = w2.addresses) == null ? void 0 : _a2.some((a) => a.publicKey === publicKey));
+        }
+      );
+    };
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen hardware-screen no-nav", style: { display: "flex", flexDirection: "column", height: "100%" }, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", onClick: () => setStep("select-derivation"), style: { alignSelf: "flex-start", flexShrink: 0 }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { style: { marginBottom: 6, textAlign: "left", flexShrink: 0 }, children: "Select Accounts" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { style: { margin: "0 0 8px 0", fontSize: 14, color: "var(--text-muted)", flexShrink: 0 }, children: scanMode === "scan" ? "Accounts found across all derivation paths" : "Choose accounts to import" }),
+      selectedAddresses.size > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { style: { margin: "0 0 12px 0", fontSize: 13, color: "var(--x1-blue)", flexShrink: 0 }, children: [
+        selectedAddresses.size,
+        " account",
+        selectedAddresses.size > 1 ? "s" : "",
+        " selected"
+      ] }),
+      isScanning && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+        padding: "12px",
+        background: "var(--bg-secondary)",
+        borderRadius: 8,
+        marginBottom: 12,
+        color: "var(--text-muted)",
+        fontSize: 13
+      }, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: {
+          width: 16,
+          height: 16,
+          border: "2px solid var(--border-color)",
+          borderTopColor: "var(--x1-blue)",
+          borderRadius: "50%",
+          animation: "spin 1s linear infinite"
+        } }),
+        "Scanning paths for accounts with balances..."
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        flex: "1 1 auto",
+        overflowY: "auto",
+        minHeight: 0,
+        paddingRight: 4,
+        marginBottom: 12
+      }, children: [
+        derivedAddresses.map((addr) => {
+          const alreadyImported = isAlreadyImported(addr.publicKey);
+          const isSelected = selectedAddresses.has(addr.index);
+          const balance = addressBalances[addr.index] ?? addressBalances[addr.accountIndex];
+          return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "div",
+            {
+              onClick: () => !alreadyImported && toggleAddressSelection(addr.index),
+              style: {
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "8px 10px",
+                background: alreadyImported ? "var(--bg-tertiary)" : isSelected ? "rgba(2, 116, 251, 0.1)" : "var(--bg-secondary)",
+                border: isSelected ? "1px solid var(--x1-blue)" : "1px solid var(--border-color)",
+                borderRadius: 8,
+                cursor: alreadyImported ? "not-allowed" : "pointer",
+                opacity: alreadyImported ? 0.5 : 1,
+                transition: "all 0.15s ease",
+                flexShrink: 0
+              },
+              children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: {
+                  width: 28,
+                  height: 28,
+                  borderRadius: 6,
+                  background: "var(--bg-tertiary)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0
+                }, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "var(--text-muted)", strokeWidth: "2", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M4 6v12c0 1.1.9 2 2 2h14v-4" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M18 12a2 2 0 0 0-2 2c0 1.1.9 2 2 2h4v-4h-4z" })
+                ] }) }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center" }, children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 6 }, children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { style: { fontWeight: 600, fontSize: 13, color: "var(--text-primary)" }, children: [
+                        "Account ",
+                        (addr.accountIndex ?? addr.index) + 1
+                      ] }),
+                      addr.schemeName && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: {
+                        fontSize: 9,
+                        color: addr.scheme === "legacy" ? "#ffc107" : "var(--x1-blue)",
+                        background: addr.scheme === "legacy" ? "rgba(255, 193, 7, 0.1)" : "rgba(2, 116, 251, 0.1)",
+                        padding: "1px 4px",
+                        borderRadius: 3
+                      }, children: addr.scheme === "legacy" ? "Legacy" : "Standard" })
+                    ] }),
+                    alreadyImported && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: {
+                      fontSize: 9,
+                      color: "var(--text-muted)",
+                      background: "var(--bg-secondary)",
+                      padding: "1px 4px",
+                      borderRadius: 3
+                    }, children: "Added" })
+                  ] }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: {
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginTop: 1
+                  }, children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { style: { fontSize: 11, color: "var(--text-muted)", fontFamily: "monospace" }, children: [
+                      addr.publicKey.slice(0, 5),
+                      "...",
+                      addr.publicKey.slice(-5)
+                    ] }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: {
+                      fontSize: 11,
+                      color: balance > 0 ? "var(--success)" : "var(--text-muted)",
+                      fontWeight: balance > 0 ? 600 : 400
+                    }, children: balance !== void 0 ? `${balance.toFixed(4)} ${symbol}` : "..." })
+                  ] })
+                ] }),
+                isSelected && !alreadyImported && /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "var(--x1-blue)", strokeWidth: "3", children: /* @__PURE__ */ jsxRuntimeExports.jsx("polyline", { points: "20 6 9 17 4 12" }) })
+              ]
+            },
+            addr.uniqueKey || addr.index
+          );
+        }),
+        scanMode !== "scan" && /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            onClick: loadMoreAddresses,
+            disabled: loadingAddresses,
+            style: {
+              padding: "6px",
+              background: "transparent",
+              border: "1px dashed var(--border-color)",
+              borderRadius: 6,
+              color: "var(--text-muted)",
+              fontSize: 12,
+              cursor: loadingAddresses ? "not-allowed" : "pointer",
+              flexShrink: 0
+            },
+            children: loadingAddresses ? "Loading..." : "+ Load More"
+          }
+        )
+      ] }),
+      error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", style: { marginBottom: 12, flexShrink: 0 }, children: error }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { flexShrink: 0, paddingBottom: 16 }, children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "button",
+        {
+          className: "btn-primary",
+          type: "button",
+          onClick: handleAddressSelectionContinue,
+          disabled: selectedAddresses.size === 0,
+          style: { width: "100%" },
+          children: [
+            "Continue",
+            selectedAddresses.size > 0 ? ` with ${selectedAddresses.size} Account${selectedAddresses.size > 1 ? "s" : ""}` : ""
+          ]
+        }
+      ) })
+    ] });
+  }
   if (step === "name") {
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen no-nav", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "page-header", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-left", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", type: "button", onClick: () => setStep("import"), children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-left", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", type: "button", onClick: () => setStep("select-addresses"), children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }) }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "header-title", children: "Name Your Wallet" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-right" })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen-content seed-container", style: { paddingTop: 0 }, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "seed-subtitle", children: "Give your imported wallet a name" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "seed-subtitle", children: selectedAddresses.size > 1 ? `Name for ${selectedAddresses.size} wallets (will be numbered)` : "Give your imported wallet a name" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "form-group", style: { marginTop: 24 }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "text", className: "form-input", value: walletName, onChange: (e) => setWalletName(e.target.value), onKeyDown: (e) => e.key === "Enter" && handleNameContinue(), placeholder: suggestedName, autoFocus: true }) }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", type: "button", onClick: handleNameContinue, style: { marginTop: 24 }, children: "Continue" })
       ] })
@@ -18517,7 +19197,7 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPasswor
             },
             children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" }) }),
-              "Private Key / Bytes"
+              "Private Key"
             ]
           }
         )
@@ -18587,6 +19267,76 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey, sessionPasswor
         ] }),
         error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", style: { marginTop: 16 }, children: error }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", type: "button", onClick: handlePrivateKeyImport, style: { marginTop: 20 }, children: "Continue" })
+      ] }),
+      importType === "watchonly" && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "info-box", style: { marginTop: 16, marginBottom: 16 }, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "👁️" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Watch-only wallets let you monitor an address without being able to send from it." })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "form-group", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("label", { children: "Public Address" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              type: "text",
+              className: "form-input",
+              placeholder: "Enter Solana/X1 address to watch",
+              value: watchAddress,
+              onChange: (e) => {
+                setWatchAddress(e.target.value);
+                setError("");
+              },
+              autoFocus: true
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "form-group", style: { marginTop: 16 }, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("label", { children: "Name (optional)" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              type: "text",
+              className: "form-input",
+              placeholder: suggestedName,
+              value: walletName,
+              onChange: (e) => setWalletName(e.target.value)
+            }
+          )
+        ] }),
+        error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", style: { marginTop: 16 }, children: error }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            className: "btn-primary",
+            type: "button",
+            onClick: () => {
+              if (!watchAddress.trim()) {
+                setError("Please enter an address to watch");
+                return;
+              }
+              const addr = watchAddress.trim();
+              if (addr.length < 32 || addr.length > 44) {
+                setError("Invalid address format");
+                return;
+              }
+              if (!/^[1-9A-HJ-NP-Za-km-z]+$/.test(addr)) {
+                setError("Address contains invalid characters");
+                return;
+              }
+              if (onCompleteWatchOnly) {
+                onCompleteWatchOnly({
+                  publicKey: addr,
+                  name: walletName || suggestedName,
+                  type: "watchonly"
+                });
+              } else {
+                setError("Watch-only wallets are not supported yet");
+              }
+            },
+            style: { marginTop: 20 },
+            children: "Add Watch-Only Wallet"
+          }
+        )
       ] })
     ] })
   ] });
@@ -21130,6 +21880,27 @@ function HardwareWallet({ onComplete, onBack, isFirstWallet = false, existingWal
     }
   );
   const isAlreadyImported = (address) => existingAddresses.includes(address);
+  const getAvailableAccountNumbers = (deviceType2, count) => {
+    var _a2;
+    const prefix = deviceType2 === "trezor" ? "Trezor" : "Ledger";
+    const regex = new RegExp(`^${prefix}\\s+Account\\s+(\\d+)$`, "i");
+    const usedNumbers = /* @__PURE__ */ new Set();
+    for (const wallet of existingWallets) {
+      const match = (_a2 = wallet.name) == null ? void 0 : _a2.match(regex);
+      if (match) {
+        usedNumbers.add(parseInt(match[1], 10));
+      }
+    }
+    const available = [];
+    let num = 1;
+    while (available.length < count) {
+      if (!usedNumbers.has(num)) {
+        available.push(num);
+      }
+      num++;
+    }
+    return available;
+  };
   const fetchBalances = async (accountList) => {
     var _a2;
     if (!accountList || accountList.length === 0) return;
@@ -21260,15 +22031,39 @@ function HardwareWallet({ onComplete, onBack, isFirstWallet = false, existingWal
     }
   };
   const loadMoreAccounts = async () => {
+    var _a2, _b2;
     setLoadingMore(true);
     setError("");
     try {
       const wallet = getWallet();
       const newAccounts = await wallet.getAccountsForScheme(selectedScheme, loadedCount, 5);
       if (newAccounts.length > 0) {
-        setAccounts([...accounts, ...newAccounts]);
-        setLoadedCount(loadedCount + newAccounts.length);
-        fetchBalances(newAccounts);
+        const prefix = deviceType === "trezor" ? "Trezor" : "Ledger";
+        const regex = new RegExp(`^${prefix}\\s+Account\\s+(\\d+)$`, "i");
+        const usedNumbers = /* @__PURE__ */ new Set();
+        for (const w2 of existingWallets) {
+          const match = (_a2 = w2.name) == null ? void 0 : _a2.match(regex);
+          if (match) usedNumbers.add(parseInt(match[1], 10));
+        }
+        for (const acc of accounts) {
+          const match = (_b2 = acc.label) == null ? void 0 : _b2.match(/Account\s+(\d+)/i);
+          if (match) usedNumbers.add(parseInt(match[1], 10));
+        }
+        const availableNumbers = [];
+        let num = 1;
+        while (availableNumbers.length < newAccounts.length) {
+          if (!usedNumbers.has(num)) {
+            availableNumbers.push(num);
+          }
+          num++;
+        }
+        const relabeledNewAccounts = newAccounts.map((account, idx) => ({
+          ...account,
+          label: `Account ${availableNumbers[idx]}`
+        }));
+        setAccounts([...accounts, ...relabeledNewAccounts]);
+        setLoadedCount(loadedCount + relabeledNewAccounts.length);
+        fetchBalances(relabeledNewAccounts);
       }
     } catch (err) {
       setError(err.message || "Failed to load more accounts");
@@ -21570,13 +22365,18 @@ ${address}`);
         if (accountList.length === 0) {
           throw new Error(`No accounts found. Make sure ${deviceType === HW_TYPES.TREZOR ? "Trezor is unlocked" : "the Solana app is open on your Ledger"}.`);
         }
-        setAccounts(accountList);
-        setLoadedCount(accountList.length);
+        const availableNumbers = getAvailableAccountNumbers(deviceType, accountList.length);
+        const relabeledAccounts = accountList.map((account, idx) => ({
+          ...account,
+          label: `Account ${availableNumbers[idx]}`
+        }));
+        setAccounts(relabeledAccounts);
+        setLoadedCount(relabeledAccounts.length);
         setSelectedScheme(DERIVATION_SCHEMES.DEFAULT);
         setSelectedAccounts([]);
         setLoading(false);
         setStep("account");
-        fetchBalances(accountList);
+        fetchBalances(relabeledAccounts);
       } catch (err) {
         setError(err.message || "Failed to get accounts");
         setLoading(false);
@@ -21590,7 +22390,6 @@ ${address}`);
         const wallet = getWallet();
         const allAccounts = [];
         const seenAddresses = /* @__PURE__ */ new Set();
-        let accountNum = 1;
         for (const scheme of Object.values(DERIVATION_SCHEMES)) {
           setStatus(`Scanning ${scheme.name}...`);
           try {
@@ -21598,11 +22397,7 @@ ${address}`);
             for (const account of schemeAccounts) {
               if (!seenAddresses.has(account.address)) {
                 seenAddresses.add(account.address);
-                allAccounts.push({
-                  ...account,
-                  label: `Account ${accountNum}`
-                });
-                accountNum++;
+                allAccounts.push(account);
               }
             }
           } catch (e) {
@@ -21612,12 +22407,17 @@ ${address}`);
         if (allAccounts.length === 0) {
           throw new Error("No accounts found on any path.");
         }
-        setAccounts(allAccounts);
-        setLoadedCount(allAccounts.length);
+        const availableNumbers = getAvailableAccountNumbers(deviceType, allAccounts.length);
+        const relabeledAccounts = allAccounts.map((account, idx) => ({
+          ...account,
+          label: `Account ${availableNumbers[idx]}`
+        }));
+        setAccounts(relabeledAccounts);
+        setLoadedCount(relabeledAccounts.length);
         setSelectedAccounts([]);
         setLoading(false);
         setStep("account");
-        fetchBalances(allAccounts);
+        fetchBalances(relabeledAccounts);
       } catch (err) {
         setError(err.message || "Failed to scan paths");
         setLoading(false);
@@ -23740,6 +24540,26 @@ function WalletPanel({ wallets, activeId, network, onSelect, onManage, onClose, 
   const [dragOverId, setDragOverId] = reactExports.useState(null);
   const [balances, setBalances] = reactExports.useState({});
   const [loadingBalances, setLoadingBalances] = reactExports.useState(true);
+  const [hiddenWallets, setHiddenWallets] = reactExports.useState(() => {
+    try {
+      const stored = localStorage.getItem("x1wallet_hidden_wallets");
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [showHidden, setShowHidden] = reactExports.useState(false);
+  const toggleWalletVisibility = (e, walletId) => {
+    e.stopPropagation();
+    if (walletId === activeId && !hiddenWallets.includes(walletId)) {
+      return;
+    }
+    const newHidden = hiddenWallets.includes(walletId) ? hiddenWallets.filter((id2) => id2 !== walletId) : [...hiddenWallets, walletId];
+    setHiddenWallets(newHidden);
+    localStorage.setItem("x1wallet_hidden_wallets", JSON.stringify(newHidden));
+  };
+  const visibleWallets = showHidden ? wallets : wallets.filter((w2) => !hiddenWallets.includes(w2.id));
+  const hiddenCount = wallets.filter((w2) => hiddenWallets.includes(w2.id)).length;
   reactExports.useEffect(() => {
     let isMounted = true;
     const fetchBalances = async () => {
@@ -23857,74 +24677,144 @@ function WalletPanel({ wallets, activeId, network, onSelect, onManage, onClose, 
       /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "slide-panel-title", children: "Select Wallet" }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { width: 32 } })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "slide-panel-content", children: wallets.map((w2) => {
-      var _a2, _b2;
-      const activeAddr = getActiveAddress(w2);
-      const hasImage = isImage(w2.avatar);
-      return /* @__PURE__ */ jsxRuntimeExports.jsxs(
-        "div",
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "slide-panel-content", children: [
+      hiddenCount > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "button",
         {
-          className: `wallet-panel-item ${activeId === w2.id ? "active" : ""} ${dragOverId === w2.id ? "drag-over" : ""}`,
-          onClick: () => {
-            onSelect(w2.id);
-            onClose();
+          onClick: () => setShowHidden(!showHidden),
+          style: {
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "8px 12px",
+            marginBottom: 8,
+            background: "var(--bg-tertiary)",
+            border: "1px solid var(--border-color)",
+            borderRadius: 8,
+            color: "var(--text-muted)",
+            fontSize: 12,
+            cursor: "pointer",
+            width: "100%"
           },
-          draggable: true,
-          onDragStart: (e) => handleDragStart(e, w2.id),
-          onDragEnd: handleDragEnd,
-          onDragOver: (e) => handleDragOver(e, w2.id),
-          onDragLeave: handleDragLeave,
-          onDrop: (e) => handleDrop(e, w2.id),
           children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "wallet-item-avatar", children: hasImage ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: w2.avatar, alt: w2.name }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "wallet-avatar-initials", children: w2.isHardware ? "L" : ((_b2 = (_a2 = w2.name) == null ? void 0 : _a2.charAt(0)) == null ? void 0 : _b2.toUpperCase()) || "W" }) }),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wallet-item-info", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wallet-item-row1", style: { display: "flex", alignItems: "center", gap: 6 }, children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "wallet-item-name", children: w2.name }),
-                activeId === w2.id && /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "var(--x1-blue)", strokeWidth: "3", children: /* @__PURE__ */ jsxRuntimeExports.jsx("polyline", { points: "20 6 9 17 4 12" }) }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: {
-                  fontSize: 12,
-                  fontWeight: 600,
-                  color: balances[w2.id] > 0 ? "var(--success)" : "var(--text-muted)",
-                  marginLeft: "auto"
-                }, children: loadingBalances ? "..." : `${formatBalance2(balances[w2.id])} ${tokenSymbol}` })
-              ] }),
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wallet-item-row2", style: { display: "flex", alignItems: "center", gap: 4 }, children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "wallet-item-address", children: formatAddress(activeAddr.publicKey) }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx(
-                  "button",
-                  {
-                    className: "wallet-item-copy",
-                    onClick: (e) => copyAddress(e, w2.id, activeAddr.publicKey),
-                    children: copiedId === w2.id ? /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "var(--success)", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("polyline", { points: "20 6 9 17 4 12" }) }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
-                      /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "9", y: "9", width: "13", height: "13", rx: "2", ry: "2" }),
-                      /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" })
-                    ] })
-                  }
-                )
-              ] })
-            ] }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "button",
-              {
-                className: "wallet-item-edit",
-                onClick: (e) => {
-                  e.stopPropagation();
-                  onClose();
-                  onEditWallet(w2);
-                },
-                title: "Edit wallet",
-                style: { alignSelf: "flex-start", marginTop: 2 },
-                children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" })
-                ] })
-              }
-            )
+            /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: showHidden ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "3" })
+            ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "1", y1: "1", x2: "23", y2: "23" })
+            ] }) }),
+            showHidden ? "Hide" : "Show",
+            " hidden wallets (",
+            hiddenCount,
+            ")"
           ]
-        },
-        w2.id
-      );
-    }) }),
+        }
+      ),
+      visibleWallets.map((w2) => {
+        var _a2, _b2;
+        const activeAddr = getActiveAddress(w2);
+        const hasImage = isImage(w2.avatar);
+        const isHidden = hiddenWallets.includes(w2.id);
+        return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "div",
+          {
+            className: `wallet-panel-item ${activeId === w2.id ? "active" : ""} ${dragOverId === w2.id ? "drag-over" : ""}`,
+            onClick: () => {
+              onSelect(w2.id);
+              onClose();
+            },
+            draggable: !isHidden,
+            onDragStart: (e) => handleDragStart(e, w2.id),
+            onDragEnd: handleDragEnd,
+            onDragOver: (e) => handleDragOver(e, w2.id),
+            onDragLeave: handleDragLeave,
+            onDrop: (e) => handleDrop(e, w2.id),
+            style: { opacity: isHidden ? 0.5 : 1 },
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "wallet-item-avatar", children: hasImage ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: w2.avatar, alt: w2.name }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "wallet-avatar-initials", children: w2.isHardware ? "L" : ((_b2 = (_a2 = w2.name) == null ? void 0 : _a2.charAt(0)) == null ? void 0 : _b2.toUpperCase()) || "W" }) }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wallet-item-info", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wallet-item-row1", style: { display: "flex", alignItems: "center", gap: 6 }, children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    "span",
+                    {
+                      className: "wallet-item-name",
+                      style: {
+                        color: w2.type === "watchonly" || w2.isWatchOnly ? "#ffc107" : void 0
+                      },
+                      children: w2.name
+                    }
+                  ),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    "button",
+                    {
+                      className: `wallet-hide-btn ${isHidden ? "is-hidden" : ""} ${w2.id === activeId && !isHidden ? "is-active" : ""}`,
+                      onClick: (e) => toggleWalletVisibility(e, w2.id),
+                      title: w2.id === activeId && !isHidden ? "Can't hide active wallet" : isHidden ? "Show wallet" : "Hide wallet",
+                      style: {
+                        background: "none",
+                        border: "none",
+                        padding: 2,
+                        cursor: w2.id === activeId && !isHidden ? "not-allowed" : "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        pointerEvents: w2.id === activeId && !isHidden ? "none" : "auto"
+                      },
+                      children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: isHidden ? "var(--text-muted)" : "var(--text-secondary)", strokeWidth: "2", children: isHidden ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                        /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" }),
+                        /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "1", y1: "1", x2: "23", y2: "23" })
+                      ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                        /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" }),
+                        /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "3" })
+                      ] }) })
+                    }
+                  ),
+                  activeId === w2.id && /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "var(--x1-blue)", strokeWidth: "3", children: /* @__PURE__ */ jsxRuntimeExports.jsx("polyline", { points: "20 6 9 17 4 12" }) }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: {
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: balances[w2.id] > 0 ? "var(--success)" : "var(--text-muted)",
+                    marginLeft: "auto"
+                  }, children: loadingBalances ? "..." : `${formatBalance2(balances[w2.id])} ${tokenSymbol}` })
+                ] }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wallet-item-row2", style: { display: "flex", alignItems: "center", gap: 4 }, children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "wallet-item-address", children: formatAddress(activeAddr.publicKey) }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    "button",
+                    {
+                      className: "wallet-item-copy",
+                      onClick: (e) => copyAddress(e, w2.id, activeAddr.publicKey),
+                      children: copiedId === w2.id ? /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "var(--success)", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("polyline", { points: "20 6 9 17 4 12" }) }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
+                        /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "9", y: "9", width: "13", height: "13", rx: "2", ry: "2" }),
+                        /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" })
+                      ] })
+                    }
+                  )
+                ] })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "button",
+                {
+                  className: "wallet-item-edit",
+                  onClick: (e) => {
+                    e.stopPropagation();
+                    onClose();
+                    onEditWallet(w2);
+                  },
+                  title: "Edit wallet",
+                  style: { alignSelf: "flex-start", marginTop: 2 },
+                  children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" })
+                  ] })
+                }
+              )
+            ]
+          },
+          w2.id
+        );
+      })
+    ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "slide-panel-footer", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "panel-action-btn full-width", onClick: () => {
       onClose();
       onShowAddWallet();
@@ -23937,7 +24827,7 @@ function WalletPanel({ wallets, activeId, network, onSelect, onManage, onClose, 
     ] }) })
   ] }) });
 }
-function AddWalletPanel({ onClose, onCreateNew, onImport, onHardware }) {
+function AddWalletPanel({ onClose, onCreateNew, onImport, onHardware, onWatchOnly }) {
   return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "slide-panel-overlay", onClick: onClose, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "slide-panel", onClick: (e) => e.stopPropagation(), children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "slide-panel-header", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", onClick: onClose, children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }),
@@ -23985,6 +24875,22 @@ function AddWalletPanel({ onClose, onCreateNew, onImport, onHardware }) {
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "add-wallet-text", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "add-wallet-title", children: "Hardware Wallet" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "add-wallet-desc", children: "Connect Ledger or Trezor" })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M9 18l6-6-6-6" }) })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "add-wallet-option", onClick: () => {
+        onClose();
+        onWatchOnly && onWatchOnly();
+      }, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "add-wallet-icon", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "24", height: "24", viewBox: "0 0 24 24", fill: "none", stroke: "var(--x1-blue)", strokeWidth: "2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("polyline", { points: "14 2 14 8 20 8" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "16", y1: "13", x2: "8", y2: "13" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "16", y1: "17", x2: "8", y2: "17" })
+        ] }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "add-wallet-text", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "add-wallet-title", children: "Watch-Only" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "add-wallet-desc", children: "Monitor any address (read only)" })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M9 18l6-6-6-6" }) })
       ] })
@@ -24150,7 +25056,7 @@ function EditWalletPanel({ walletData, onSave, onClose, onRemove }) {
     privateKey: walletData.privateKey,
     name: "Address 1"
   }];
-  const hasMnemonic = !walletData.isPrivateKeyOnly && !walletData.isHardware && walletData.type !== "privatekey";
+  const hasMnemonic = !walletData.isPrivateKeyOnly && !walletData.isHardware && walletData.type !== "privatekey" && walletData.type !== "watchonly" && !walletData.isWatchOnly;
   const primaryAddress = ((_a2 = addresses[0]) == null ? void 0 : _a2.publicKey) || "";
   const privateKey = ((_b2 = addresses[0]) == null ? void 0 : _b2.privateKey) || "";
   const isImage = avatar && avatar.startsWith("data:image");
@@ -24771,8 +25677,8 @@ function BrowserScreen({ wallet, onBack }) {
     ] })
   ] });
 }
-function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, onSend, onReceive, onSwap, onBridge, onStake, onSettings, onCreateWallet, onImportWallet, onHardwareWallet, activityRefreshKey: externalRefreshKey = 0, balanceRefreshKey = 0, onTokenClick }) {
-  var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
+function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, onSend, onReceive, onSwap, onBridge, onStake, onSettings, onCreateWallet, onImportWallet, onHardwareWallet, onWatchOnly, activityRefreshKey: externalRefreshKey = 0, balanceRefreshKey = 0, onTokenClick, onWalletSwitch }) {
+  var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H, _I, _J, _K, _L, _M, _N, _O, _P, _Q, _R, _S, _T, _U, _V;
   const [activeTab, setActiveTab] = reactExports.useState("tokens");
   const [bottomNav, setBottomNav] = reactExports.useState("assets");
   const [showNetworkPanel, setShowNetworkPanel] = reactExports.useState(false);
@@ -24818,6 +25724,33 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
   const [tokenRefreshKey, setTokenRefreshKey] = reactExports.useState(0);
   const [prevBalanceRefreshKey, setPrevBalanceRefreshKey] = reactExports.useState(0);
   const lastManualRefresh = reactExports.useRef(0);
+  const [currency, setCurrency] = reactExports.useState(() => {
+    try {
+      const saved = localStorage.getItem("x1wallet_currency");
+      return saved ? JSON.parse(saved) : "USD";
+    } catch {
+      return "USD";
+    }
+  });
+  reactExports.useEffect(() => {
+    const checkCurrency = () => {
+      try {
+        const saved = localStorage.getItem("x1wallet_currency");
+        const newCurrency = saved ? JSON.parse(saved) : "USD";
+        if (newCurrency !== currency) {
+          setCurrency(newCurrency);
+        }
+      } catch {
+      }
+    };
+    checkCurrency();
+    window.addEventListener("focus", checkCurrency);
+    window.addEventListener("storage", checkCurrency);
+    return () => {
+      window.removeEventListener("focus", checkCurrency);
+      window.removeEventListener("storage", checkCurrency);
+    };
+  }, [currency]);
   const currentWalletRef = reactExports.useRef((_a2 = wallet.wallet) == null ? void 0 : _a2.publicKey);
   const currentNetworkRef = reactExports.useRef(wallet.network);
   reactExports.useEffect(() => {
@@ -24872,11 +25805,57 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
   const nativeUsdValue = displayBalance * nativePrice;
   const totalPortfolioUsd = tokensUsdValue + nativeUsdValue;
   logger$1.log("[Portfolio] Total USD:", totalPortfolioUsd, "tokens:", tokensUsdValue, "native:", nativeUsdValue);
-  const formatUsd = (value) => {
-    if (value === null || value === void 0 || isNaN(value)) return "$0.00";
-    if (value === 0) return "$0.00";
-    if (value < 0.01) return "<$0.01";
-    return "$" + value.toLocaleString(void 0, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const nativeSymbol = isSolana ? "SOL" : "XNT";
+  const isNativeCurrency = currency === "NATIVE";
+  const currencyInfo = {
+    // NATIVE - uses network's native token (XNT for X1, SOL for Solana)
+    NATIVE: { symbol: nativeSymbol, position: "after", rate: null, isNative: true },
+    // Fiat currencies with USD exchange rates
+    USD: { symbol: "$", position: "before", rate: 1 },
+    EUR: { symbol: "€", position: "before", rate: 0.92 },
+    GBP: { symbol: "£", position: "before", rate: 0.79 },
+    PLN: { symbol: "zł", position: "after", rate: 4.02 },
+    JPY: { symbol: "¥", position: "before", rate: 149.5 },
+    CAD: { symbol: "C$", position: "before", rate: 1.36 },
+    AUD: { symbol: "A$", position: "before", rate: 1.53 },
+    CNY: { symbol: "¥", position: "before", rate: 7.24 },
+    KRW: { symbol: "₩", position: "before", rate: 1320 }
+  };
+  const formatCurrency = (usdValue) => {
+    const info = currencyInfo[currency] || currencyInfo.USD;
+    if (info.isNative) {
+      const nativeAmount = usdValue / nativePrice;
+      if (nativeAmount === 0 || isNaN(nativeAmount)) return `0 ${nativeSymbol}`;
+      if (nativeAmount < 1e-4) return `<0.0001 ${nativeSymbol}`;
+      const formatted2 = nativeAmount.toLocaleString(void 0, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 4
+      });
+      return `${formatted2} ${nativeSymbol}`;
+    }
+    if (usdValue === null || usdValue === void 0 || isNaN(usdValue)) {
+      return info.position === "after" ? "0.00 " + info.symbol : info.symbol + "0.00";
+    }
+    if (usdValue === 0) {
+      return info.position === "after" ? "0.00 " + info.symbol : info.symbol + "0.00";
+    }
+    const convertedValue = usdValue * (info.rate || 1);
+    const decimals = currency === "JPY" || currency === "KRW" ? 0 : 2;
+    const formatted = convertedValue.toLocaleString(void 0, {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals
+    });
+    if (convertedValue < 0.01 && decimals > 0) {
+      return info.position === "after" ? "<0.01 " + info.symbol : "<" + info.symbol + "0.01";
+    }
+    return info.position === "after" ? formatted + " " + info.symbol : info.symbol + formatted;
+  };
+  const formatUsd = formatCurrency;
+  const formatFiat = (usdValue) => {
+    if (usdValue === null || usdValue === void 0 || isNaN(usdValue)) return "$0.00";
+    if (usdValue === 0) return "$0.00";
+    if (usdValue < 0.01) return "<$0.01";
+    return "$" + usdValue.toLocaleString(void 0, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
   const formatBalance2 = (balance, maxDecimals = 6) => {
     if (balance === 0 || balance === null || balance === void 0) return "0";
@@ -25208,29 +26187,132 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
         }
       ) })
     ] }),
+    (((_n = wallet.wallet) == null ? void 0 : _n.type) === "watchonly" || ((_o = wallet.wallet) == null ? void 0 : _o.isWatchOnly)) && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 6,
+      padding: "6px 12px",
+      background: "rgba(255, 193, 7, 0.1)",
+      borderBottom: "1px solid rgba(255, 193, 7, 0.2)",
+      color: "#ffc107",
+      fontSize: 12,
+      fontWeight: 500
+    }, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "3" })
+      ] }),
+      "Watch-only · View balances and activity"
+    ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "tabs", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: `tab ${activeTab === "tokens" ? "active" : ""}`, onClick: () => setActiveTab("tokens"), children: "Tokens" }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: `tab ${activeTab === "defi" ? "active" : ""}`, onClick: () => setActiveTab("defi"), children: "DeFi" }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: `tab ${activeTab === "nfts" ? "active" : ""}`, onClick: () => setActiveTab("nfts"), children: "NFTs" }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: `tab ${activeTab === "activity" ? "active" : ""}`, onClick: () => setActiveTab("activity"), children: "Activity" })
     ] }),
-    activeTab === "tokens" && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "balance-section", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "balance-row", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "balance-amount", children: formatUsd(totalPortfolioUsd) }) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "balance-usd", children: [
-        formatBalance2(displayBalance),
-        " ",
-        networkConfig.symbol
+    activeTab === "tokens" && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "balance-section", children: isNativeCurrency ? (
+      /* Native token selected - show native balance as primary */
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "balance-row", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "balance-amount", children: [
+          formatBalance2(displayBalance),
+          " ",
+          networkConfig.symbol
+        ] }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "balance-usd", children: formatFiat(totalPortfolioUsd) })
       ] })
-    ] }),
+    ) : (
+      /* Fiat currency selected - show fiat as primary */
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "balance-row", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "balance-amount", children: formatCurrency(totalPortfolioUsd) }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "balance-usd", children: [
+          formatBalance2(displayBalance),
+          " ",
+          networkConfig.symbol
+        ] })
+      ] })
+    ) }),
     activeTab === "tokens" && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "action-buttons", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "action-btn", onClick: onReceive, title: "Receive", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "action-icon-sleek receive", children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "24", height: "24", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M12 5v14M5 12l7 7 7-7" }) }) }) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "action-btn", onClick: () => onSend(null), title: "Send", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "action-icon-sleek send", children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "24", height: "24", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M12 19V5M5 12l7-7 7 7" }) }) }) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "action-btn", onClick: onSwap, title: "Swap", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "action-icon-sleek swap", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "24", height: "24", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M17 2l4 4-4 4" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M3 11V9a4 4 0 0 1 4-4h14" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7 22l-4-4 4-4" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M21 13v2a4 4 0 0 1-4 4H3" })
-      ] }) }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          className: "action-btn",
+          onClick: () => {
+            var _a3, _b3;
+            if (((_a3 = wallet.wallet) == null ? void 0 : _a3.type) === "watchonly" || ((_b3 = wallet.wallet) == null ? void 0 : _b3.isWatchOnly)) {
+              return;
+            }
+            onSend(null);
+          },
+          title: ((_p = wallet.wallet) == null ? void 0 : _p.type) === "watchonly" || ((_q = wallet.wallet) == null ? void 0 : _q.isWatchOnly) ? "Watch-only wallet cannot send" : "Send",
+          style: {
+            opacity: ((_r = wallet.wallet) == null ? void 0 : _r.type) === "watchonly" || ((_s = wallet.wallet) == null ? void 0 : _s.isWatchOnly) ? 0.4 : 1,
+            cursor: ((_t = wallet.wallet) == null ? void 0 : _t.type) === "watchonly" || ((_u = wallet.wallet) == null ? void 0 : _u.isWatchOnly) ? "not-allowed" : "pointer"
+          },
+          children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "action-icon-sleek send", style: { position: "relative" }, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "24", height: "24", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M12 19V5M5 12l7-7 7 7" }) }),
+            (((_v = wallet.wallet) == null ? void 0 : _v.type) === "watchonly" || ((_w = wallet.wallet) == null ? void 0 : _w.isWatchOnly)) && /* @__PURE__ */ jsxRuntimeExports.jsxs(
+              "svg",
+              {
+                width: "12",
+                height: "12",
+                viewBox: "0 0 24 24",
+                fill: "none",
+                stroke: "var(--text-muted)",
+                strokeWidth: "2.5",
+                style: { position: "absolute", bottom: -2, right: -2, background: "var(--bg-primary)", borderRadius: 4, padding: 1 },
+                children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "3", y: "11", width: "18", height: "11", rx: "2", ry: "2" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7 11V7a5 5 0 0 1 10 0v4" })
+                ]
+              }
+            )
+          ] })
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          className: "action-btn",
+          onClick: () => {
+            var _a3, _b3;
+            if (((_a3 = wallet.wallet) == null ? void 0 : _a3.type) === "watchonly" || ((_b3 = wallet.wallet) == null ? void 0 : _b3.isWatchOnly)) {
+              return;
+            }
+            onSwap();
+          },
+          title: ((_x = wallet.wallet) == null ? void 0 : _x.type) === "watchonly" || ((_y = wallet.wallet) == null ? void 0 : _y.isWatchOnly) ? "Watch-only wallet cannot swap" : "Swap",
+          style: {
+            opacity: ((_z = wallet.wallet) == null ? void 0 : _z.type) === "watchonly" || ((_A = wallet.wallet) == null ? void 0 : _A.isWatchOnly) ? 0.4 : 1,
+            cursor: ((_B = wallet.wallet) == null ? void 0 : _B.type) === "watchonly" || ((_C = wallet.wallet) == null ? void 0 : _C.isWatchOnly) ? "not-allowed" : "pointer"
+          },
+          children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "action-icon-sleek swap", style: { position: "relative" }, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "24", height: "24", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M17 2l4 4-4 4" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M3 11V9a4 4 0 0 1 4-4h14" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7 22l-4-4 4-4" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M21 13v2a4 4 0 0 1-4 4H3" })
+            ] }),
+            (((_D = wallet.wallet) == null ? void 0 : _D.type) === "watchonly" || ((_E = wallet.wallet) == null ? void 0 : _E.isWatchOnly)) && /* @__PURE__ */ jsxRuntimeExports.jsxs(
+              "svg",
+              {
+                width: "12",
+                height: "12",
+                viewBox: "0 0 24 24",
+                fill: "none",
+                stroke: "var(--text-muted)",
+                strokeWidth: "2.5",
+                style: { position: "absolute", bottom: -2, right: -2, background: "var(--bg-primary)", borderRadius: 4, padding: 1 },
+                children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "3", y: "11", width: "18", height: "11", rx: "2", ry: "2" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7 11V7a5 5 0 0 1 10 0v4" })
+                ]
+              }
+            )
+          ] })
+        }
+      ),
       /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "action-btn", onClick: () => setShowMoreMenu(true), title: "More", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "action-icon-sleek more", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "24", height: "24", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "1.5" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "19", cy: "12", r: "1.5" }),
@@ -25238,35 +26320,97 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
       ] }) }) })
     ] }),
     showMoreMenu && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "slide-panel-overlay", onClick: () => setShowMoreMenu(false), children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "slide-panel small", onClick: (e) => e.stopPropagation(), children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "slide-panel-content", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "more-menu-item", onClick: () => {
-        setShowMoreMenu(false);
-        onBridge();
-      }, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "more-menu-icon bridge", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "4", y1: "22", x2: "4", y2: "15" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "20", y1: "22", x2: "20", y2: "15" })
-        ] }) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "more-menu-info", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "more-menu-title", children: "Bridge" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "more-menu-desc", children: "Transfer across chains" })
-        ] })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "more-menu-item", onClick: () => {
-        logger$1.log("[WalletMain] Stake clicked");
-        setShowMoreMenu(false);
-        onStake();
-      }, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "more-menu-icon stake", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M12 2L2 7l10 5 10-5-10-5z" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 17l10 5 10-5" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 12l10 5 10-5" })
-        ] }) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "more-menu-info", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "more-menu-title", children: "Stake" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "more-menu-desc", children: "Earn rewards on your tokens" })
-        ] })
-      ] })
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "div",
+        {
+          className: "more-menu-item",
+          onClick: () => {
+            var _a3, _b3;
+            if (((_a3 = wallet.wallet) == null ? void 0 : _a3.type) === "watchonly" || ((_b3 = wallet.wallet) == null ? void 0 : _b3.isWatchOnly)) return;
+            setShowMoreMenu(false);
+            onBridge();
+          },
+          style: {
+            opacity: ((_F = wallet.wallet) == null ? void 0 : _F.type) === "watchonly" || ((_G = wallet.wallet) == null ? void 0 : _G.isWatchOnly) ? 0.4 : 1,
+            cursor: ((_H = wallet.wallet) == null ? void 0 : _H.type) === "watchonly" || ((_I = wallet.wallet) == null ? void 0 : _I.isWatchOnly) ? "not-allowed" : "pointer"
+          },
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "more-menu-icon bridge", style: { position: "relative" }, children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "4", y1: "22", x2: "4", y2: "15" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "20", y1: "22", x2: "20", y2: "15" })
+              ] }),
+              (((_J = wallet.wallet) == null ? void 0 : _J.type) === "watchonly" || ((_K = wallet.wallet) == null ? void 0 : _K.isWatchOnly)) && /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                "svg",
+                {
+                  width: "10",
+                  height: "10",
+                  viewBox: "0 0 24 24",
+                  fill: "none",
+                  stroke: "var(--text-muted)",
+                  strokeWidth: "2.5",
+                  style: { position: "absolute", bottom: -2, right: -2, background: "var(--bg-secondary)", borderRadius: 3 },
+                  children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "3", y: "11", width: "18", height: "11", rx: "2", ry: "2" }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7 11V7a5 5 0 0 1 10 0v4" })
+                  ]
+                }
+              )
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "more-menu-info", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "more-menu-title", children: "Bridge" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "more-menu-desc", children: ((_L = wallet.wallet) == null ? void 0 : _L.type) === "watchonly" || ((_M = wallet.wallet) == null ? void 0 : _M.isWatchOnly) ? "Not available for watch-only" : "Transfer across chains" })
+            ] })
+          ]
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "div",
+        {
+          className: "more-menu-item",
+          onClick: () => {
+            var _a3, _b3;
+            if (((_a3 = wallet.wallet) == null ? void 0 : _a3.type) === "watchonly" || ((_b3 = wallet.wallet) == null ? void 0 : _b3.isWatchOnly)) return;
+            logger$1.log("[WalletMain] Stake clicked");
+            setShowMoreMenu(false);
+            onStake();
+          },
+          style: {
+            opacity: ((_N = wallet.wallet) == null ? void 0 : _N.type) === "watchonly" || ((_O = wallet.wallet) == null ? void 0 : _O.isWatchOnly) ? 0.4 : 1,
+            cursor: ((_P = wallet.wallet) == null ? void 0 : _P.type) === "watchonly" || ((_Q = wallet.wallet) == null ? void 0 : _Q.isWatchOnly) ? "not-allowed" : "pointer"
+          },
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "more-menu-icon stake", style: { position: "relative" }, children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M12 2L2 7l10 5 10-5-10-5z" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 17l10 5 10-5" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2 12l10 5 10-5" })
+              ] }),
+              (((_R = wallet.wallet) == null ? void 0 : _R.type) === "watchonly" || ((_S = wallet.wallet) == null ? void 0 : _S.isWatchOnly)) && /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                "svg",
+                {
+                  width: "10",
+                  height: "10",
+                  viewBox: "0 0 24 24",
+                  fill: "none",
+                  stroke: "var(--text-muted)",
+                  strokeWidth: "2.5",
+                  style: { position: "absolute", bottom: -2, right: -2, background: "var(--bg-secondary)", borderRadius: 3 },
+                  children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "3", y: "11", width: "18", height: "11", rx: "2", ry: "2" }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7 11V7a5 5 0 0 1 10 0v4" })
+                  ]
+                }
+              )
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "more-menu-info", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "more-menu-title", children: "Stake" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "more-menu-desc", children: ((_T = wallet.wallet) == null ? void 0 : _T.type) === "watchonly" || ((_U = wallet.wallet) == null ? void 0 : _U.isWatchOnly) ? "Not available for watch-only" : "Earn rewards on your tokens" })
+            ] })
+          ]
+        }
+      )
     ] }) }) }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "main-content", children: [
       activeTab === "tokens" && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "token-list", children: [
@@ -25474,7 +26618,7 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
       activeTab === "activity" && /* @__PURE__ */ jsxRuntimeExports.jsx(
         ActivityList,
         {
-          walletAddress: (_n = wallet.wallet) == null ? void 0 : _n.publicKey,
+          walletAddress: (_V = wallet.wallet) == null ? void 0 : _V.publicKey,
           network: wallet.network,
           networkConfig,
           refreshKey: activityRefreshKey
@@ -25496,7 +26640,12 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
         wallets: wallet.wallets,
         activeId: wallet.activeWalletId,
         network: wallet.network,
-        onSelect: wallet.switchWallet,
+        onSelect: (walletId) => {
+          setTokens([]);
+          setTokensLoading(true);
+          if (onWalletSwitch) onWalletSwitch();
+          wallet.switchWallet(walletId);
+        },
         onClose: () => setShowWalletPanel(false),
         onEditWallet: (w2) => setEditingWalletId(w2.id),
         onShowAddWallet: () => setShowAddWalletPanel(true),
@@ -25510,7 +26659,8 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
         onClose: () => setShowAddWalletPanel(false),
         onCreateNew: onCreateWallet,
         onImport: onImportWallet,
-        onHardware: onHardwareWallet
+        onHardware: onHardwareWallet,
+        onWatchOnly
       }
     ),
     editingWallet && /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -25739,6 +26889,9 @@ function WalletManager({ wallet, onBack, onCreateWallet, onImportWallet, onHardw
             /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "wallet-card-icon", children: w2.type === "ledger" ? /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "2", y: "6", width: "20", height: "12", rx: "2" }),
               /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M12 12h.01" })
+            ] }) : w2.type === "watchonly" || w2.isWatchOnly ? /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "var(--warning)", strokeWidth: "2", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "3" })
             ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4" }),
               /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M4 6v12c0 1.1.9 2 2 2h14v-4" }),
@@ -25759,7 +26912,8 @@ function WalletManager({ wallet, onBack, onCreateWallet, onImportWallet, onHardw
                 "...",
                 (_b2 = w2.publicKey) == null ? void 0 : _b2.slice(-6)
               ] }),
-              w2.type === "ledger" && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "wallet-badge", children: "Ledger" })
+              w2.type === "ledger" && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "wallet-badge", children: "Ledger" }),
+              (w2.type === "watchonly" || w2.isWatchOnly) && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "wallet-badge", style: { background: "rgba(255, 165, 2, 0.2)", color: "var(--warning)" }, children: "👁️ Watch Only" })
             ] }),
             wallet.activeWalletId === w2.id && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "wallet-active-badge", children: "Active" })
           ] }),
@@ -25924,6 +27078,38 @@ function SettingsScreen({ wallet, onBack, onLock, initialPasswordProtection, onP
   const [copied, setCopied] = reactExports.useState(false);
   const [showRemoveConfirm, setShowRemoveConfirm] = reactExports.useState(false);
   const [appVersion, setAppVersion] = reactExports.useState("0.0.0");
+  const [connectedSites, setConnectedSites] = reactExports.useState([]);
+  reactExports.useEffect(() => {
+    const loadConnectedSites = async () => {
+      try {
+        if (typeof chrome !== "undefined" && chrome.storage) {
+          const result = await chrome.storage.local.get("x1wallet_connected_sites");
+          const sites = result.x1wallet_connected_sites || {};
+          setConnectedSites(Object.entries(sites).map(([origin, data]) => ({
+            origin,
+            connectedAt: data.connectedAt,
+            publicKey: data.publicKey
+          })));
+        }
+      } catch (e) {
+        logger$1.error("[Settings] Error loading connected sites:", e);
+      }
+    };
+    loadConnectedSites();
+  }, [subScreen]);
+  const disconnectSite = async (origin) => {
+    try {
+      if (typeof chrome !== "undefined" && chrome.storage) {
+        const result = await chrome.storage.local.get("x1wallet_connected_sites");
+        const sites = result.x1wallet_connected_sites || {};
+        delete sites[origin];
+        await chrome.storage.local.set({ x1wallet_connected_sites: sites });
+        setConnectedSites((prev) => prev.filter((s) => s.origin !== origin));
+      }
+    } catch (e) {
+      logger$1.error("[Settings] Error disconnecting site:", e);
+    }
+  };
   reactExports.useEffect(() => {
     try {
       if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.getManifest) {
@@ -26204,10 +27390,15 @@ function SettingsScreen({ wallet, onBack, onLock, initialPasswordProtection, onP
     ] });
   }
   if (subScreen === "currency") {
-    const currencies = [
+    const currentNetwork2 = (wallet == null ? void 0 : wallet.network) || "X1 Mainnet";
+    const isSolana = currentNetwork2.includes("Solana");
+    const nativeSymbol = isSolana ? "SOL" : "XNT";
+    const isNativeSelected = currency === "NATIVE";
+    const fiatCurrencies = [
       { code: "USD", name: "US Dollar", symbol: "$" },
       { code: "EUR", name: "Euro", symbol: "€" },
       { code: "GBP", name: "British Pound", symbol: "£" },
+      { code: "PLN", name: "Polish Złoty", symbol: "zł" },
       { code: "JPY", name: "Japanese Yen", symbol: "¥" },
       { code: "CAD", name: "Canadian Dollar", symbol: "C$" },
       { code: "AUD", name: "Australian Dollar", symbol: "A$" },
@@ -26219,20 +27410,42 @@ function SettingsScreen({ wallet, onBack, onLock, initialPasswordProtection, onP
         /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", onClick: () => setSubScreen(null), children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "Currency" })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-content", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "radio-group", children: currencies.map((c) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `radio-option ${currency === c.code ? "selected" : ""}`, onClick: () => setCurrency(c.code), children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "radio-option-text", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
-            c.symbol,
-            " ",
-            c.code
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-content", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-section", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item", onClick: () => setCurrency(isNativeSelected ? "USD" : "NATIVE"), children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item-left", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "10" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M12 6v12M9 9h4.5a2.5 2.5 0 0 1 0 5H9" })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item-text", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Show Native Token" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "settings-item-desc", children: [
+                "Display balance in ",
+                nativeSymbol,
+                " as primary"
+              ] })
+            ] })
           ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { style: { fontSize: 12, color: "var(--text-muted)" }, children: [
-            " - ",
-            c.name
-          ] })
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "radio-option-check", children: currency === c.code && /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "white", strokeWidth: "3", children: /* @__PURE__ */ jsxRuntimeExports.jsx("polyline", { points: "20 6 9 17 4 12" }) }) })
-      ] }, c.code)) }) })
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `toggle ${isNativeSelected ? "active" : ""}`, children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "toggle-handle" }) })
+        ] }) }),
+        !isNativeSelected && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Fiat Currency" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "radio-group", children: fiatCurrencies.map((c) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `radio-option ${currency === c.code ? "selected" : ""}`, onClick: () => setCurrency(c.code), children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "radio-option-text", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+                c.symbol,
+                " ",
+                c.code
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { style: { fontSize: 12, color: "var(--text-muted)" }, children: [
+                " - ",
+                c.name
+              ] })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "radio-option-check", children: currency === c.code && /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "white", strokeWidth: "3", children: /* @__PURE__ */ jsxRuntimeExports.jsx("polyline", { points: "20 6 9 17 4 12" }) }) })
+          ] }, c.code)) })
+        ] })
+      ] })
     ] });
   }
   if (subScreen === "recovery") {
@@ -26922,119 +28135,6 @@ Address: ${publicKeyBase58.slice(0, 20)}...`);
       ] })
     ] });
   }
-  if (subScreen === "notifications") {
-    const requestPermission = async () => {
-      if (typeof Notification === "undefined") {
-        alert("Notifications are not supported in this browser.");
-        return;
-      }
-      try {
-        const permission = await Notification.requestPermission();
-        setNotifPermission(permission);
-        if (permission === "granted") {
-          setNotifications(true);
-          new Notification("X1 Wallet", {
-            body: "Notifications enabled successfully!",
-            icon: "/icons/icon128.png"
-          });
-        }
-      } catch (err) {
-        logger$1.error("Failed to request notification permission:", err);
-      }
-    };
-    const testNotification = () => {
-      if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-        new Notification("X1 Wallet", {
-          body: "This is a test notification.",
-          icon: "/icons/icon128.png"
-        });
-      }
-    };
-    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen settings-screen", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-header", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", onClick: () => setSubScreen(null), children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "Notifications" })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-content", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-section", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item", onClick: () => setNotifications(!notifications), children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item-left", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M13.73 21a2 2 0 0 1-3.46 0" })
-            ] }),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item-text", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Enable Notifications" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "settings-item-desc", children: "Receive alerts for transactions and updates" })
-            ] })
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `toggle ${notifications ? "active" : ""}`, children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "toggle-handle" }) })
-        ] }) }),
-        notifications && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Notification Types" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item", onClick: () => {
-            setTxAlerts(!txAlerts);
-            storage$1.set("txAlerts", !txAlerts);
-          }, children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item-left", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "12", y1: "1", x2: "12", y2: "23" }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" })
-              ] }),
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item-text", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Transaction Alerts" }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "settings-item-desc", children: "Incoming and outgoing transactions" })
-              ] })
-            ] }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `toggle ${txAlerts ? "active" : ""}`, children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "toggle-handle" }) })
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item", onClick: () => {
-            setPriceAlerts(!priceAlerts);
-            storage$1.set("priceAlerts", !priceAlerts);
-          }, children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item-left", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("polyline", { points: "22 12 18 12 15 21 9 3 6 12 2 12" }) }),
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item-text", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Price Alerts" }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "settings-item-desc", children: "Significant price changes" })
-              ] })
-            ] }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `toggle ${priceAlerts ? "active" : ""}`, children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "toggle-handle" }) })
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item", onClick: () => {
-            setSecurityAlerts(!securityAlerts);
-            storage$1.set("securityAlerts", !securityAlerts);
-          }, children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item-left", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "10" }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "12", y1: "8", x2: "12", y2: "12" }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "12", y1: "16", x2: "12.01", y2: "16" })
-              ] }),
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item-text", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Security Alerts" }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "settings-item-desc", children: "Login attempts and security events" })
-              ] })
-            ] }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `toggle ${securityAlerts ? "active" : ""}`, children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "toggle-handle" }) })
-          ] })
-        ] }),
-        typeof Notification !== "undefined" && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Browser Permission" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "permission-status", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `permission-badge ${notifPermission}`, children: notifPermission === "granted" ? "✓ Granted" : notifPermission === "denied" ? "✗ Denied" : "? Not Set" }) }),
-          notifPermission !== "granted" && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-primary", onClick: requestPermission, style: { marginTop: 12 }, children: "Enable Browser Notifications" }),
-          notifPermission === "granted" && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn-secondary", onClick: testNotification, style: { marginTop: 12 }, children: "Send Test Notification" }),
-          notifPermission === "denied" && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "info-box", style: { marginTop: 12 }, children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "none", stroke: "var(--x1-blue)", strokeWidth: "2", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "10" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "12", y1: "16", x2: "12", y2: "12" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "12", y1: "8", x2: "12.01", y2: "8" })
-            ] }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Notifications are blocked. Please enable them in your browser settings." })
-          ] })
-        ] })
-      ] })
-    ] });
-  }
   if (subScreen === "explorer") {
     const currentNetwork2 = (wallet == null ? void 0 : wallet.network) || "X1 Mainnet";
     const isSolana = currentNetwork2.includes("Solana");
@@ -27645,15 +28745,59 @@ Address: ${publicKeyBase58.slice(0, 20)}...`);
             /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "12", y1: "17", x2: "12.01", y2: "17" })
           ] }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Warning: Transactions won't be verified before sending. Failed transactions will still consume network fees." })
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item-info", children: [
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Connected Sites" }),
+        connectedSites.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item-info", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "var(--text-muted)", strokeWidth: "2", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "10" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "12", y1: "16", x2: "12", y2: "12" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "12", y1: "8", x2: "12.01", y2: "8" })
           ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Seed phrases and private keys are managed per-wallet. Click the wallet selector → Edit to access them." })
-        ] })
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "No sites connected. Connect to dApps to see them here." })
+        ] }) : connectedSites.map((site) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item connected-site-item", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item-left", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: {
+              width: 32,
+              height: 32,
+              borderRadius: 8,
+              background: "var(--bg-tertiary)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              marginRight: 8,
+              flexShrink: 0
+            }, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "var(--success)", strokeWidth: "2", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" })
+            ] }) }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { overflow: "hidden" }, children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { display: "block", fontWeight: 500 }, children: new URL(site.origin).hostname }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { style: { fontSize: 11, color: "var(--text-muted)" }, children: [
+                "Connected ",
+                site.connectedAt ? new Date(site.connectedAt).toLocaleDateString() : "recently"
+              ] })
+            ] })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              onClick: () => disconnectSite(site.origin),
+              style: {
+                background: "rgba(239, 68, 68, 0.1)",
+                border: "1px solid rgba(239, 68, 68, 0.3)",
+                borderRadius: 8,
+                padding: "6px 12px",
+                color: "var(--error)",
+                fontSize: 12,
+                fontWeight: 500,
+                cursor: "pointer"
+              },
+              children: "Disconnect"
+            }
+          )
+        ] }, site.origin))
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Preferences" }),
@@ -27664,19 +28808,6 @@ Address: ${publicKeyBase58.slice(0, 20)}...`);
           ] }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `toggle ${darkMode ? "active" : ""}`, children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "toggle-handle" }) })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item", onClick: () => setSubScreen("notifications"), children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item-left", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M13.73 21a2 2 0 0 1-3.46 0" })
-            ] }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Notifications" })
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item-right", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "settings-value", children: notifications ? "On" : "Off" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M9 18l6-6-6-6" }) })
-          ] })
-        ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item", onClick: () => setSubScreen("currency"), children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item-left", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
@@ -27686,7 +28817,7 @@ Address: ${publicKeyBase58.slice(0, 20)}...`);
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Currency" })
           ] }),
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item-right", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "settings-value", children: currency }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "settings-value", children: currency === "NATIVE" ? "Native" : currency }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M9 18l6-6-6-6" }) })
           ] })
         ] })
@@ -29571,6 +30702,23 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
         setQuoteTimestamp(Date.now());
         const outputAmount = ((_a3 = quoteData == null ? void 0 : quoteData.data) == null ? void 0 : _a3.outputAmount) || ((_b3 = quoteData == null ? void 0 : quoteData.data) == null ? void 0 : _b3.token_out_amount) || (quoteData == null ? void 0 : quoteData.outputAmount) || (quoteData == null ? void 0 : quoteData.token_out_amount) || (quoteData == null ? void 0 : quoteData.estimatedOutput) || (quoteData == null ? void 0 : quoteData.outAmount);
         logger$1.log("[Swap] Output amount:", outputAmount);
+        const parsedOutput = parseFloat(outputAmount);
+        if (outputAmount !== void 0 && outputAmount !== null && parsedOutput === 0) {
+          logger$1.warn("[Swap] Quote returned zero output - pool may have insufficient liquidity");
+          setError("Pool has insufficient liquidity for this swap. Try a smaller amount or different pair.");
+          setQuote(null);
+          if (inputMode === "from") setToAmount("");
+          else setFromAmount("");
+          return;
+        }
+        if (parsedOutput > 0 && parsedOutput < 1e-6) {
+          logger$1.warn("[Swap] Quote output is extremely small:", parsedOutput);
+          setError("Output amount is too small. Try increasing the input amount.");
+          setQuote(null);
+          if (inputMode === "from") setToAmount("");
+          else setFromAmount("");
+          return;
+        }
         if (outputAmount !== void 0 && outputAmount !== null) {
           if (inputMode === "from") {
             setToAmount(parseFloat(parseFloat(outputAmount).toFixed(4)).toString());
@@ -29660,8 +30808,17 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
     } else {
       rawMax = fromToken.balance || 0;
     }
-    const maxDecimals = 4;
+    const tokenDecimals = (fromToken == null ? void 0 : fromToken.decimals) || 9;
+    const maxDecimals = Math.min(tokenDecimals, 9);
     const maxAmount = Math.floor(rawMax * Math.pow(10, maxDecimals)) / Math.pow(10, maxDecimals);
+    logger$1.log("[Swap] setMaxAmount:", {
+      rawBalance: fromToken.balance,
+      walletBalance,
+      rawMax,
+      tokenDecimals,
+      maxDecimals,
+      maxAmount
+    });
     handleFromAmountChange(maxAmount.toString());
   };
   const handleAddToken = async () => {
@@ -30211,6 +31368,10 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
       let userMessage = (err == null ? void 0 : err.message) || getUserFriendlyError(err, ErrorMessages.swap.failed);
       if (userMessage.includes("429") || userMessage.includes("Too Many Requests") || userMessage.includes("rate limit")) {
         userMessage = "Too many requests. Please wait a few seconds and try again.";
+      } else if (userMessage.includes("output amount is zero") || userMessage.includes("Calculated output amount is zero") || userMessage.includes("too small for available liquidity") || userMessage.includes("insufficient liquidity")) {
+        userMessage = "Pool has insufficient liquidity for this swap amount. Try a smaller amount or a different token pair.";
+      } else if (userMessage.includes("very low liquidity")) {
+        userMessage = "This pool has very low liquidity. Try a much smaller amount or use a different trading pair.";
       } else if (userMessage.includes("Failed to create fee token account")) {
         userMessage = "Swap service temporarily unavailable. The XDEX API is experiencing issues with fee account creation. Please try again later or contact XDEX support.";
       } else if (userMessage.includes("insufficient lamports")) {
@@ -30555,6 +31716,7 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
       displayTokens = selectingToken === "from" ? fromTokenOptions.filter((t2) => t2.symbol !== (toToken == null ? void 0 : toToken.symbol)) : filteredTokens.filter((t2) => t2.symbol !== (fromToken == null ? void 0 : fromToken.symbol));
     }
     const handleSelectToken = (token) => {
+      var _a3;
       const isFromSearch = searchResults.find((t2) => t2.mint === token.mint);
       const existsInTokens = tokens$1.find((t2) => t2.mint === token.mint || t2.symbol === token.symbol);
       const existsInCustom = customTokens.find((t2) => t2.mint === token.mint || t2.symbol === token.symbol);
@@ -30581,6 +31743,14 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
         return t2.balance || 0;
       };
       const latestBalance = getLatestBalance(token);
+      logger$1.log("[Swap] handleSelectToken:", {
+        symbol: token.symbol,
+        mint: (_a3 = token.mint) == null ? void 0 : _a3.slice(0, 8),
+        tokenBalance: token.balance,
+        tokenUiAmount: token.uiAmount,
+        latestBalance,
+        selectingFor: selectingToken
+      });
       if (selectingToken === "from") {
         setFromToken({ ...token, balance: latestBalance });
       } else {
@@ -35103,6 +36273,117 @@ function AlertModal({ title, message, onClose, type = "error" }) {
       ` })
   ] });
 }
+function PasswordPromptModal({ title, message, onSubmit, onCancel }) {
+  const [password, setPassword] = reactExports.useState("");
+  const [showPassword, setShowPassword] = reactExports.useState(false);
+  const inputRef = React.useRef(null);
+  React.useEffect(() => {
+    if (inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, []);
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (password.trim()) {
+      onSubmit(password);
+    }
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "alert-modal-overlay", onClick: onCancel, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "alert-modal-content", onClick: (e) => e.stopPropagation(), children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "alert-modal-icon", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "48", height: "48", viewBox: "0 0 24 24", fill: "none", stroke: "var(--x1-blue)", strokeWidth: "2", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "3", y: "11", width: "18", height: "11", rx: "2", ry: "2" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7 11V7a5 5 0 0 1 10 0v4" })
+    ] }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "alert-modal-title", children: title || "Enter Password" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "alert-modal-message", children: message || "Please enter your wallet password to continue." }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("form", { onSubmit: handleSubmit, style: { width: "100%" }, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { position: "relative", marginBottom: 16 }, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "input",
+          {
+            ref: inputRef,
+            type: showPassword ? "text" : "password",
+            value: password,
+            onChange: (e) => setPassword(e.target.value),
+            placeholder: "Password",
+            className: "form-input",
+            style: {
+              width: "100%",
+              padding: "14px 44px 14px 16px",
+              fontSize: 15,
+              background: "var(--bg-primary)",
+              border: "1px solid var(--border-color)",
+              borderRadius: 12,
+              color: "var(--text-primary)",
+              outline: "none"
+            },
+            autoComplete: "current-password"
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            type: "button",
+            onClick: () => setShowPassword(!showPassword),
+            style: {
+              position: "absolute",
+              right: 12,
+              top: "50%",
+              transform: "translateY(-50%)",
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              padding: 4,
+              color: "var(--text-muted)"
+            },
+            children: showPassword ? /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "1", y1: "1", x2: "23", y2: "23" })
+            ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "3" })
+            ] })
+          }
+        )
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", gap: 12 }, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            type: "button",
+            onClick: onCancel,
+            style: {
+              flex: 1,
+              padding: "14px 24px",
+              fontSize: 15,
+              fontWeight: 600,
+              background: "var(--bg-tertiary)",
+              border: "1px solid var(--border-color)",
+              borderRadius: 12,
+              color: "var(--text-primary)",
+              cursor: "pointer"
+            },
+            children: "Cancel"
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            type: "submit",
+            className: "btn-primary",
+            style: {
+              flex: 1,
+              padding: "14px 24px",
+              fontSize: 15,
+              fontWeight: 600
+            },
+            disabled: !password.trim(),
+            children: "Confirm"
+          }
+        )
+      ] })
+    ] })
+  ] }) });
+}
 const applySavedTheme = () => {
   try {
     const saved = localStorage.getItem("x1wallet_darkMode");
@@ -35191,6 +36472,7 @@ function App() {
   console.log("[App] wallet.wallets:", (_a2 = wallet.wallets) == null ? void 0 : _a2.length, "wallet.loading:", wallet.loading, "wallet.isEncrypted:", wallet.isEncrypted);
   const [screen, setScreen] = reactExports.useState("loading");
   const [returnScreen, setReturnScreen] = reactExports.useState("main");
+  const [importInitialType, setImportInitialType] = reactExports.useState("phrase");
   const [isLocked, setIsLocked] = reactExports.useState(false);
   const [initialCheckDone, setInitialCheckDone] = reactExports.useState(false);
   const [selectedToken, setSelectedToken] = reactExports.useState(null);
@@ -35201,6 +36483,7 @@ function App() {
   const [dappRequiresReauth, setDappRequiresReauth] = reactExports.useState(false);
   const [currentRequestId, setCurrentRequestId] = reactExports.useState(null);
   const [alertModal, setAlertModal] = reactExports.useState({ show: false, title: "", message: "", type: "error" });
+  const [passwordPrompt, setPasswordPrompt] = reactExports.useState({ show: false, title: "", message: "", resolve: null });
   const lastActivityRef = reactExports.useRef(Date.now());
   const lockTimerRef = reactExports.useRef(null);
   const showAlert = reactExports.useCallback((message, title = "", type = "error") => {
@@ -35209,12 +36492,47 @@ function App() {
   const closeAlert = reactExports.useCallback(() => {
     setAlertModal({ show: false, title: "", message: "", type: "error" });
   }, []);
+  const promptPassword = reactExports.useCallback((title, message) => {
+    return new Promise((resolve) => {
+      setPasswordPrompt({ show: true, title, message, resolve });
+    });
+  }, []);
+  const handlePasswordSubmit = reactExports.useCallback((password) => {
+    if (passwordPrompt.resolve) {
+      passwordPrompt.resolve(password);
+    }
+    setPasswordPrompt({ show: false, title: "", message: "", resolve: null });
+  }, [passwordPrompt.resolve]);
+  const handlePasswordCancel = reactExports.useCallback(() => {
+    if (passwordPrompt.resolve) {
+      passwordPrompt.resolve(null);
+    }
+    setPasswordPrompt({ show: false, title: "", message: "", resolve: null });
+  }, [passwordPrompt.resolve]);
   const triggerActivityRefresh = reactExports.useCallback(() => {
     setActivityRefreshKey((prev) => prev + 1);
   }, []);
   const triggerBalanceRefresh = reactExports.useCallback(() => {
     setBalanceRefreshKey((prev) => prev + 1);
   }, []);
+  reactExports.useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        console.log("[App] Side panel became visible, refreshing...");
+        triggerBalanceRefresh();
+        triggerActivityRefresh();
+        try {
+          const savedTheme = localStorage.getItem("x1wallet_darkMode");
+          const isDark = savedTheme === null ? true : JSON.parse(savedTheme);
+          document.documentElement.setAttribute("data-theme", isDark ? "dark" : "light");
+        } catch (e) {
+          document.documentElement.setAttribute("data-theme", "dark");
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [triggerBalanceRefresh, triggerActivityRefresh]);
   reactExports.useEffect(() => {
     let port = null;
     let isApprovalWindow = false;
@@ -35525,7 +36843,7 @@ function App() {
       showAlert(err.message || "Failed to create wallet", "Creation Failed", "warning");
     }
   };
-  const handleImportComplete = async (mnemonic, name, password) => {
+  const handleImportComplete = async (mnemonic, name, password, derivationIndex = 0) => {
     try {
       if (!password) {
         throw new Error("Password is required");
@@ -35538,7 +36856,7 @@ function App() {
       const passwordExists = await checkHasPassword();
       const hasWallets = wallet.wallets && wallet.wallets.length > 0;
       const effectivePasswordExists = passwordExists && hasWallets;
-      await wallet.importWallet(mnemonic, name, password);
+      await wallet.importWallet(mnemonic, name, password, derivationIndex);
       if (!effectivePasswordExists) {
         await setupPassword(password);
       }
@@ -35548,11 +36866,103 @@ function App() {
       setHasPasswordAsync(true);
       localStorage.setItem("x1wallet_encrypted", "true");
       storage.set("lastActivity", Date.now());
+      if (wallet.refreshBalance) {
+        logger$1.log("[ImportComplete] Refreshing balance...");
+        setTimeout(() => wallet.refreshBalance(), 500);
+      }
       setScreen("main");
       return;
     } catch (err) {
       logger$1.error("Failed to import wallet:", err);
       showAlert(err.message || "Failed to import wallet", "Import Failed", "warning");
+    }
+  };
+  const handleImportMultiple = async (mnemonic, baseName, password, derivedAddresses) => {
+    var _a3, _b3;
+    try {
+      if (!password) {
+        throw new Error("Password is required");
+      }
+      setUserTokens([]);
+      const { setupPassword, hasPassword: checkHasPassword } = await __vitePreload(async () => {
+        const { setupPassword: setupPassword2, hasPassword: checkHasPassword2 } = await import("./wallet.js");
+        return { setupPassword: setupPassword2, hasPassword: checkHasPassword2 };
+      }, true ? [] : void 0);
+      const passwordExists = await checkHasPassword();
+      const hasWallets = wallet.wallets && wallet.wallets.length > 0;
+      const effectivePasswordExists = passwordExists && hasWallets;
+      if (!effectivePasswordExists) {
+        await setupPassword(password);
+      }
+      let importedCount = 0;
+      let skippedCount = 0;
+      let cleanBaseName = baseName.trim();
+      const shouldNumber = derivedAddresses.length > 1;
+      if (shouldNumber) {
+        cleanBaseName = cleanBaseName.replace(/\s*\d+\s*$/, "").trim();
+        if (!cleanBaseName) cleanBaseName = "Wallet";
+      }
+      let availableNumbers = [];
+      if (shouldNumber && wallet.wallets) {
+        const regex = new RegExp(`^${cleanBaseName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+(\\d+)$`, "i");
+        const usedNumbers = /* @__PURE__ */ new Set();
+        for (const w2 of wallet.wallets) {
+          const match = (_a3 = w2.name) == null ? void 0 : _a3.match(regex);
+          if (match) {
+            usedNumbers.add(parseInt(match[1], 10));
+          }
+        }
+        let num = 1;
+        while (availableNumbers.length < derivedAddresses.length) {
+          if (!usedNumbers.has(num)) {
+            availableNumbers.push(num);
+          }
+          num++;
+        }
+      } else if (shouldNumber) {
+        availableNumbers = derivedAddresses.map((_, i) => i + 1);
+      }
+      for (let i = 0; i < derivedAddresses.length; i++) {
+        const addr = derivedAddresses[i];
+        const walletName = shouldNumber ? `${cleanBaseName} ${availableNumbers[i]}` : cleanBaseName;
+        const derivationIndex = addr.accountIndex ?? addr.index;
+        try {
+          logger$1.log(`[ImportMultiple] Importing wallet ${i + 1}/${derivedAddresses.length}: ${walletName} (derivation index ${derivationIndex}, path: ${addr.path || "standard"})`);
+          await wallet.importWallet(mnemonic, walletName, password, derivationIndex);
+          importedCount++;
+          logger$1.log(`[ImportMultiple] Successfully imported: ${walletName}`);
+          if (i < derivedAddresses.length - 1) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+        } catch (importErr) {
+          if ((_b3 = importErr.message) == null ? void 0 : _b3.includes("already been imported")) {
+            logger$1.log(`[ImportMultiple] Skipping already imported wallet: ${walletName}`);
+            skippedCount++;
+            continue;
+          }
+          throw importErr;
+        }
+      }
+      logger$1.log(`[ImportMultiple] Complete: ${importedCount} imported, ${skippedCount} skipped`);
+      setSessionPassword(password);
+      storage.set("passwordProtection", true);
+      setPasswordProtection(true);
+      setHasPasswordAsync(true);
+      localStorage.setItem("x1wallet_encrypted", "true");
+      storage.set("lastActivity", Date.now());
+      if (wallet.refreshBalance) {
+        logger$1.log("[ImportMultiple] Refreshing balance...");
+        setTimeout(() => wallet.refreshBalance(), 500);
+      }
+      if (skippedCount > 0 && importedCount === 0) {
+        showAlert("All selected accounts were already imported.", "Already Imported", "info");
+      } else if (skippedCount > 0) {
+        showAlert(`Imported ${importedCount} account${importedCount > 1 ? "s" : ""}. ${skippedCount} already existed.`, "Import Complete", "info");
+      }
+      setScreen("main");
+    } catch (err) {
+      logger$1.error("Failed to import multiple wallets:", err);
+      showAlert(err.message || "Failed to import wallets", "Import Failed", "warning");
     }
   };
   const handleImportPrivateKey = async (walletData) => {
@@ -35614,6 +37024,76 @@ function App() {
       showAlert("Failed to import wallet: " + err.message, "Import Failed", "error");
     }
   };
+  const handleImportWatchOnly = async (walletData) => {
+    try {
+      const existingWallets = wallet.wallets || [];
+      const existingMatch = existingWallets.find(
+        (w2) => {
+          var _a3;
+          return w2.publicKey === walletData.publicKey || ((_a3 = w2.addresses) == null ? void 0 : _a3.some((a) => a.publicKey === walletData.publicKey));
+        }
+      );
+      if (existingMatch) {
+        showAlert(`This address is already being watched as "${existingMatch.name}"`, "Address Already Exists", "warning");
+        return;
+      }
+      setUserTokens([]);
+      const newWallet = {
+        id: Date.now().toString(),
+        name: walletData.name || "Watch Wallet",
+        publicKey: walletData.publicKey,
+        privateKey: null,
+        // No private key for watch-only
+        mnemonic: null,
+        // No mnemonic
+        type: "watchonly",
+        isWatchOnly: true,
+        createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+        addresses: [{
+          index: 0,
+          publicKey: walletData.publicKey,
+          privateKey: null,
+          name: "Address 1"
+        }],
+        activeAddressIndex: 0
+      };
+      const effectivePassword = walletData.password || sessionPassword || null;
+      if (existingWallets.length > 0) {
+        const isEncrypted2 = localStorage.getItem("x1wallet_encrypted") === "true";
+        if (isEncrypted2 && !effectivePassword) {
+          const { checkPassword } = await __vitePreload(async () => {
+            const { checkPassword: checkPassword2 } = await import("./wallet.js");
+            return { checkPassword: checkPassword2 };
+          }, true ? [] : void 0);
+          const enteredPassword = await promptPassword(
+            "Enter Password",
+            "Enter your wallet password to add this watch-only address."
+          );
+          if (!enteredPassword) {
+            showAlert("Password required to add wallet to encrypted storage", "Password Required", "warning");
+            return;
+          }
+          const isValid = await checkPassword(enteredPassword);
+          if (!isValid) {
+            showAlert("Incorrect password", "Invalid Password", "error");
+            return;
+          }
+          await wallet.saveWallets([...existingWallets, newWallet], enteredPassword);
+          setSessionPassword(enteredPassword);
+        } else {
+          await wallet.saveWallets([...existingWallets, newWallet], effectivePassword);
+        }
+      } else {
+        await wallet.saveWallets([newWallet], null);
+      }
+      wallet.selectWallet(newWallet.id);
+      storage.set("lastActivity", Date.now());
+      setScreen("main");
+    } catch (err) {
+      logger$1.error("Failed to add watch-only wallet:", err);
+      showAlert("Failed to add watch-only wallet: " + err.message, "Add Failed", "error");
+    }
+  };
   const handleLock = () => {
     wallet.lockWallet();
     setSessionPassword(null);
@@ -35625,6 +37105,12 @@ function App() {
   };
   const handleManagerImport = () => {
     setReturnScreen("main");
+    setImportInitialType("phrase");
+    setScreen("import");
+  };
+  const handleManagerWatchOnly = () => {
+    setReturnScreen("main");
+    setImportInitialType("watchonly");
     setScreen("import");
   };
   const handleManagerHardware = () => {
@@ -35690,7 +37176,7 @@ function App() {
     }
   };
   if (screen === "loading" || wallet.loading) {
-    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app loading", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "spinner" }) });
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app loading", style: { background: "#0a0a0a", minHeight: "100vh" }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "spinner" }) });
   }
   if (isLocked && screen !== "welcome") {
     return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -35790,14 +37276,29 @@ function App() {
           onClose: closeAlert
         }
       ),
+      passwordPrompt.show && /* @__PURE__ */ jsxRuntimeExports.jsx(
+        PasswordPromptModal,
+        {
+          title: passwordPrompt.title,
+          message: passwordPrompt.message,
+          onSubmit: handlePasswordSubmit,
+          onCancel: handlePasswordCancel
+        }
+      ),
       /* @__PURE__ */ jsxRuntimeExports.jsx(
         ImportWallet,
         {
           onComplete: handleImportComplete,
+          onCompleteMultiple: handleImportMultiple,
           onCompletePrivateKey: handleImportPrivateKey,
-          onBack: () => setScreen(returnScreen === "manage" ? "manage" : "welcome"),
+          onCompleteWatchOnly: handleImportWatchOnly,
+          onBack: () => {
+            setImportInitialType("phrase");
+            setScreen(returnScreen === "manage" ? "manage" : "welcome");
+          },
           sessionPassword,
-          existingWallets: wallet.wallets || []
+          existingWallets: wallet.wallets || [],
+          initialImportType: importInitialType
         }
       )
     ] });
@@ -36203,12 +37704,22 @@ function App() {
         onClose: closeAlert
       }
     ),
+    passwordPrompt.show && /* @__PURE__ */ jsxRuntimeExports.jsx(
+      PasswordPromptModal,
+      {
+        title: passwordPrompt.title,
+        message: passwordPrompt.message,
+        onSubmit: handlePasswordSubmit,
+        onCancel: handlePasswordCancel
+      }
+    ),
     /* @__PURE__ */ jsxRuntimeExports.jsx(
       WalletMain,
       {
         wallet,
         userTokens,
         onTokensUpdate: setUserTokens,
+        onWalletSwitch: () => setUserTokens([]),
         onSend: (token) => {
           setSelectedToken(token || null);
           setScreen("send");
@@ -36227,6 +37738,7 @@ function App() {
         onCreateWallet: handleManagerCreate,
         onImportWallet: handleManagerImport,
         onHardwareWallet: handleManagerHardware,
+        onWatchOnly: handleManagerWatchOnly,
         activityRefreshKey,
         balanceRefreshKey,
         onTokenClick: (token) => {
