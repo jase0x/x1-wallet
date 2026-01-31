@@ -121,18 +121,27 @@ async function checkRateLimit() {
   }
 }
 function computeRateLimitChecksum(data) {
-  const str = `${data.attempts}:${data.lastAttempt}:${data.lockoutUntil || 0}:${data.delayUntil || 0}:x1w_rl_v2_${typeof navigator !== "undefined" ? navigator.userAgent.length : 0}`;
-  let h1 = 3735928559, h2 = 1103547991;
+  const deviceId = typeof navigator !== "undefined" ? `${navigator.userAgent}:${navigator.language}:${(screen == null ? void 0 : screen.width) || 0}x${(screen == null ? void 0 : screen.height) || 0}:${(/* @__PURE__ */ new Date()).getTimezoneOffset()}` : "server";
+  const secretPrefix = "x1w_rl_v3_hmac_";
+  const str = `${secretPrefix}${deviceId}:${data.attempts}:${data.lastAttempt}:${data.lockoutUntil || 0}:${data.delayUntil || 0}`;
+  let h1 = 2166136261;
+  let h2 = 16777619;
   for (let i = 0; i < str.length; i++) {
     const ch = str.charCodeAt(i);
-    h1 = Math.imul(h1 ^ ch, 2654435761);
-    h2 = Math.imul(h2 ^ ch, 1597334677);
+    h1 ^= ch;
+    h1 = Math.imul(h1, 16777619);
+    h2 ^= ch;
+    h2 = Math.imul(h2, 461845907);
   }
+  h1 ^= h2;
   h1 = Math.imul(h1 ^ h1 >>> 16, 2246822507);
-  h1 ^= Math.imul(h2 ^ h2 >>> 13, 3266489909);
+  h1 = Math.imul(h1 ^ h1 >>> 13, 3266489909);
+  h1 ^= h1 >>> 16;
+  h2 ^= h1;
   h2 = Math.imul(h2 ^ h2 >>> 16, 2246822507);
-  h2 ^= Math.imul(h1 ^ h1 >>> 13, 3266489909);
-  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+  h2 = Math.imul(h2 ^ h2 >>> 13, 3266489909);
+  h2 ^= h2 >>> 16;
+  return `v3_${(h1 >>> 0).toString(36)}_${(h2 >>> 0).toString(36)}`;
 }
 function validateRateLimitIntegrity(data) {
   if (!data || !data.checksum) return true;

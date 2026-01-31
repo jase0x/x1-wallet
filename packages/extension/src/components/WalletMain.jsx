@@ -2621,10 +2621,10 @@ function EditWalletPanel({ walletData, onSave, onClose, onRemove }) {
     }
   };
 
-  const copyPrivateKey = () => {
+  const copyPrivateKey = async () => {
     const key = addresses[0]?.privateKey;
     if (key) {
-      navigator.clipboard.writeText(key);
+      await navigator.clipboard.writeText(key);
       setCopiedKey(true);
       setTimeout(() => setCopiedKey(false), 2000);
     }
@@ -2998,8 +2998,8 @@ function RecoveryPhrasePanel({ wallet, onClose }) {
   
   const requiresPassword = passwordProtection && hasAuthData;
   
-  const copyPhrase = () => {
-    navigator.clipboard.writeText(phrase);
+  const copyPhrase = async () => {
+    await navigator.clipboard.writeText(phrase);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };

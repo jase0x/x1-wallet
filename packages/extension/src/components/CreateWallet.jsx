@@ -13,19 +13,23 @@ export default function CreateWallet({ onComplete, onBack, passwordProtection: p
   const [verifyIndices, setVerifyIndices] = useState([]);
   const [verifyInputs, setVerifyInputs] = useState({});
   
-  // Compute next wallet number from existing wallets
+  // Compute next wallet number from existing wallets (gap-filling)
   const getNextWalletNumber = () => {
-    let maxNumber = 0;
+    const usedNumbers = new Set();
     existingWallets.forEach(w => {
-      // Match patterns like "Wallet 1", "My Wallet 2", "Imported Wallet 3", etc.
-      const match = w.name?.match(/(\d+)\s*$/);
+      // Match patterns like "Wallet 1", "Wallet 2", etc.
+      const match = w.name?.match(/^Wallet\s+(\d+)$/i);
       if (match) {
-        const num = parseInt(match[1], 10);
-        if (num > maxNumber) maxNumber = num;
+        usedNumbers.add(parseInt(match[1], 10));
       }
     });
-    // If no numbered wallets found, use wallet count
-    return Math.max(maxNumber, existingWallets.length) + 1;
+    
+    // Find first available number starting from 1
+    let num = 1;
+    while (usedNumbers.has(num)) {
+      num++;
+    }
+    return num;
   };
   
   const nextWalletNumber = getNextWalletNumber();
@@ -377,21 +381,19 @@ export default function CreateWallet({ onComplete, onBack, passwordProtection: p
     onComplete(mnemonic, walletName.trim() || suggestedName, password);
   };
 
-  // Copy to clipboard with auto-clear (X1W-007)
-  const copyMnemonic = () => {
+  // Copy to clipboard
+  const copyMnemonic = async () => {
     // Normalize the mnemonic: trim, lowercase, single spaces
     const cleanMnemonic = mnemonic.trim().toLowerCase().split(/\s+/).join(' ');
     logger.log('Copying mnemonic: [REDACTED]', cleanMnemonic.split(' ').length, 'words');
-    navigator.clipboard.writeText(cleanMnemonic);
-    setCopied(true);
     
-    // X1W-007: Clear clipboard after 30 seconds for security
-    setTimeout(() => {
-      navigator.clipboard.writeText('').catch(() => {});
-      logger.log('Clipboard cleared for security');
-    }, 30000);
-    
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(cleanMnemonic);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (e) {
+      logger.error('Failed to copy to clipboard:', e);
+    }
   };
 
   // Choose screen

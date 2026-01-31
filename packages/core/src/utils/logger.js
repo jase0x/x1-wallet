@@ -43,18 +43,24 @@ const REDACTED_KEYS = new Set([
 
 /**
  * Sanitize a value by redacting sensitive information
+ * X1W-SEC-006: Improved sanitization with lower thresholds
  */
 function sanitizeValue(value, key = '') {
   if (value === null || value === undefined) {
     return value;
   }
 
-  // Handle Error objects specially - they don't enumerate their properties
+  // Handle Error objects specially - sanitize stack traces
   if (value instanceof Error) {
     return {
-      message: value.message,
+      message: sanitizeValue(value.message),
       name: value.name,
-      stack: value.stack
+      // X1W-SEC-006: Sanitize stack traces to remove potential variable values
+      stack: value.stack 
+        ? value.stack
+            .replace(/at\s+.+\((.+)\)/g, 'at [function] ($1)') // Remove function names that might contain data
+            .replace(/["']?[a-zA-Z]+["']?\s*[=:]\s*["']?[^,\s\n]+["']?/g, '[var]') // Remove variable assignments
+        : undefined
     };
   }
 
@@ -64,11 +70,21 @@ function sanitizeValue(value, key = '') {
     return '[REDACTED]';
   }
 
-  // Handle strings that look like keys/secrets (long hex or base58 strings)
+  // Handle strings that look like keys/secrets
   if (typeof value === 'string') {
-    // Redact what looks like a private key (64+ hex chars or 88 base58 chars)
-    if (/^[0-9a-fA-F]{64,}$/.test(value) || /^[1-9A-HJ-NP-Za-km-z]{87,}$/.test(value)) {
-      return '[REDACTED_KEY]';
+    // X1W-SEC-006: Redact what looks like a private key 
+    // - 64+ hex chars (32-byte key in hex)
+    // - 44+ Base58 chars (32-byte key in Base58 is ~44 chars, 64-byte is ~88)
+    if (/^[0-9a-fA-F]{64,}$/.test(value)) {
+      return '[REDACTED_HEX_KEY]';
+    }
+    // Base58 keys: 32-byte = ~44 chars, 64-byte = ~88 chars
+    if (/^[1-9A-HJ-NP-Za-km-z]{43,}$/.test(value)) {
+      return '[REDACTED_BASE58_KEY]';
+    }
+    // X1W-SEC-006: Also catch Base64-encoded keys (32 bytes = 44 chars in Base64)
+    if (/^[A-Za-z0-9+/]{43,}={0,2}$/.test(value)) {
+      return '[REDACTED_BASE64_KEY]';
     }
     // Redact what looks like a mnemonic (12+ lowercase words, no punctuation/brackets)
     // This avoids flagging JSON error responses as mnemonics
@@ -83,8 +99,15 @@ function sanitizeValue(value, key = '') {
     return value;
   }
 
-  // Handle arrays
+  // Handle arrays - also check for byte arrays that might be keys
   if (Array.isArray(value)) {
+    // X1W-SEC-006: Detect byte arrays that look like keys (32 or 64 bytes)
+    if (value.length === 32 || value.length === 64) {
+      const looksLikeByteArray = value.every(v => typeof v === 'number' && v >= 0 && v <= 255);
+      if (looksLikeByteArray) {
+        return '[REDACTED_BYTE_ARRAY]';
+      }
+    }
     return value.map((item, index) => sanitizeValue(item, String(index)));
   }
 

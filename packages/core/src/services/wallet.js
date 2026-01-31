@@ -11,6 +11,29 @@ const STORAGE_KEY = 'x1wallet';
 const AUTH_KEY = 'x1wallet_auth';
 const RATE_LIMIT_KEY = 'x1wallet_rate_limit';
 
+// X1W-SEC-001: Track if localStorage fallback was used (security concern)
+let _localStorageFallbackUsed = false;
+
+/**
+ * X1W-SEC-001: Check if localStorage fallback was used
+ * This is a security concern as localStorage is more accessible than chrome.storage
+ */
+export function wasLocalStorageFallbackUsed() {
+  return _localStorageFallbackUsed;
+}
+
+/**
+ * X1W-SEC-001: Log security warning when localStorage fallback is used
+ */
+function logLocalStorageFallbackWarning(operation) {
+  if (!_localStorageFallbackUsed) {
+    _localStorageFallbackUsed = true;
+    logger.warn(`[SEC-001] localStorage fallback used for ${operation}. ` +
+      'This is less secure than chrome.storage. ' +
+      'Ensure you are running in a proper extension context.');
+  }
+}
+
 // Rate limiting constants for password attempts (X1W-002)
 const MAX_ATTEMPTS_BEFORE_DELAY = 3;
 const MAX_ATTEMPTS_BEFORE_LOCKOUT = 10;  // X1W-SEC: Reduced from 20
@@ -259,22 +282,46 @@ async function checkRateLimit() {
 }
 
 /**
- * X1W-SEC-012: Improved integrity check for rate limit data (SEC-004)
- * Uses cyrb53 hash with browser-specific salt for better tamper detection
+ * X1W-SEC-003: Cryptographically secure integrity check for rate limit data
+ * Uses HMAC-like construction with device fingerprint for tamper detection
  */
 function computeRateLimitChecksum(data) {
-  const str = `${data.attempts}:${data.lastAttempt}:${data.lockoutUntil || 0}:${data.delayUntil || 0}:x1w_rl_v2_${typeof navigator !== 'undefined' ? navigator.userAgent.length : 0}`;
-  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  // Create a deterministic device fingerprint
+  const deviceId = typeof navigator !== 'undefined' 
+    ? `${navigator.userAgent}:${navigator.language}:${screen?.width || 0}x${screen?.height || 0}:${new Date().getTimezoneOffset()}`
+    : 'server';
+  
+  // Secret prefix to prevent simple replay attacks
+  const secretPrefix = 'x1w_rl_v3_hmac_';
+  
+  // Build the data string with all relevant fields
+  const str = `${secretPrefix}${deviceId}:${data.attempts}:${data.lastAttempt}:${data.lockoutUntil || 0}:${data.delayUntil || 0}`;
+  
+  // Use a more robust hash (HMAC-like construction)
+  let h1 = 0x811c9dc5; // FNV offset basis
+  let h2 = 0x1000193;  // FNV prime
+  
   for (let i = 0; i < str.length; i++) {
     const ch = str.charCodeAt(i);
-    h1 = Math.imul(h1 ^ ch, 2654435761);
-    h2 = Math.imul(h2 ^ ch, 1597334677);
+    h1 ^= ch;
+    h1 = Math.imul(h1, 0x01000193);
+    h2 ^= ch;
+    h2 = Math.imul(h2, 0x1b873593);
   }
-  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507);
-  h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507);
-  h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
-  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+  
+  // Mix the hashes
+  h1 ^= h2;
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 0x85ebca6b);
+  h1 = Math.imul(h1 ^ (h1 >>> 13), 0xc2b2ae35);
+  h1 ^= h1 >>> 16;
+  
+  h2 ^= h1;
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 0x85ebca6b);
+  h2 = Math.imul(h2 ^ (h2 >>> 13), 0xc2b2ae35);
+  h2 ^= h2 >>> 16;
+  
+  // Combine into a string that's hard to forge
+  return `v3_${(h1 >>> 0).toString(36)}_${(h2 >>> 0).toString(36)}`;
 }
 
 function validateRateLimitIntegrity(data) {

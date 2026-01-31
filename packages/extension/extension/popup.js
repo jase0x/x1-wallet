@@ -7135,9 +7135,10 @@ function sanitizeValue(value, key = "") {
   }
   if (value instanceof Error) {
     return {
-      message: value.message,
+      message: sanitizeValue(value.message),
       name: value.name,
-      stack: value.stack
+      // X1W-SEC-006: Sanitize stack traces to remove potential variable values
+      stack: value.stack ? value.stack.replace(/at\s+.+\((.+)\)/g, "at [function] ($1)").replace(/["']?[a-zA-Z]+["']?\s*[=:]\s*["']?[^,\s\n]+["']?/g, "[var]") : void 0
     };
   }
   const keyLower = key.toLowerCase();
@@ -7145,8 +7146,14 @@ function sanitizeValue(value, key = "") {
     return "[REDACTED]";
   }
   if (typeof value === "string") {
-    if (/^[0-9a-fA-F]{64,}$/.test(value) || /^[1-9A-HJ-NP-Za-km-z]{87,}$/.test(value)) {
-      return "[REDACTED_KEY]";
+    if (/^[0-9a-fA-F]{64,}$/.test(value)) {
+      return "[REDACTED_HEX_KEY]";
+    }
+    if (/^[1-9A-HJ-NP-Za-km-z]{43,}$/.test(value)) {
+      return "[REDACTED_BASE58_KEY]";
+    }
+    if (/^[A-Za-z0-9+/]{43,}={0,2}$/.test(value)) {
+      return "[REDACTED_BASE64_KEY]";
     }
     const words = value.split(/\s+/);
     if (words.length >= 12 && words.length <= 24) {
@@ -7158,6 +7165,12 @@ function sanitizeValue(value, key = "") {
     return value;
   }
   if (Array.isArray(value)) {
+    if (value.length === 32 || value.length === 64) {
+      const looksLikeByteArray = value.every((v2) => typeof v2 === "number" && v2 >= 0 && v2 <= 255);
+      if (looksLikeByteArray) {
+        return "[REDACTED_BYTE_ARRAY]";
+      }
+    }
     return value.map((item, index) => sanitizeValue(item, String(index)));
   }
   if (typeof value === "object") {
@@ -16926,16 +16939,19 @@ function CreateWallet({ onComplete, onBack, passwordProtection: propPasswordProt
   const [verifyIndices, setVerifyIndices] = reactExports.useState([]);
   const [verifyInputs, setVerifyInputs] = reactExports.useState({});
   const getNextWalletNumber = () => {
-    let maxNumber = 0;
+    const usedNumbers = /* @__PURE__ */ new Set();
     existingWallets.forEach((w2) => {
       var _a2;
-      const match = (_a2 = w2.name) == null ? void 0 : _a2.match(/(\d+)\s*$/);
+      const match = (_a2 = w2.name) == null ? void 0 : _a2.match(/^Wallet\s+(\d+)$/i);
       if (match) {
-        const num = parseInt(match[1], 10);
-        if (num > maxNumber) maxNumber = num;
+        usedNumbers.add(parseInt(match[1], 10));
       }
     });
-    return Math.max(maxNumber, existingWallets.length) + 1;
+    let num = 1;
+    while (usedNumbers.has(num)) {
+      num++;
+    }
+    return num;
   };
   const nextWalletNumber = getNextWalletNumber();
   const suggestedName = `Wallet ${nextWalletNumber}`;
@@ -17221,17 +17237,16 @@ function CreateWallet({ onComplete, onBack, passwordProtection: propPasswordProt
     }
     onComplete(mnemonic, walletName.trim() || suggestedName, password);
   };
-  const copyMnemonic = () => {
+  const copyMnemonic = async () => {
     const cleanMnemonic = mnemonic.trim().toLowerCase().split(/\s+/).join(" ");
     logger$1.log("Copying mnemonic: [REDACTED]", cleanMnemonic.split(" ").length, "words");
-    navigator.clipboard.writeText(cleanMnemonic);
-    setCopied(true);
-    setTimeout(() => {
-      navigator.clipboard.writeText("").catch(() => {
-      });
-      logger$1.log("Clipboard cleared for security");
-    }, 3e4);
-    setTimeout(() => setCopied(false), 2e3);
+    try {
+      await navigator.clipboard.writeText(cleanMnemonic);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2e3);
+    } catch (e) {
+      logger$1.error("Failed to copy to clipboard:", e);
+    }
   };
   if (step === "choose") {
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen seed-container no-nav", children: [
@@ -18650,19 +18665,10 @@ function ImportWallet({ onComplete, onBack, onCompletePrivateKey, onCompleteMult
                 ] }) }),
                 /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [
                   /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center" }, children: [
-                    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", alignItems: "center", gap: 6 }, children: [
-                      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { style: { fontWeight: 600, fontSize: 13, color: "var(--text-primary)" }, children: [
-                        "Account ",
-                        (addr.accountIndex ?? addr.index) + 1
-                      ] }),
-                      addr.schemeName && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: {
-                        fontSize: 9,
-                        color: addr.scheme === "legacy" ? "#ffc107" : "var(--x1-blue)",
-                        background: addr.scheme === "legacy" ? "rgba(255, 193, 7, 0.1)" : "rgba(2, 116, 251, 0.1)",
-                        padding: "1px 4px",
-                        borderRadius: 3
-                      }, children: addr.scheme === "legacy" ? "Legacy" : "Standard" })
-                    ] }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { display: "flex", alignItems: "center", gap: 6 }, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { style: { fontWeight: 600, fontSize: 13, color: "var(--text-primary)" }, children: [
+                      "Account ",
+                      (addr.accountIndex ?? addr.index) + 1
+                    ] }) }),
                     alreadyImported && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: {
                       fontSize: 9,
                       color: "var(--text-muted)",
@@ -23423,8 +23429,8 @@ function ActivityList({ walletAddress, network, networkConfig, refreshKey }) {
       const getAmountDisplay = () => {
         const formatAmount = (num) => {
           if (typeof num !== "number") return num || "0";
-          if (num >= 1) return parseFloat(num.toFixed(2)).toString();
-          return parseFloat(num.toFixed(6)).toString();
+          if (num >= 1e-4) return parseFloat(num.toFixed(4)).toString();
+          return num.toExponential(2);
         };
         const amount = formatAmount(tx.amount);
         const symbol = tx.symbol || tx.token || ((currentNetwork == null ? void 0 : currentNetwork.includes("Solana")) ? "SOL" : "XNT");
@@ -24325,7 +24331,7 @@ function NFTsTab({ wallet, networkConfig }) {
     }) })
   ] });
 }
-function DefiTab({ wallet, tokens: tokens2, isSolana, onStake }) {
+function DefiTab({ wallet, tokens: tokens2, isSolana, onStake, formatFiat }) {
   var _a2;
   const [xpBalance, setXpBalance] = reactExports.useState(null);
   const [xpLoading, setXpLoading] = reactExports.useState(true);
@@ -24410,11 +24416,15 @@ function DefiTab({ wallet, tokens: tokens2, isSolana, onStake }) {
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "defi-item-info", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "defi-item-title", children: lp.name || lp.symbol || "LP Token" }),
           /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "defi-item-desc", children: [
-            parseFloat(lp.balance || lp.uiAmount || 0).toFixed(6),
+            (() => {
+              const amt = parseFloat(lp.balance || lp.uiAmount || 0);
+              if (amt < 1e-4) return amt.toExponential(2);
+              return parseFloat(amt.toFixed(4)).toString();
+            })(),
             " tokens"
           ] })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "defi-item-value", children: lp.usdValue ? `$${lp.usdValue.toFixed(2)}` : "" })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "defi-item-value", children: lp.usdValue ? formatFiat(lp.usdValue) : "" })
       ] }, idx)) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "defi-empty", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "No liquidity positions" }) })
     ] })
   ] });
@@ -24612,9 +24622,7 @@ function WalletPanel({ wallets, activeId, network, onSelect, onManage, onClose, 
     if (balance === null || balance === void 0) return "...";
     if (balance === 0) return "0";
     if (balance < 1e-4) return "<0.0001";
-    if (balance < 1) return balance.toFixed(4);
-    if (balance < 1e3) return balance.toFixed(2);
-    if (balance < 1e6) return (balance / 1e3).toFixed(1) + "K";
+    if (balance < 1e6) return parseFloat(balance.toFixed(4)).toLocaleString(void 0, { maximumFractionDigits: 4 });
     return (balance / 1e6).toFixed(1) + "M";
   };
   const tokenSymbol = (network == null ? void 0 : network.includes("Solana")) ? "SOL" : "XNT";
@@ -24732,7 +24740,13 @@ function WalletPanel({ wallets, activeId, network, onSelect, onManage, onClose, 
             onDrop: (e) => handleDrop(e, w2.id),
             style: { opacity: isHidden ? 0.5 : 1 },
             children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "wallet-item-avatar", children: hasImage ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: w2.avatar, alt: w2.name }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "wallet-avatar-initials", children: w2.isHardware ? "L" : ((_b2 = (_a2 = w2.name) == null ? void 0 : _a2.charAt(0)) == null ? void 0 : _b2.toUpperCase()) || "W" }) }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "wallet-item-avatar", children: hasImage ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: w2.avatar, alt: w2.name }) : w2.type === "watchonly" || w2.isWatchOnly ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "wallet-avatar-initials", style: { background: "rgba(255, 193, 7, 0.2)", display: "flex", alignItems: "center", justifyContent: "center" }, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "none", stroke: "#ffc107", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "7", cy: "14", r: "4" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "17", cy: "14", r: "4" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7 10V6" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M17 10V6" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M11 14h2" })
+              ] }) }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "wallet-avatar-initials", children: w2.isHardware ? "L" : ((_b2 = (_a2 = w2.name) == null ? void 0 : _a2.charAt(0)) == null ? void 0 : _b2.toUpperCase()) || "W" }) }),
               /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wallet-item-info", children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wallet-item-row1", style: { display: "flex", alignItems: "center", gap: 6 }, children: [
                   /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -25041,11 +25055,11 @@ function EditWalletPanel({ walletData, onSave, onClose, onRemove }) {
       setTimeout(() => setCopiedAddress(false), 2e3);
     }
   };
-  const copyPrivateKey = () => {
+  const copyPrivateKey = async () => {
     var _a3;
     const key = (_a3 = addresses[0]) == null ? void 0 : _a3.privateKey;
     if (key) {
-      navigator.clipboard.writeText(key);
+      await navigator.clipboard.writeText(key);
       setCopiedKey(true);
       setTimeout(() => setCopiedKey(false), 2e3);
     }
@@ -25375,8 +25389,8 @@ function RecoveryPhrasePanel({ wallet, onClose }) {
     checkAuth();
   }, []);
   const requiresPassword = passwordProtection && hasAuthData;
-  const copyPhrase = () => {
-    navigator.clipboard.writeText(phrase);
+  const copyPhrase = async () => {
+    await navigator.clipboard.writeText(phrase);
     setCopied(true);
     setTimeout(() => setCopied(false), 2e3);
   };
@@ -25727,30 +25741,96 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
   const [currency, setCurrency] = reactExports.useState(() => {
     try {
       const saved = localStorage.getItem("x1wallet_currency");
-      return saved ? JSON.parse(saved) : "USD";
+      const parsed = saved ? JSON.parse(saved) : "USD";
+      return parsed === "NATIVE" ? "USD" : parsed;
     } catch {
       return "USD";
     }
   });
+  const [showNativeHero, setShowNativeHero] = reactExports.useState(() => {
+    try {
+      const saved = localStorage.getItem("x1wallet_showNativeHero");
+      return saved ? JSON.parse(saved) : false;
+    } catch {
+      return false;
+    }
+  });
+  const [exchangeRates, setExchangeRates] = reactExports.useState(() => {
+    try {
+      const cached = localStorage.getItem("x1wallet_exchange_rates");
+      if (cached) {
+        const { rates, timestamp } = JSON.parse(cached);
+        if (Date.now() - timestamp < 60 * 60 * 1e3) {
+          return rates;
+        }
+      }
+    } catch {
+    }
+    return { EUR: 0.92, GBP: 0.79, PLN: 4.02, JPY: 156, CAD: 1.44, AUD: 1.57, CNY: 7.24, KRW: 1380 };
+  });
   reactExports.useEffect(() => {
-    const checkCurrency = () => {
+    const fetchExchangeRates = async () => {
       try {
-        const saved = localStorage.getItem("x1wallet_currency");
-        const newCurrency = saved ? JSON.parse(saved) : "USD";
+        const cached = localStorage.getItem("x1wallet_exchange_rates");
+        if (cached) {
+          const { timestamp } = JSON.parse(cached);
+          if (Date.now() - timestamp < 60 * 60 * 1e3) {
+            return;
+          }
+        }
+        const response = await fetch("https://open.er-api.com/v6/latest/USD");
+        if (response.ok) {
+          const data = await response.json();
+          if (data.rates) {
+            const rates = {
+              EUR: data.rates.EUR || 0.92,
+              GBP: data.rates.GBP || 0.79,
+              PLN: data.rates.PLN || 4.02,
+              JPY: data.rates.JPY || 156,
+              CAD: data.rates.CAD || 1.44,
+              AUD: data.rates.AUD || 1.57,
+              CNY: data.rates.CNY || 7.24,
+              KRW: data.rates.KRW || 1380
+            };
+            setExchangeRates(rates);
+            localStorage.setItem("x1wallet_exchange_rates", JSON.stringify({
+              rates,
+              timestamp: Date.now()
+            }));
+            logger$1.log("[Currency] Live exchange rates fetched:", rates);
+          }
+        }
+      } catch (e) {
+        logger$1.warn("[Currency] Failed to fetch exchange rates, using fallback:", e.message);
+      }
+    };
+    fetchExchangeRates();
+  }, []);
+  reactExports.useEffect(() => {
+    const checkSettings = () => {
+      try {
+        const savedCurrency = localStorage.getItem("x1wallet_currency");
+        let newCurrency = savedCurrency ? JSON.parse(savedCurrency) : "USD";
+        if (newCurrency === "NATIVE") newCurrency = "USD";
         if (newCurrency !== currency) {
           setCurrency(newCurrency);
+        }
+        const savedNative = localStorage.getItem("x1wallet_showNativeHero");
+        const newShowNative = savedNative ? JSON.parse(savedNative) : false;
+        if (newShowNative !== showNativeHero) {
+          setShowNativeHero(newShowNative);
         }
       } catch {
       }
     };
-    checkCurrency();
-    window.addEventListener("focus", checkCurrency);
-    window.addEventListener("storage", checkCurrency);
+    checkSettings();
+    window.addEventListener("focus", checkSettings);
+    window.addEventListener("storage", checkSettings);
     return () => {
-      window.removeEventListener("focus", checkCurrency);
-      window.removeEventListener("storage", checkCurrency);
+      window.removeEventListener("focus", checkSettings);
+      window.removeEventListener("storage", checkSettings);
     };
-  }, [currency]);
+  }, [currency, showNativeHero]);
   const currentWalletRef = reactExports.useRef((_a2 = wallet.wallet) == null ? void 0 : _a2.publicKey);
   const currentNetworkRef = reactExports.useRef(wallet.network);
   reactExports.useEffect(() => {
@@ -25806,33 +25886,21 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
   const totalPortfolioUsd = tokensUsdValue + nativeUsdValue;
   logger$1.log("[Portfolio] Total USD:", totalPortfolioUsd, "tokens:", tokensUsdValue, "native:", nativeUsdValue);
   const nativeSymbol = isSolana ? "SOL" : "XNT";
-  const isNativeCurrency = currency === "NATIVE";
+  const isNativeCurrency = showNativeHero;
   const currencyInfo = {
-    // NATIVE - uses network's native token (XNT for X1, SOL for Solana)
-    NATIVE: { symbol: nativeSymbol, position: "after", rate: null, isNative: true },
-    // Fiat currencies with USD exchange rates
+    // Fiat currencies with live exchange rates
     USD: { symbol: "$", position: "before", rate: 1 },
-    EUR: { symbol: "€", position: "before", rate: 0.92 },
-    GBP: { symbol: "£", position: "before", rate: 0.79 },
-    PLN: { symbol: "zł", position: "after", rate: 4.02 },
-    JPY: { symbol: "¥", position: "before", rate: 149.5 },
-    CAD: { symbol: "C$", position: "before", rate: 1.36 },
-    AUD: { symbol: "A$", position: "before", rate: 1.53 },
-    CNY: { symbol: "¥", position: "before", rate: 7.24 },
-    KRW: { symbol: "₩", position: "before", rate: 1320 }
+    EUR: { symbol: "€", position: "before", rate: exchangeRates.EUR },
+    GBP: { symbol: "£", position: "before", rate: exchangeRates.GBP },
+    PLN: { symbol: "zł", position: "after", rate: exchangeRates.PLN },
+    JPY: { symbol: "¥", position: "before", rate: exchangeRates.JPY },
+    CAD: { symbol: "C$", position: "before", rate: exchangeRates.CAD },
+    AUD: { symbol: "A$", position: "before", rate: exchangeRates.AUD },
+    CNY: { symbol: "¥", position: "before", rate: exchangeRates.CNY },
+    KRW: { symbol: "₩", position: "before", rate: exchangeRates.KRW }
   };
-  const formatCurrency = (usdValue) => {
+  const formatFiat = (usdValue) => {
     const info = currencyInfo[currency] || currencyInfo.USD;
-    if (info.isNative) {
-      const nativeAmount = usdValue / nativePrice;
-      if (nativeAmount === 0 || isNaN(nativeAmount)) return `0 ${nativeSymbol}`;
-      if (nativeAmount < 1e-4) return `<0.0001 ${nativeSymbol}`;
-      const formatted2 = nativeAmount.toLocaleString(void 0, {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 4
-      });
-      return `${formatted2} ${nativeSymbol}`;
-    }
     if (usdValue === null || usdValue === void 0 || isNaN(usdValue)) {
       return info.position === "after" ? "0.00 " + info.symbol : info.symbol + "0.00";
     }
@@ -25841,30 +25909,34 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
     }
     const convertedValue = usdValue * (info.rate || 1);
     const decimals = currency === "JPY" || currency === "KRW" ? 0 : 2;
+    if (convertedValue < 0.01 && decimals > 0) {
+      return info.position === "after" ? "<0.01 " + info.symbol : "<" + info.symbol + "0.01";
+    }
     const formatted = convertedValue.toLocaleString(void 0, {
       minimumFractionDigits: decimals,
       maximumFractionDigits: decimals
     });
-    if (convertedValue < 0.01 && decimals > 0) {
-      return info.position === "after" ? "<0.01 " + info.symbol : "<" + info.symbol + "0.01";
-    }
     return info.position === "after" ? formatted + " " + info.symbol : info.symbol + formatted;
   };
-  const formatUsd = formatCurrency;
-  const formatFiat = (usdValue) => {
-    if (usdValue === null || usdValue === void 0 || isNaN(usdValue)) return "$0.00";
-    if (usdValue === 0) return "$0.00";
-    if (usdValue < 0.01) return "<$0.01";
-    return "$" + usdValue.toLocaleString(void 0, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  };
-  const formatBalance2 = (balance, maxDecimals = 6) => {
-    if (balance === 0 || balance === null || balance === void 0) return "0";
-    if (balance < 1e-6) return balance.toExponential(2);
-    if (balance >= 1e3) {
-      return balance.toLocaleString(void 0, { maximumFractionDigits: maxDecimals });
+  const formatCurrency = (usdValue) => {
+    if (showNativeHero) {
+      const nativeAmount = usdValue / nativePrice;
+      if (nativeAmount === 0 || isNaN(nativeAmount)) return `0 ${nativeSymbol}`;
+      if (nativeAmount < 1e-4) return `<0.0001 ${nativeSymbol}`;
+      const formatted = nativeAmount.toLocaleString(void 0, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 4
+      });
+      return `${formatted} ${nativeSymbol}`;
     }
+    return formatFiat(usdValue);
+  };
+  const formatUsd = formatCurrency;
+  const formatBalance2 = (balance, maxDecimals = 4) => {
+    if (balance === 0 || balance === null || balance === void 0) return "0";
+    if (balance < 1e-4) return balance.toExponential(2);
     const fixed = balance.toFixed(maxDecimals);
-    return parseFloat(fixed).toString();
+    return parseFloat(fixed).toLocaleString(void 0, { maximumFractionDigits: maxDecimals });
   };
   const toggleHiddenToken = (tokenMint) => {
     setHiddenTokens((prev) => {
@@ -26215,7 +26287,7 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
       /* Native token selected - show native balance as primary */
       /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "balance-row", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "balance-amount", children: [
-          formatBalance2(displayBalance),
+          formatBalance2(displayBalance, 2),
           " ",
           networkConfig.symbol
         ] }) }),
@@ -26226,7 +26298,7 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
       /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "balance-row", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "balance-amount", children: formatCurrency(totalPortfolioUsd) }) }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "balance-usd", children: [
-          formatBalance2(displayBalance),
+          formatBalance2(displayBalance, 2),
           " ",
           networkConfig.symbol
         ] })
@@ -26438,10 +26510,7 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
                   networkConfig.symbol
                 ] })
               ] }),
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "token-balance", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "token-usd", children: formatUsd(nativeUsdValue) }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "token-change neutral", children: "0.00%" })
-              ] })
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "token-balance", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "token-usd", children: formatUsd(nativeUsdValue) }) })
             ]
           }
         ),
@@ -26555,29 +26624,31 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
                     )
                   ] }),
                   /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "token-amount-sub", children: [
-                    (token.uiAmount || 0).toLocaleString(void 0, { maximumFractionDigits: 6 }),
+                    (() => {
+                      const amt = token.uiAmount || 0;
+                      if (amt === 0) return "0";
+                      if (amt < 1e-4) return amt.toExponential(2);
+                      return parseFloat(amt.toFixed(4)).toLocaleString(void 0, { maximumFractionDigits: 4 });
+                    })(),
                     " ",
                     token.symbol
                   ] })
                 ] }),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "token-balance", children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "token-usd", children: (() => {
-                    let price = token.price;
-                    if (token.symbol === "USDC" || token.symbol === "USDT" || token.symbol === "USDC.X") {
-                      price = 1;
-                    } else if (token.symbol === "pXNT") {
-                      price = 1;
-                    } else if (token.symbol === "WXNT") {
-                      price = 1;
-                    }
-                    if (price === void 0 || price === null) {
-                      return "--";
-                    }
-                    const value = (token.uiAmount || 0) * price;
-                    return value > 0 ? `$${value.toLocaleString(void 0, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "$0.00";
-                  })() }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "token-change neutral", children: "0.00%" })
-                ] })
+                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "token-balance", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "token-usd", children: (() => {
+                  let price = token.price;
+                  if (token.symbol === "USDC" || token.symbol === "USDT" || token.symbol === "USDC.X") {
+                    price = 1;
+                  } else if (token.symbol === "pXNT") {
+                    price = 1;
+                  } else if (token.symbol === "WXNT") {
+                    price = 1;
+                  }
+                  if (price === void 0 || price === null) {
+                    return "--";
+                  }
+                  const value = (token.uiAmount || 0) * price;
+                  return formatFiat(value);
+                })() }) })
               ]
             },
             token.address
@@ -26612,7 +26683,8 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
           wallet,
           tokens: tokens2,
           isSolana,
-          onStake
+          onStake,
+          formatFiat
         }
       ),
       activeTab === "activity" && /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -27024,6 +27096,7 @@ async function syncFromChromeStorage() {
         "darkMode",
         "autoLock",
         "currency",
+        "showNativeHero",
         "notifications",
         "skipSimulation",
         "passwordProtection",
@@ -27068,7 +27141,11 @@ function SettingsScreen({ wallet, onBack, onLock, initialPasswordProtection, onP
     }
     return saved;
   });
-  const [currency, setCurrency] = reactExports.useState(() => storage$1.get("currency", "USD"));
+  const [currency, setCurrency] = reactExports.useState(() => {
+    const saved = storage$1.get("currency", "USD");
+    return saved === "NATIVE" ? "USD" : saved;
+  });
+  const [showNativeHero, setShowNativeHero] = reactExports.useState(() => storage$1.get("showNativeHero", false));
   const [notifications, setNotifications] = reactExports.useState(() => storage$1.get("notifications", true));
   const [skipSimulation, setSkipSimulation] = reactExports.useState(() => storage$1.get("skipSimulation", false));
   const [passwordProtection, setPasswordProtection] = reactExports.useState(() => storage$1.get("passwordProtection", false));
@@ -27224,6 +27301,9 @@ function SettingsScreen({ wallet, onBack, onLock, initialPasswordProtection, onP
   reactExports.useEffect(() => {
     storage$1.set("currency", currency);
   }, [currency]);
+  reactExports.useEffect(() => {
+    storage$1.set("showNativeHero", showNativeHero);
+  }, [showNativeHero]);
   reactExports.useEffect(() => {
     storage$1.set("notifications", notifications);
   }, [notifications]);
@@ -27393,7 +27473,6 @@ function SettingsScreen({ wallet, onBack, onLock, initialPasswordProtection, onP
     const currentNetwork2 = (wallet == null ? void 0 : wallet.network) || "X1 Mainnet";
     const isSolana = currentNetwork2.includes("Solana");
     const nativeSymbol = isSolana ? "SOL" : "XNT";
-    const isNativeSelected = currency === "NATIVE";
     const fiatCurrencies = [
       { code: "USD", name: "US Dollar", symbol: "$" },
       { code: "EUR", name: "Euro", symbol: "€" },
@@ -27411,7 +27490,7 @@ function SettingsScreen({ wallet, onBack, onLock, initialPasswordProtection, onP
         /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "Currency" })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-content", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-section", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item", onClick: () => setCurrency(isNativeSelected ? "USD" : "NATIVE"), children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "settings-section", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item", onClick: () => setShowNativeHero(!showNativeHero), children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item-left", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "10" }),
@@ -27420,15 +27499,14 @@ function SettingsScreen({ wallet, onBack, onLock, initialPasswordProtection, onP
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item-text", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Show Native Token" }),
               /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "settings-item-desc", children: [
-                "Display balance in ",
-                nativeSymbol,
-                " as primary"
+                "Display hero balance in ",
+                nativeSymbol
               ] })
             ] })
           ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `toggle ${isNativeSelected ? "active" : ""}`, children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "toggle-handle" }) })
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `toggle ${showNativeHero ? "active" : ""}`, children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "toggle-handle" }) })
         ] }) }),
-        !isNativeSelected && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Fiat Currency" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "radio-group", children: fiatCurrencies.map((c) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `radio-option ${currency === c.code ? "selected" : ""}`, onClick: () => setCurrency(c.code), children: [
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "radio-option-text", children: [
@@ -27561,8 +27639,8 @@ function SettingsScreen({ wallet, onBack, onLock, initialPasswordProtection, onP
               {
                 className: "btn-secondary",
                 style: { display: "flex", alignItems: "center", justifyContent: "center", gap: "12px" },
-                onClick: () => {
-                  navigator.clipboard.writeText(phrase);
+                onClick: async () => {
+                  await navigator.clipboard.writeText(phrase);
                   setCopied(true);
                   setTimeout(() => setCopied(false), 2e3);
                 },
@@ -27595,8 +27673,8 @@ function SettingsScreen({ wallet, onBack, onLock, initialPasswordProtection, onP
   }
   if (subScreen === "privatekey") {
     const currentPrivateKey = ((_b2 = wallet.wallet) == null ? void 0 : _b2.privateKey) || "";
-    const copyPrivateKey = () => {
-      navigator.clipboard.writeText(currentPrivateKey);
+    const copyPrivateKey = async () => {
+      await navigator.clipboard.writeText(currentPrivateKey);
       setPrivateKeyCopied(true);
       setTimeout(() => setPrivateKeyCopied(false), 2e3);
     };
@@ -28817,7 +28895,10 @@ Address: ${publicKeyBase58.slice(0, 20)}...`);
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Currency" })
           ] }),
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-item-right", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "settings-value", children: currency === "NATIVE" ? "Native" : currency }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "settings-value", children: [
+              currency,
+              showNativeHero ? " + Native" : ""
+            ] }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M9 18l6-6-6-6" }) })
           ] })
         ] })
@@ -28924,6 +29005,46 @@ function SendFlow({ wallet, selectedToken: initialToken, userTokens = [], onBack
   const [recentAddresses, setRecentAddresses] = reactExports.useState([]);
   const [priority, setPriority] = reactExports.useState("auto");
   const [customFee, setCustomFee] = reactExports.useState("");
+  const [currency, setCurrency] = reactExports.useState(() => {
+    try {
+      const saved = localStorage.getItem("x1wallet_currency");
+      const parsed = saved ? JSON.parse(saved) : "USD";
+      return parsed === "NATIVE" ? "USD" : parsed;
+    } catch {
+      return "USD";
+    }
+  });
+  const getExchangeRates = () => {
+    try {
+      const cached = localStorage.getItem("x1wallet_exchange_rates");
+      if (cached) {
+        const { rates } = JSON.parse(cached);
+        return rates;
+      }
+    } catch {
+    }
+    return { EUR: 0.92, GBP: 0.79, PLN: 4.02, JPY: 156, CAD: 1.44, AUD: 1.57, CNY: 7.24, KRW: 1380 };
+  };
+  const exchangeRates = getExchangeRates();
+  const currencyInfo = {
+    USD: { symbol: "$", position: "before", rate: 1 },
+    EUR: { symbol: "€", position: "before", rate: exchangeRates.EUR },
+    GBP: { symbol: "£", position: "before", rate: exchangeRates.GBP },
+    PLN: { symbol: "zł", position: "after", rate: exchangeRates.PLN },
+    JPY: { symbol: "¥", position: "before", rate: exchangeRates.JPY },
+    CAD: { symbol: "C$", position: "before", rate: exchangeRates.CAD },
+    AUD: { symbol: "A$", position: "before", rate: exchangeRates.AUD },
+    CNY: { symbol: "¥", position: "before", rate: exchangeRates.CNY },
+    KRW: { symbol: "₩", position: "before", rate: exchangeRates.KRW }
+  };
+  const formatCurrency = (usdValue) => {
+    if (usdValue === null || usdValue === void 0 || isNaN(usdValue) || usdValue <= 0) return "";
+    const info = currencyInfo[currency] || currencyInfo.USD;
+    const convertedValue = usdValue * (info.rate || 1);
+    const decimals = currency === "JPY" || currency === "KRW" ? 0 : 2;
+    const formatted = convertedValue.toLocaleString(void 0, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+    return info.position === "after" ? formatted + " " + info.symbol : info.symbol + formatted;
+  };
   const isHardwareWallet = ((_a2 = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _a2.isHardware) || ((_b2 = wallet == null ? void 0 : wallet.activeWallet) == null ? void 0 : _b2.isHardware) || (wallet == null ? void 0 : wallet.isHardware) || false;
   const network = (wallet == null ? void 0 : wallet.network) || "X1 Mainnet";
   const networkConfig = NETWORKS[network] || {
@@ -28985,6 +29106,7 @@ function SendFlow({ wallet, selectedToken: initialToken, userTokens = [], onBack
                   avatar: w2.avatar,
                   isHardware: w2.isHardware,
                   type: w2.type,
+                  isWatchOnly: w2.isWatchOnly || w2.type === "watchonly",
                   isCurrent: pk2 === currentPublicKey
                   // Mark if this is current wallet
                 });
@@ -29000,6 +29122,7 @@ function SendFlow({ wallet, selectedToken: initialToken, userTokens = [], onBack
               avatar: w2.avatar,
               isHardware: w2.isHardware,
               type: w2.type,
+              isWatchOnly: w2.isWatchOnly || w2.type === "watchonly",
               isCurrent: walletPk === currentPublicKey
             });
           }
@@ -29541,10 +29664,7 @@ function SendFlow({ wallet, selectedToken: initialToken, userTokens = [], onBack
                   ] }),
                   /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-token-balance-col", children: [
                     /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "send-token-balance-amount", children: balance.toLocaleString(void 0, { maximumFractionDigits: 6 }) }),
-                    usdValue > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "send-token-balance-usd", children: [
-                      "$",
-                      usdValue.toLocaleString(void 0, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                    ] })
+                    usdValue > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "send-token-balance-usd", children: formatCurrency(usdValue) })
                   ] })
                 ]
               },
@@ -29617,15 +29737,22 @@ function SendFlow({ wallet, selectedToken: initialToken, userTokens = [], onBack
               var _a4, _b4, _c2, _d2;
               const hasImage = w2.avatar && (w2.avatar.startsWith("data:image") || w2.avatar.startsWith("http"));
               const isHardware = w2.isHardware || w2.type === "ledger";
+              const isWatchOnly = w2.isWatchOnly || w2.type === "watchonly";
               return /* @__PURE__ */ jsxRuntimeExports.jsxs(
                 "div",
                 {
                   className: "send-address-row",
                   onClick: () => selectRecipient(w2.publicKey, w2.name),
                   children: [
-                    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "send-wallet-avatar", children: hasImage ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: w2.avatar, alt: w2.name }) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "wallet-avatar-initials", children: isHardware ? "L" : ((_b4 = (_a4 = w2.name) == null ? void 0 : _a4.charAt(0)) == null ? void 0 : _b4.toUpperCase()) || "W" }) }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "send-wallet-avatar", children: hasImage ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: w2.avatar, alt: w2.name }) : isWatchOnly ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "wallet-avatar-initials", style: { background: "rgba(255, 193, 7, 0.2)", display: "flex", alignItems: "center", justifyContent: "center" }, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "none", stroke: "#ffc107", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "7", cy: "14", r: "4" }),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "17", cy: "14", r: "4" }),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7 10V6" }),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M17 10V6" }),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M11 14h2" })
+                    ] }) }) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "wallet-avatar-initials", children: isHardware ? "L" : ((_b4 = (_a4 = w2.name) == null ? void 0 : _a4.charAt(0)) == null ? void 0 : _b4.toUpperCase()) || "W" }) }),
                     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-wallet-info", children: [
-                      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "send-wallet-name", children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "send-wallet-name", style: isWatchOnly ? { color: "#ffc107" } : void 0, children: [
                         w2.name || `Wallet ${i + 1}`,
                         w2.isCurrent && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { color: "var(--text-muted)", fontSize: 11, marginLeft: 6 }, children: "(Current)" })
                       ] }),
@@ -34293,6 +34420,57 @@ function TokenDetail({
   const [priceChange24h, setPriceChange24h] = reactExports.useState(null);
   const [loading, setLoading] = reactExports.useState(true);
   const [mintCopied, setMintCopied] = reactExports.useState(false);
+  const [currency, setCurrency] = reactExports.useState(() => {
+    try {
+      const saved = localStorage.getItem("x1wallet_currency");
+      const parsed = saved ? JSON.parse(saved) : "USD";
+      return parsed === "NATIVE" ? "USD" : parsed;
+    } catch {
+      return "USD";
+    }
+  });
+  reactExports.useEffect(() => {
+    const checkCurrency = () => {
+      try {
+        const saved = localStorage.getItem("x1wallet_currency");
+        let newCurrency = saved ? JSON.parse(saved) : "USD";
+        if (newCurrency === "NATIVE") newCurrency = "USD";
+        if (newCurrency !== currency) {
+          setCurrency(newCurrency);
+        }
+      } catch {
+      }
+    };
+    window.addEventListener("storage", checkCurrency);
+    window.addEventListener("focus", checkCurrency);
+    return () => {
+      window.removeEventListener("storage", checkCurrency);
+      window.removeEventListener("focus", checkCurrency);
+    };
+  }, [currency]);
+  const getExchangeRates = () => {
+    try {
+      const cached = localStorage.getItem("x1wallet_exchange_rates");
+      if (cached) {
+        const { rates } = JSON.parse(cached);
+        return rates;
+      }
+    } catch {
+    }
+    return { EUR: 0.92, GBP: 0.79, PLN: 4.02, JPY: 156, CAD: 1.44, AUD: 1.57, CNY: 7.24, KRW: 1380 };
+  };
+  const exchangeRates = getExchangeRates();
+  const currencyInfo = {
+    USD: { symbol: "$", position: "before", rate: 1 },
+    EUR: { symbol: "€", position: "before", rate: exchangeRates.EUR },
+    GBP: { symbol: "£", position: "before", rate: exchangeRates.GBP },
+    PLN: { symbol: "zł", position: "after", rate: exchangeRates.PLN },
+    JPY: { symbol: "¥", position: "before", rate: exchangeRates.JPY },
+    CAD: { symbol: "C$", position: "before", rate: exchangeRates.CAD },
+    AUD: { symbol: "A$", position: "before", rate: exchangeRates.AUD },
+    CNY: { symbol: "¥", position: "before", rate: exchangeRates.CNY },
+    KRW: { symbol: "₩", position: "before", rate: exchangeRates.KRW }
+  };
   const network = (wallet == null ? void 0 : wallet.network) || "X1 Mainnet";
   const networkConfig = NETWORKS[network] || {
     symbol: "XNT",
@@ -34479,14 +34657,17 @@ function TokenDetail({
   };
   const formatUsd = (value) => {
     if (value === null || value === void 0 || isNaN(value)) return "--";
-    if (value < 1e-4) return `$${value.toFixed(8)}`;
-    if (value < 0.01) return `$${value.toFixed(6)}`;
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    }).format(value);
+    const info = currencyInfo[currency] || currencyInfo.USD;
+    const convertedValue = value * (info.rate || 1);
+    const decimals = currency === "JPY" || currency === "KRW" ? 0 : 2;
+    if (convertedValue < 0.01 && decimals > 0) {
+      return info.position === "after" ? "<0.01 " + info.symbol : "<" + info.symbol + "0.01";
+    }
+    const formatted = convertedValue.toLocaleString(void 0, {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals
+    });
+    return info.position === "after" ? formatted + " " + info.symbol : info.symbol + formatted;
   };
   const formatBalance2 = (value) => {
     if (!value || isNaN(value)) return "0";
@@ -34948,6 +35129,47 @@ function DAppApproval({ wallet, requestId, onComplete }) {
   const [ledgerPopupError, setLedgerPopupError] = reactExports.useState(false);
   const signingInProgress = reactExports.useRef(false);
   const lastSignAttempt = reactExports.useRef(0);
+  const completeAndCheckNext = async () => {
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const response = await safeSendMessage$1({ type: "get-pending-request" });
+      const nextRequest = (response == null ? void 0 : response.request) || response;
+      const nextReqId = (response == null ? void 0 : response.requestId) || (nextRequest == null ? void 0 : nextRequest.requestId);
+      if (nextRequest && nextRequest.type) {
+        logger$1.log("[DAppApproval] Found next pending request:", nextRequest.type, "id:", nextReqId);
+        setPendingRequest(nextRequest);
+        setCurrentRequestId(nextReqId);
+        setProcessing(false);
+        setError(null);
+        if (nextRequest.transaction) {
+          try {
+            const txBytes = Uint8Array.from(atob(nextRequest.transaction), (c) => c.charCodeAt(0));
+            const decoded = decodeTransaction(txBytes);
+            setDecodedTx(decoded);
+          } catch (e) {
+            setDecodedTx({ success: false, raw: true });
+          }
+        } else if (nextRequest.transactions && nextRequest.transactions.length > 0) {
+          try {
+            const txBytes = Uint8Array.from(atob(nextRequest.transactions[0]), (c) => c.charCodeAt(0));
+            const decoded = decodeTransaction(txBytes);
+            decoded.totalTransactions = nextRequest.transactions.length;
+            setDecodedTx(decoded);
+          } catch (e) {
+            setDecodedTx({ success: false, raw: true, totalTransactions: nextRequest.transactions.length });
+          }
+        } else {
+          setDecodedTx(null);
+        }
+        return;
+      }
+    } catch (e) {
+      logger$1.log("[DAppApproval] Error checking for next request:", e.message);
+    }
+    logger$1.log("[DAppApproval] No more pending requests, closing");
+    if (onComplete) onComplete();
+    setTimeout(() => window.close(), 300);
+  };
   reactExports.useEffect(() => {
     const loadNetwork = async () => {
       try {
@@ -35145,8 +35367,7 @@ function DAppApproval({ wallet, requestId, onComplete }) {
         });
       } catch (e) {
       }
-      if (onComplete) onComplete();
-      setTimeout(() => window.close(), 300);
+      await completeAndCheckNext();
     } catch (err) {
       setError(getUserFriendlyError(err, ErrorMessages.wallet.loadFailed));
       setProcessing(false);
@@ -35226,8 +35447,7 @@ function DAppApproval({ wallet, requestId, onComplete }) {
         requestId: currentRequestId,
         signedTransaction: signedTxBase64
       });
-      if (onComplete) onComplete();
-      setTimeout(() => window.close(), 300);
+      await completeAndCheckNext();
     } catch (err) {
       logger$1.error("[DAppApproval] Sign error:", err);
       if (err.message === "LEDGER_POPUP_LIMITATION") {
@@ -35317,8 +35537,7 @@ function DAppApproval({ wallet, requestId, onComplete }) {
         requestId: currentRequestId,
         signedTransactions: signedTxs
       });
-      if (onComplete) onComplete();
-      setTimeout(() => window.close(), 300);
+      await completeAndCheckNext();
     } catch (err) {
       logger$1.error("[DAppApproval] Sign all error:", err);
       if (err.message === "LEDGER_POPUP_LIMITATION") {
@@ -35542,9 +35761,8 @@ function DAppApproval({ wallet, requestId, onComplete }) {
         requestId: currentRequestId,
         signature: txSignature
       });
-      logger$1.log("[DAppApproval] Response sent, closing popup");
-      if (onComplete) onComplete();
-      setTimeout(() => window.close(), 300);
+      logger$1.log("[DAppApproval] Response sent, checking for next request");
+      await completeAndCheckNext();
     } catch (err) {
       logger$1.error("[DAppApproval] Send error:", err.message || err);
       if (err.message === "LEDGER_POPUP_LIMITATION") {
@@ -35617,8 +35835,7 @@ function DAppApproval({ wallet, requestId, onComplete }) {
         requestId: currentRequestId,
         signature: signatureBase64
       });
-      if (onComplete) onComplete();
-      setTimeout(() => window.close(), 300);
+      await completeAndCheckNext();
     } catch (err) {
       logger$1.error("[DAppApproval] Sign message error:", {
         message: err == null ? void 0 : err.message,
@@ -36482,6 +36699,7 @@ function App() {
   const [hasDAppRequest, setHasDAppRequest] = reactExports.useState(false);
   const [dappRequiresReauth, setDappRequiresReauth] = reactExports.useState(false);
   const [currentRequestId, setCurrentRequestId] = reactExports.useState(null);
+  const pendingRequestRef = reactExports.useRef(null);
   const [alertModal, setAlertModal] = reactExports.useState({ show: false, title: "", message: "", type: "error" });
   const [passwordPrompt, setPasswordPrompt] = reactExports.useState({ show: false, title: "", message: "", resolve: null });
   const lastActivityRef = reactExports.useRef(Date.now());
@@ -36575,7 +36793,8 @@ function App() {
         port = chrome.runtime.connect({ name: "x1-wallet-popup" });
         port.onMessage.addListener((message) => {
           if (message.type === "pending-request" && message.request) {
-            logger$1.log("[App] Received pending request via port:", message.request.type);
+            logger$1.log("[App] Received pending request via port:", message.request.type, "id:", message.requestId);
+            pendingRequestRef.current = message.requestId || message.request.requestId;
             setHasDAppRequest(true);
             setCurrentRequestId(message.requestId || message.request.requestId);
             if (message.request.requiresReauth) {
@@ -37276,7 +37495,7 @@ function App() {
           onClose: closeAlert
         }
       ),
-      passwordPrompt.show && /* @__PURE__ */ jsxRuntimeExports.jsx(
+      passwordPrompt.show ? /* @__PURE__ */ jsxRuntimeExports.jsx(
         PasswordPromptModal,
         {
           title: passwordPrompt.title,
@@ -37284,8 +37503,7 @@ function App() {
           onSubmit: handlePasswordSubmit,
           onCancel: handlePasswordCancel
         }
-      ),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
+      ) : /* @__PURE__ */ jsxRuntimeExports.jsx(
         ImportWallet,
         {
           onComplete: handleImportComplete,
@@ -37688,8 +37906,18 @@ function App() {
         wallet,
         requestId: currentRequestId,
         onComplete: () => {
-          setHasDAppRequest(false);
-          setCurrentRequestId(null);
+          const completedId = currentRequestId;
+          setTimeout(() => {
+            if (pendingRequestRef.current === completedId || pendingRequestRef.current === null) {
+              logger$1.log("[App] DApp request completed, no more pending requests");
+              setHasDAppRequest(false);
+              setCurrentRequestId(null);
+              pendingRequestRef.current = null;
+            } else {
+              logger$1.log("[App] New pending request detected:", pendingRequestRef.current, "- keeping approval screen open");
+              setDappRequiresReauth(false);
+            }
+          }, 100);
         }
       }
     ) });

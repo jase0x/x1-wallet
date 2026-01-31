@@ -698,8 +698,8 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
                     <button 
                       className="btn-secondary" 
                       style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px' }}
-                      onClick={() => {
-                        navigator.clipboard.writeText(phrase);
+                      onClick={async () => {
+                        await navigator.clipboard.writeText(phrase);
                         setCopied(true);
                         setTimeout(() => setCopied(false), 2000);
                       }}
@@ -736,8 +736,8 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
   if (subScreen === 'privatekey') {
     const currentPrivateKey = wallet.wallet?.privateKey || '';
     
-    const copyPrivateKey = () => {
-      navigator.clipboard.writeText(currentPrivateKey);
+    const copyPrivateKey = async () => {
+      await navigator.clipboard.writeText(currentPrivateKey);
       setPrivateKeyCopied(true);
       setTimeout(() => setPrivateKeyCopied(false), 2000);
     };

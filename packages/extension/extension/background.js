@@ -12,6 +12,42 @@ const PENDING_REQUESTS_KEY = 'x1wallet_pending_requests';
 const SESSION_TIMEOUT_MS = 4 * 60 * 60 * 1000; // 4 hours
 const SENSITIVE_OPS_REAUTH_MS = 30 * 60 * 1000; // 30 minutes for sensitive operations
 
+// ============================================================================
+// X1W-SEC-PATCH: Security enhancements
+// ============================================================================
+
+// Rate limiting per origin to prevent DoS/spam attacks
+const ORIGIN_RATE_LIMITS = new Map(); // origin -> { count, resetTime }
+const MAX_REQUESTS_PER_MINUTE = 30;
+const MAX_PENDING_PER_ORIGIN = 5;
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+
+// Known phishing domains - update this list regularly
+const KNOWN_PHISHING_DOMAINS = new Set([
+  'phantom-wallet.com',
+  'phantomwallet.io', 
+  'solanawallet.com',
+  'sollet-wallet.com',
+  'phantom-app.com',
+  'solflare-wallet.com',
+  'x1wallet.com',
+  'x1-wallet.com',
+  'x1wallet.io',
+  'x1-wallet.io'
+]);
+
+// Suspicious URL patterns that may indicate phishing
+const SUSPICIOUS_PATTERNS = [
+  /phantom.*wallet/i,
+  /free.*airdrop/i,
+  /claim.*token/i,
+  /connect.*wallet.*verify/i
+];
+
+// ============================================================================
+// End security constants
+// ============================================================================
+
 // Track connected popup/side panel ports for approval notifications
 // Map port -> requestId that was displayed to that popup
 const connectedPorts = new Map();
@@ -196,24 +232,38 @@ async function isSiteConnected(origin) {
     }
   }
   
+  // X1W-SEC-PATCH: Re-check if domain has become a known phishing site since connection
+  const phishingCheck = isPhishingDomain(origin);
+  if (phishingCheck.isPhishing) {
+    console.warn('[Background] Previously connected site now flagged as phishing:', origin, phishingCheck.reason);
+    delete sites[origin];
+    await saveConnectedSites(sites);
+    return false;
+  }
+  
   return true;
 }
 
 // X1W-006: Check if sensitive operation requires re-authentication
-// TEMPORARILY DISABLED for debugging - always returns false
+// SECURITY FIX: Re-enabled - users must re-authenticate after 30 minutes of inactivity
 async function requiresReauth(origin) {
-  // TODO: Re-enable after debugging reauth trigger issue
-  return false;
-  
-  /*
   const sites = await getConnectedSites();
   const siteData = sites[origin];
   
-  if (!siteData || !siteData.lastSensitiveOp) return false;
+  // First sensitive operation doesn't require reauth
+  if (!siteData || !siteData.lastSensitiveOp) {
+    return false;
+  }
   
   const timeSinceLastOp = Date.now() - siteData.lastSensitiveOp;
-  return timeSinceLastOp > SENSITIVE_OPS_REAUTH_MS;
-  */
+  const needsReauth = timeSinceLastOp > SENSITIVE_OPS_REAUTH_MS;
+  
+  if (needsReauth) {
+    console.log('[Background] Re-authentication required for:', origin,
+                'Time since last op:', Math.round(timeSinceLastOp / 60000), 'minutes');
+  }
+  
+  return needsReauth;
 }
 
 // X1W-006: Update last sensitive operation timestamp
@@ -331,6 +381,37 @@ function removePendingRequest(id) {
     if (entry.timeoutId) clearTimeout(entry.timeoutId);
     pendingRequests.delete(id);
     console.log('[Background] Removed pending request:', id, 'Remaining:', pendingRequests.size);
+    
+    // If there are more pending requests, notify the popup to show the next one
+    if (pendingRequests.size > 0) {
+      const next = getOldestPendingRequest();
+      if (next) {
+        console.log('[Background] Pushing next pending request to popup:', next.id);
+        for (const [port, currentRequestId] of connectedPorts) {
+          // Update ports that were handling the removed request
+          if (currentRequestId === id) {
+            try {
+              port.postMessage({ 
+                type: 'pending-request', 
+                request: next.request,
+                requestId: next.id 
+              });
+              connectedPorts.set(port, next.id);
+              console.log('[Background] Sent next request to popup');
+            } catch (e) {
+              console.log('[Background] Failed to send next request to port:', e.message);
+              connectedPorts.delete(port);
+            }
+          }
+        }
+        // Update badge to show remaining count
+        chrome.action.setBadgeText({ text: pendingRequests.size.toString() });
+        chrome.action.setBadgeBackgroundColor({ color: '#FF6B00' });
+      }
+    } else {
+      // Clear badge when no more requests
+      clearBadge();
+    }
   }
 }
 
@@ -537,6 +618,141 @@ async function handleWalletChanged(publicKey, force = false) {
   }
 }
 
+// ============================================================================
+// X1W-SEC-PATCH: Security helper functions
+// ============================================================================
+
+/**
+ * Check rate limit for an origin
+ * Prevents DoS attacks from malicious dApps
+ */
+function checkOriginRateLimit(origin) {
+  const now = Date.now();
+  let limits = ORIGIN_RATE_LIMITS.get(origin);
+  
+  if (!limits || now > limits.resetTime) {
+    limits = { count: 0, resetTime: now + RATE_LIMIT_WINDOW_MS };
+    ORIGIN_RATE_LIMITS.set(origin, limits);
+  }
+  
+  limits.count++;
+  
+  if (limits.count > MAX_REQUESTS_PER_MINUTE) {
+    console.warn('[Background] Rate limit exceeded for origin:', origin, 'Count:', limits.count);
+    return false;
+  }
+  
+  return true;
+}
+
+/**
+ * Count pending requests for a specific origin
+ * Prevents request queue flooding
+ */
+function countPendingForOrigin(origin) {
+  let count = 0;
+  for (const [, entry] of pendingRequests) {
+    if (entry.request && entry.request.origin === origin) {
+      count++;
+    }
+  }
+  return count;
+}
+
+/**
+ * Check if a domain is a known phishing site
+ * @returns {{ isPhishing: boolean, reason?: string }}
+ */
+function isPhishingDomain(origin) {
+  try {
+    const url = new URL(origin);
+    const hostname = url.hostname.toLowerCase();
+    
+    // Check against known phishing domains
+    if (KNOWN_PHISHING_DOMAINS.has(hostname)) {
+      return { isPhishing: true, reason: 'Known phishing domain' };
+    }
+    
+    // Check for homograph attacks (non-ASCII characters in domain)
+    if (/[^\x00-\x7F]/.test(hostname)) {
+      return { isPhishing: true, reason: 'Non-ASCII characters in domain (possible homograph attack)' };
+    }
+    
+    // Check suspicious URL patterns
+    for (const pattern of SUSPICIOUS_PATTERNS) {
+      if (pattern.test(origin)) {
+        return { isPhishing: true, reason: 'Suspicious URL pattern', pattern: pattern.toString() };
+      }
+    }
+    
+    return { isPhishing: false };
+  } catch (e) {
+    return { isPhishing: true, reason: 'Invalid origin URL' };
+  }
+}
+
+/**
+ * Validate request parameters for known methods
+ */
+function validateRequestParams(method, params) {
+  const MAX_TRANSACTION_SIZE = 1232; // Solana max transaction size
+  const MAX_MESSAGE_SIZE = 65536;    // 64KB max for messages
+  const MAX_TRANSACTIONS_BATCH = 10;
+  
+  // Validate transaction size
+  if (params && params.transaction) {
+    try {
+      const decoded = atob(params.transaction);
+      if (decoded.length > MAX_TRANSACTION_SIZE) {
+        return { valid: false, error: 'Transaction exceeds maximum size' };
+      }
+    } catch (e) {
+      return { valid: false, error: 'Invalid transaction encoding' };
+    }
+  }
+  
+  // Validate transactions batch
+  if (params && params.transactions) {
+    if (!Array.isArray(params.transactions)) {
+      return { valid: false, error: 'transactions must be an array' };
+    }
+    if (params.transactions.length > MAX_TRANSACTIONS_BATCH) {
+      return { valid: false, error: `Too many transactions (max ${MAX_TRANSACTIONS_BATCH})` };
+    }
+  }
+  
+  // Validate message size
+  if (params && params.message) {
+    try {
+      const decoded = atob(params.message);
+      if (decoded.length > MAX_MESSAGE_SIZE) {
+        return { valid: false, error: 'Message exceeds maximum size' };
+      }
+    } catch (e) {
+      // Message might be raw string
+      if (params.message.length > MAX_MESSAGE_SIZE) {
+        return { valid: false, error: 'Message exceeds maximum size' };
+      }
+    }
+  }
+  
+  return { valid: true };
+}
+
+// Clean up stale rate limit entries periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [origin, limits] of ORIGIN_RATE_LIMITS) {
+    if (now > limits.resetTime + RATE_LIMIT_WINDOW_MS) {
+      ORIGIN_RATE_LIMITS.delete(origin);
+    }
+  }
+}, 5 * 60 * 1000); // Every 5 minutes
+
+// ============================================================================
+// End security helpers
+// ============================================================================
+
 // Handle provider requests
 async function handleProviderRequest(message, sender) {
   const { method, params, favicon } = message;
@@ -544,7 +760,34 @@ async function handleProviderRequest(message, sender) {
   // X1W-006: Use secure origin validation
   const origin = validateOrigin(message.origin, sender);
   
-  console.log('[Background] Provider request:', method, 'from:', origin, 'params:', params);
+  // X1W-SEC-PATCH: Check rate limits
+  if (!checkOriginRateLimit(origin)) {
+    throw new Error('Rate limit exceeded. Please wait before making more requests.');
+  }
+  
+  // X1W-SEC-PATCH: Check for phishing domains
+  const phishingCheck = isPhishingDomain(origin);
+  if (phishingCheck.isPhishing) {
+    console.error('[Background] BLOCKED phishing attempt:', origin, phishingCheck.reason);
+    throw new Error('This site has been flagged as potentially dangerous.');
+  }
+  
+  // X1W-SEC-PATCH: Validate request parameters
+  const validation = validateRequestParams(method, params);
+  if (!validation.valid) {
+    console.warn('[Background] Invalid request from:', origin, validation.error);
+    throw new Error(validation.error);
+  }
+  
+  // X1W-SEC-PATCH: Limit pending requests per origin for signing operations
+  if (['signTransaction', 'signAllTransactions', 'signAndSendTransaction', 'signMessage'].includes(method)) {
+    const pendingCount = countPendingForOrigin(origin);
+    if (pendingCount >= MAX_PENDING_PER_ORIGIN) {
+      throw new Error('Too many pending requests. Please approve or reject existing requests first.');
+    }
+  }
+  
+  console.log('[Background] Provider request:', method, 'from:', origin);
   
   switch (method) {
     case 'connect':
