@@ -1210,18 +1210,6 @@ export default function ImportWallet({ onComplete, onBack, onCompletePrivateKey,
                       <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)' }}>
                         Account {(addr.accountIndex ?? addr.index) + 1}
                       </span>
-                      {/* Show path badge if scanning all paths */}
-                      {addr.schemeName && (
-                        <span style={{ 
-                          fontSize: 9, 
-                          color: addr.scheme === 'legacy' ? '#ffc107' : 'var(--x1-blue)', 
-                          background: addr.scheme === 'legacy' ? 'rgba(255, 193, 7, 0.1)' : 'rgba(2, 116, 251, 0.1)',
-                          padding: '1px 4px',
-                          borderRadius: 3
-                        }}>
-                          {addr.scheme === 'legacy' ? 'Legacy' : 'Standard'}
-                        </span>
-                      )}
                     </div>
                     {alreadyImported && (
                       <span style={{ 

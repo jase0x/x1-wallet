@@ -202,6 +202,7 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
                   avatar: w.avatar,
                   isHardware: w.isHardware,
                   type: w.type,
+                  isWatchOnly: w.isWatchOnly || w.type === 'watchonly',
                   isCurrent: pk === currentPublicKey // Mark if this is current wallet
                 });
               }
@@ -218,6 +219,7 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
               avatar: w.avatar,
               isHardware: w.isHardware,
               type: w.type,
+              isWatchOnly: w.isWatchOnly || w.type === 'watchonly',
               isCurrent: walletPk === currentPublicKey
             });
           }
@@ -941,6 +943,7 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
                 {myWallets.map((w, i) => {
                   const hasImage = w.avatar && (w.avatar.startsWith('data:image') || w.avatar.startsWith('http'));
                   const isHardware = w.isHardware || w.type === 'ledger';
+                  const isWatchOnly = w.isWatchOnly || w.type === 'watchonly';
                   
                   return (
                     <div 
@@ -951,6 +954,16 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
                       <div className="send-wallet-avatar">
                         {hasImage ? (
                           <img src={w.avatar} alt={w.name} />
+                        ) : isWatchOnly ? (
+                          <span className="wallet-avatar-initials" style={{ background: 'rgba(255, 193, 7, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffc107" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <circle cx="7" cy="14" r="4" />
+                              <circle cx="17" cy="14" r="4" />
+                              <path d="M7 10V6" />
+                              <path d="M17 10V6" />
+                              <path d="M11 14h2" />
+                            </svg>
+                          </span>
                         ) : (
                           <span className="wallet-avatar-initials">
                             {isHardware ? 'L' : (w.name?.charAt(0)?.toUpperCase() || 'W')}
@@ -958,7 +971,7 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
                         )}
                       </div>
                       <div className="send-wallet-info">
-                        <span className="send-wallet-name">
+                        <span className="send-wallet-name" style={isWatchOnly ? { color: '#ffc107' } : undefined}>
                           {w.name || `Wallet ${i + 1}`}
                           {w.isCurrent && <span style={{ color: 'var(--text-muted)', fontSize: 11, marginLeft: 6 }}>(Current)</span>}
                         </span>

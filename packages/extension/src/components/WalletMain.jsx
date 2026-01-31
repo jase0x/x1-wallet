@@ -632,13 +632,12 @@ function ActivityList({ walletAddress, network, networkConfig, refreshKey }) {
           
           // Get amount display
           const getAmountDisplay = () => {
-            // Format amount to show max 4 decimals, remove trailing zeros
+            // Format amount - Backpack style: 4 decimals, remove trailing zeros
             const formatAmount = (num) => {
               if (typeof num !== 'number') return num || '0';
-              // For amounts >= 1, show max 2 decimals
-              if (num >= 1) return parseFloat(num.toFixed(2)).toString();
-              // For amounts < 1, show max 6 decimals
-              return parseFloat(num.toFixed(6)).toString();
+              if (num >= 0.0001) return parseFloat(num.toFixed(4)).toString();
+              // For very small amounts, show exponential
+              return num.toExponential(2);
             };
             
             const amount = formatAmount(tx.amount);
@@ -1855,7 +1854,11 @@ function DefiTab({ wallet, tokens, isSolana, onStake }) {
               </div>
               <div className="defi-item-info">
                 <span className="defi-item-title">{lp.name || lp.symbol || 'LP Token'}</span>
-                <span className="defi-item-desc">{parseFloat(lp.balance || lp.uiAmount || 0).toFixed(6)} tokens</span>
+                <span className="defi-item-desc">{(() => {
+                  const amt = parseFloat(lp.balance || lp.uiAmount || 0);
+                  if (amt < 0.0001) return amt.toExponential(2);
+                  return parseFloat(amt.toFixed(4)).toString();
+                })()} tokens</span>
               </div>
               <div className="defi-item-value">
                 {lp.usdValue ? `$${lp.usdValue.toFixed(2)}` : ''}
@@ -2101,13 +2104,12 @@ function WalletPanel({ wallets, activeId, network, onSelect, onManage, onClose, 
   }, []); // Only run once on mount
 
   // Format balance for display
+  // Backpack style: 4 decimals
   const formatBalance = (balance) => {
     if (balance === null || balance === undefined) return '...';
     if (balance === 0) return '0';
     if (balance < 0.0001) return '<0.0001';
-    if (balance < 1) return balance.toFixed(4);
-    if (balance < 1000) return balance.toFixed(2);
-    if (balance < 1000000) return (balance / 1000).toFixed(1) + 'K';
+    if (balance < 1000000) return parseFloat(balance.toFixed(4)).toLocaleString(undefined, { maximumFractionDigits: 4 });
     return (balance / 1000000).toFixed(1) + 'M';
   };
 
@@ -2252,6 +2254,16 @@ function WalletPanel({ wallets, activeId, network, onSelect, onManage, onClose, 
                 <div className="wallet-item-avatar">
                   {hasImage ? (
                     <img src={w.avatar} alt={w.name} />
+                  ) : (w.type === 'watchonly' || w.isWatchOnly) ? (
+                    <div className="wallet-avatar-initials" style={{ background: 'rgba(255, 193, 7, 0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffc107" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="7" cy="14" r="4" />
+                        <circle cx="17" cy="14" r="4" />
+                        <path d="M7 10V6" />
+                        <path d="M17 10V6" />
+                        <path d="M11 14h2" />
+                      </svg>
+                    </div>
                   ) : (
                     <div className="wallet-avatar-initials">
                       {w.isHardware ? 'L' : (w.name?.charAt(0)?.toUpperCase() || 'W')}
@@ -3615,17 +3627,12 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
     return '$' + usdValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
   
-  // Format balance - show minimal decimals, no trailing zeros, with commas
-  const formatBalance = (balance, maxDecimals = 6) => {
+  // Format balance - Backpack style: 4 decimals, remove trailing zeros
+  const formatBalance = (balance, maxDecimals = 4) => {
     if (balance === 0 || balance === null || balance === undefined) return '0';
-    if (balance < 0.000001) return balance.toExponential(2);
-    // For large numbers, use commas
-    if (balance >= 1000) {
-      return balance.toLocaleString(undefined, { maximumFractionDigits: maxDecimals });
-    }
-    // For smaller numbers, remove trailing zeros
+    if (balance < 0.0001) return balance.toExponential(2);
     const fixed = balance.toFixed(maxDecimals);
-    return parseFloat(fixed).toString();
+    return parseFloat(fixed).toLocaleString(undefined, { maximumFractionDigits: maxDecimals });
   };
   
   // Toggle token visibility (hide/show)
@@ -4128,7 +4135,7 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
             /* Native token selected - show native balance as primary */
             <>
               <div className="balance-row">
-                <div className="balance-amount">{formatBalance(displayBalance)} {networkConfig.symbol}</div>
+                <div className="balance-amount">{formatBalance(displayBalance, 2)} {networkConfig.symbol}</div>
               </div>
               <div className="balance-usd">{formatFiat(totalPortfolioUsd)}</div>
             </>
@@ -4138,7 +4145,7 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
               <div className="balance-row">
                 <div className="balance-amount">{formatCurrency(totalPortfolioUsd)}</div>
               </div>
-              <div className="balance-usd">{formatBalance(displayBalance)} {networkConfig.symbol}</div>
+              <div className="balance-usd">{formatBalance(displayBalance, 2)} {networkConfig.symbol}</div>
             </>
           )}
         </div>
@@ -4341,7 +4348,6 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
               </div>
               <div className="token-balance">
                 <span className="token-usd">{formatUsd(nativeUsdValue)}</span>
-                <span className="token-change neutral">0.00%</span>
               </div>
             </div>
 
@@ -4488,7 +4494,13 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
                     </button>
                   </div>
                   <span className="token-amount-sub">
-                    {(token.uiAmount || 0).toLocaleString(undefined, { maximumFractionDigits: 6 })} {token.symbol}
+                    {(() => {
+                      const amt = token.uiAmount || 0;
+                      if (amt === 0) return '0';
+                      if (amt < 0.0001) return amt.toExponential(2);
+                      // Backpack style: 4 decimals, remove trailing zeros
+                      return parseFloat(amt.toFixed(4)).toLocaleString(undefined, { maximumFractionDigits: 4 });
+                    })()} {token.symbol}
                   </span>
                 </div>
                 <div className="token-balance">
@@ -4521,7 +4533,6 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
                         : '$0.00';
                     })()}
                   </span>
-                  <span className="token-change neutral">0.00%</span>
                 </div>
               </div>
               );

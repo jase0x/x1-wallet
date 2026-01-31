@@ -1521,24 +1521,25 @@ function App() {
             onClose={closeAlert}
           />
         )}
-        {passwordPrompt.show && (
+        {passwordPrompt.show ? (
           <PasswordPromptModal
             title={passwordPrompt.title}
             message={passwordPrompt.message}
             onSubmit={handlePasswordSubmit}
             onCancel={handlePasswordCancel}
           />
+        ) : (
+          <ImportWallet
+            onComplete={handleImportComplete}
+            onCompleteMultiple={handleImportMultiple}
+            onCompletePrivateKey={handleImportPrivateKey}
+            onCompleteWatchOnly={handleImportWatchOnly}
+            onBack={() => { setImportInitialType('phrase'); setScreen(returnScreen === 'manage' ? 'manage' : 'welcome'); }}
+            sessionPassword={sessionPassword}
+            existingWallets={wallet.wallets || []}
+            initialImportType={importInitialType}
+          />
         )}
-        <ImportWallet
-          onComplete={handleImportComplete}
-          onCompleteMultiple={handleImportMultiple}
-          onCompletePrivateKey={handleImportPrivateKey}
-          onCompleteWatchOnly={handleImportWatchOnly}
-          onBack={() => { setImportInitialType('phrase'); setScreen(returnScreen === 'manage' ? 'manage' : 'welcome'); }}
-          sessionPassword={sessionPassword}
-          existingWallets={wallet.wallets || []}
-          initialImportType={importInitialType}
-        />
       </div>
     );
   }
