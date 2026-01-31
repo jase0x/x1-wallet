@@ -23,7 +23,7 @@ const storage = {
 async function syncFromChromeStorage() {
   if (typeof chrome !== 'undefined' && chrome.storage) {
     try {
-      const keys = ['darkMode', 'autoLock', 'currency', 'notifications', 'skipSimulation', 
+      const keys = ['darkMode', 'autoLock', 'currency', 'showNativeHero', 'notifications', 'skipSimulation', 
                     'passwordProtection', 'biometricEnabled', 'customExplorer', 'passwordHash'];
       const result = await chrome.storage.local.get(keys.map(k => `x1wallet_${k}`));
       for (const key of keys) {
@@ -71,7 +71,12 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
     }
     return saved;
   });
-  const [currency, setCurrency] = useState(() => storage.get('currency', 'USD'));
+  const [currency, setCurrency] = useState(() => {
+    const saved = storage.get('currency', 'USD');
+    // If saved currency is 'NATIVE', default to 'USD' (migration)
+    return saved === 'NATIVE' ? 'USD' : saved;
+  });
+  const [showNativeHero, setShowNativeHero] = useState(() => storage.get('showNativeHero', false));
   const [notifications, setNotifications] = useState(() => storage.get('notifications', true));
   const [skipSimulation, setSkipSimulation] = useState(() => storage.get('skipSimulation', false));
   // Always read fresh from storage - props may be stale
@@ -267,6 +272,7 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
   }, [autoLock, onAutoLockChange]);
 
   useEffect(() => { storage.set('currency', currency); }, [currency]);
+  useEffect(() => { storage.set('showNativeHero', showNativeHero); }, [showNativeHero]);
   useEffect(() => { storage.set('notifications', notifications); }, [notifications]);
   useEffect(() => { storage.set('skipSimulation', skipSimulation); }, [skipSimulation]);
   // NOTE: passwordProtection is saved manually in toggle handler, not auto-saved
@@ -465,7 +471,6 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
     const currentNetwork = wallet?.network || 'X1 Mainnet';
     const isSolana = currentNetwork.includes('Solana');
     const nativeSymbol = isSolana ? 'SOL' : 'XNT';
-    const isNativeSelected = currency === 'NATIVE';
     
     const fiatCurrencies = [
       { code: 'USD', name: 'US Dollar', symbol: '$' },
@@ -492,7 +497,7 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
         <div className="settings-content">
           {/* Native Token Toggle */}
           <div className="settings-section">
-            <div className="settings-item" onClick={() => setCurrency(isNativeSelected ? 'USD' : 'NATIVE')}>
+            <div className="settings-item" onClick={() => setShowNativeHero(!showNativeHero)}>
               <div className="settings-item-left">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <circle cx="12" cy="12" r="10" />
@@ -500,34 +505,32 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
                 </svg>
                 <div className="settings-item-text">
                   <span>Show Native Token</span>
-                  <span className="settings-item-desc">Display balance in {nativeSymbol} as primary</span>
+                  <span className="settings-item-desc">Display hero balance in {nativeSymbol}</span>
                 </div>
               </div>
-              <div className={`toggle ${isNativeSelected ? 'active' : ''}`}>
+              <div className={`toggle ${showNativeHero ? 'active' : ''}`}>
                 <div className="toggle-handle" />
               </div>
             </div>
           </div>
           
-          {/* Fiat Currency Selection */}
-          {!isNativeSelected && (
-            <div className="settings-section">
-              <h3>Fiat Currency</h3>
-              <div className="radio-group">
-                {fiatCurrencies.map(c => (
-                  <div key={c.code} className={`radio-option ${currency === c.code ? 'selected' : ''}`} onClick={() => setCurrency(c.code)}>
-                    <div className="radio-option-text">
-                      <span>{c.symbol} {c.code}</span>
-                      <span style={{ fontSize: 12, color: 'var(--text-muted)' }}> - {c.name}</span>
-                    </div>
-                    <div className="radio-option-check">
-                      {currency === c.code && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12" /></svg>}
-                    </div>
+          {/* Fiat Currency Selection - Always visible */}
+          <div className="settings-section">
+            <h3>Fiat Currency</h3>
+            <div className="radio-group">
+              {fiatCurrencies.map(c => (
+                <div key={c.code} className={`radio-option ${currency === c.code ? 'selected' : ''}`} onClick={() => setCurrency(c.code)}>
+                  <div className="radio-option-text">
+                    <span>{c.symbol} {c.code}</span>
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}> - {c.name}</span>
                   </div>
-                ))}
-              </div>
+                  <div className="radio-option-check">
+                    {currency === c.code && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12" /></svg>}
+                  </div>
+                </div>
+              ))}
             </div>
-          )}
+          </div>
         </div>
       </div>
     );
@@ -2139,7 +2142,7 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
               <span>Currency</span>
             </div>
             <div className="settings-item-right">
-              <span className="settings-value">{currency === 'NATIVE' ? 'Native' : currency}</span>
+              <span className="settings-value">{currency}{showNativeHero ? ' + Native' : ''}</span>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M9 18l6-6-6-6" />
               </svg>

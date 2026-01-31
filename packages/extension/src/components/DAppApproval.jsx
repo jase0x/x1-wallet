@@ -474,6 +474,62 @@ export default function DAppApproval({ wallet, requestId, onComplete }) {
   const signingInProgress = useRef(false);
   const lastSignAttempt = useRef(0); // Timestamp of last attempt
 
+  // Helper: Check for next pending request before closing
+  // This prevents missing sequential requests (e.g., connect -> signMessage)
+  const completeAndCheckNext = async () => {
+    try {
+      // Wait a moment for the next request to arrive from the dApp
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Check if there's another pending request
+      const response = await safeSendMessage({ type: 'get-pending-request' });
+      const nextRequest = response?.request || response;
+      const nextReqId = response?.requestId || nextRequest?.requestId;
+      
+      if (nextRequest && nextRequest.type) {
+        logger.log('[DAppApproval] Found next pending request:', nextRequest.type, 'id:', nextReqId);
+        
+        // Update state to show the new request
+        setPendingRequest(nextRequest);
+        setCurrentRequestId(nextReqId);
+        setProcessing(false);
+        setError(null);
+        
+        // Decode transaction if needed
+        if (nextRequest.transaction) {
+          try {
+            const txBytes = Uint8Array.from(atob(nextRequest.transaction), c => c.charCodeAt(0));
+            const decoded = decodeTransaction(txBytes);
+            setDecodedTx(decoded);
+          } catch (e) {
+            setDecodedTx({ success: false, raw: true });
+          }
+        } else if (nextRequest.transactions && nextRequest.transactions.length > 0) {
+          try {
+            const txBytes = Uint8Array.from(atob(nextRequest.transactions[0]), c => c.charCodeAt(0));
+            const decoded = decodeTransaction(txBytes);
+            decoded.totalTransactions = nextRequest.transactions.length;
+            setDecodedTx(decoded);
+          } catch (e) {
+            setDecodedTx({ success: false, raw: true, totalTransactions: nextRequest.transactions.length });
+          }
+        } else {
+          setDecodedTx(null);
+        }
+        
+        // Don't close - show the new request
+        return;
+      }
+    } catch (e) {
+      logger.log('[DAppApproval] Error checking for next request:', e.message);
+    }
+    
+    // No more requests - close the popup
+    logger.log('[DAppApproval] No more pending requests, closing');
+    if (onComplete) onComplete();
+    setTimeout(() => window.close(), 300);
+  };
+
   // Load network from chrome.storage for accuracy
   useEffect(() => {
     const loadNetwork = async () => {
@@ -738,8 +794,8 @@ export default function DAppApproval({ wallet, requestId, onComplete }) {
         // XP tracking is non-critical
       }
       
-      if (onComplete) onComplete();
-      setTimeout(() => window.close(), 300);
+      // Check for next request before closing (handles sequential requests like connect -> sign)
+      await completeAndCheckNext();
     } catch (err) {
       setError(getUserFriendlyError(err, ErrorMessages.wallet.loadFailed));
       setProcessing(false);
@@ -845,8 +901,8 @@ export default function DAppApproval({ wallet, requestId, onComplete }) {
         signedTransaction: signedTxBase64
       });
       
-      if (onComplete) onComplete();
-      setTimeout(() => window.close(), 300);
+      // Check for next request before closing (handles sequential requests)
+      await completeAndCheckNext();
     } catch (err) {
       logger.error('[DAppApproval] Sign error:', err);
       
@@ -959,8 +1015,8 @@ export default function DAppApproval({ wallet, requestId, onComplete }) {
         signedTransactions: signedTxs
       });
       
-      if (onComplete) onComplete();
-      setTimeout(() => window.close(), 300);
+      // Check for next request before closing (handles sequential requests)
+      await completeAndCheckNext();
     } catch (err) {
       logger.error('[DAppApproval] Sign all error:', err);
       
@@ -1238,10 +1294,10 @@ export default function DAppApproval({ wallet, requestId, onComplete }) {
         signature: txSignature
       });
       
-      logger.log('[DAppApproval] Response sent, closing popup');
+      logger.log('[DAppApproval] Response sent, checking for next request');
       
-      if (onComplete) onComplete();
-      setTimeout(() => window.close(), 300);
+      // Check for next request before closing (handles sequential requests)
+      await completeAndCheckNext();
     } catch (err) {
       logger.error('[DAppApproval] Send error:', err.message || err);
       
@@ -1334,8 +1390,8 @@ export default function DAppApproval({ wallet, requestId, onComplete }) {
         signature: signatureBase64
       });
       
-      if (onComplete) onComplete();
-      setTimeout(() => window.close(), 300);
+      // Check for next request before closing (handles sequential requests)
+      await completeAndCheckNext();
     } catch (err) {
       // Log full error details
       logger.error('[DAppApproval] Sign message error:', {

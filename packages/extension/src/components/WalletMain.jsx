@@ -1726,7 +1726,7 @@ function NFTsTab({ wallet, networkConfig }) {
 }
 
 // DeFi Tab Component
-function DefiTab({ wallet, tokens, isSolana, onStake }) {
+function DefiTab({ wallet, tokens, isSolana, onStake, formatFiat }) {
   const [xpBalance, setXpBalance] = useState(null);
   const [xpLoading, setXpLoading] = useState(true);
   
@@ -1861,7 +1861,7 @@ function DefiTab({ wallet, tokens, isSolana, onStake }) {
                 })()} tokens</span>
               </div>
               <div className="defi-item-value">
-                {lp.usdValue ? `$${lp.usdValue.toFixed(2)}` : ''}
+                {lp.usdValue ? formatFiat(lp.usdValue) : ''}
               </div>
             </div>
           ))
@@ -3436,20 +3436,102 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
   const [currency, setCurrency] = useState(() => {
     try {
       const saved = localStorage.getItem('x1wallet_currency');
-      return saved ? JSON.parse(saved) : 'USD';
+      const parsed = saved ? JSON.parse(saved) : 'USD';
+      // Migration: if NATIVE was saved, default to USD
+      return parsed === 'NATIVE' ? 'USD' : parsed;
     } catch {
       return 'USD';
     }
   });
   
-  // Listen for currency changes from Settings
+  // Show native hero toggle - separate from currency
+  const [showNativeHero, setShowNativeHero] = useState(() => {
+    try {
+      const saved = localStorage.getItem('x1wallet_showNativeHero');
+      return saved ? JSON.parse(saved) : false;
+    } catch {
+      return false;
+    }
+  });
+  
+  // Exchange rates - live fetched with cache and fallback
+  const [exchangeRates, setExchangeRates] = useState(() => {
+    try {
+      const cached = localStorage.getItem('x1wallet_exchange_rates');
+      if (cached) {
+        const { rates, timestamp } = JSON.parse(cached);
+        // Use cache if less than 1 hour old
+        if (Date.now() - timestamp < 60 * 60 * 1000) {
+          return rates;
+        }
+      }
+    } catch {}
+    // Fallback rates (approximate)
+    return { EUR: 0.92, GBP: 0.79, PLN: 4.02, JPY: 156, CAD: 1.44, AUD: 1.57, CNY: 7.24, KRW: 1380 };
+  });
+  
+  // Fetch live exchange rates on mount
   useEffect(() => {
-    const checkCurrency = () => {
+    const fetchExchangeRates = async () => {
       try {
-        const saved = localStorage.getItem('x1wallet_currency');
-        const newCurrency = saved ? JSON.parse(saved) : 'USD';
+        // Check cache first
+        const cached = localStorage.getItem('x1wallet_exchange_rates');
+        if (cached) {
+          const { timestamp } = JSON.parse(cached);
+          // Skip fetch if cache is less than 1 hour old
+          if (Date.now() - timestamp < 60 * 60 * 1000) {
+            return;
+          }
+        }
+        
+        // Fetch fresh rates from free API (no API key required)
+        const response = await fetch('https://open.er-api.com/v6/latest/USD');
+        if (response.ok) {
+          const data = await response.json();
+          if (data.rates) {
+            const rates = {
+              EUR: data.rates.EUR || 0.92,
+              GBP: data.rates.GBP || 0.79,
+              PLN: data.rates.PLN || 4.02,
+              JPY: data.rates.JPY || 156,
+              CAD: data.rates.CAD || 1.44,
+              AUD: data.rates.AUD || 1.57,
+              CNY: data.rates.CNY || 7.24,
+              KRW: data.rates.KRW || 1380
+            };
+            setExchangeRates(rates);
+            // Cache with timestamp
+            localStorage.setItem('x1wallet_exchange_rates', JSON.stringify({
+              rates,
+              timestamp: Date.now()
+            }));
+            logger.log('[Currency] Live exchange rates fetched:', rates);
+          }
+        }
+      } catch (e) {
+        logger.warn('[Currency] Failed to fetch exchange rates, using fallback:', e.message);
+      }
+    };
+    
+    fetchExchangeRates();
+  }, []);
+  
+  // Listen for currency and showNativeHero changes from Settings
+  useEffect(() => {
+    const checkSettings = () => {
+      try {
+        const savedCurrency = localStorage.getItem('x1wallet_currency');
+        let newCurrency = savedCurrency ? JSON.parse(savedCurrency) : 'USD';
+        // Migration: if NATIVE was saved, default to USD
+        if (newCurrency === 'NATIVE') newCurrency = 'USD';
         if (newCurrency !== currency) {
           setCurrency(newCurrency);
+        }
+        
+        const savedNative = localStorage.getItem('x1wallet_showNativeHero');
+        const newShowNative = savedNative ? JSON.parse(savedNative) : false;
+        if (newShowNative !== showNativeHero) {
+          setShowNativeHero(newShowNative);
         }
       } catch {
         // Ignore
@@ -3457,15 +3539,15 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
     };
     
     // Check on mount and when tab gets focus
-    checkCurrency();
-    window.addEventListener('focus', checkCurrency);
-    window.addEventListener('storage', checkCurrency);
+    checkSettings();
+    window.addEventListener('focus', checkSettings);
+    window.addEventListener('storage', checkSettings);
     
     return () => {
-      window.removeEventListener('focus', checkCurrency);
-      window.removeEventListener('storage', checkCurrency);
+      window.removeEventListener('focus', checkSettings);
+      window.removeEventListener('storage', checkSettings);
     };
-  }, [currency]);
+  }, [currency, showNativeHero]);
   
   // Track current wallet to prevent stale fetch results from updating state
   const currentWalletRef = useRef(wallet.wallet?.publicKey);
@@ -3552,45 +3634,27 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
   // Get the native symbol for the current network
   const nativeSymbol = isSolana ? 'SOL' : 'XNT';
   
-  // Check if native currency is selected
-  const isNativeCurrency = currency === 'NATIVE';
+  // Check if native hero is enabled
+  const isNativeCurrency = showNativeHero;
   
-  // Currency configuration with exchange rates (USD base)
-  // Rates are approximate - could be fetched from API for accuracy
+  // Currency configuration with live exchange rates (USD base)
   const currencyInfo = {
-    // NATIVE - uses network's native token (XNT for X1, SOL for Solana)
-    NATIVE: { symbol: nativeSymbol, position: 'after', rate: null, isNative: true },
-    // Fiat currencies with USD exchange rates
+    // Fiat currencies with live exchange rates
     USD: { symbol: '$', position: 'before', rate: 1 },
-    EUR: { symbol: '€', position: 'before', rate: 0.92 },
-    GBP: { symbol: '£', position: 'before', rate: 0.79 },
-    PLN: { symbol: 'zł', position: 'after', rate: 4.02 },
-    JPY: { symbol: '¥', position: 'before', rate: 149.5 },
-    CAD: { symbol: 'C$', position: 'before', rate: 1.36 },
-    AUD: { symbol: 'A$', position: 'before', rate: 1.53 },
-    CNY: { symbol: '¥', position: 'before', rate: 7.24 },
-    KRW: { symbol: '₩', position: 'before', rate: 1320 }
+    EUR: { symbol: '€', position: 'before', rate: exchangeRates.EUR },
+    GBP: { symbol: '£', position: 'before', rate: exchangeRates.GBP },
+    PLN: { symbol: 'zł', position: 'after', rate: exchangeRates.PLN },
+    JPY: { symbol: '¥', position: 'before', rate: exchangeRates.JPY },
+    CAD: { symbol: 'C$', position: 'before', rate: exchangeRates.CAD },
+    AUD: { symbol: 'A$', position: 'before', rate: exchangeRates.AUD },
+    CNY: { symbol: '¥', position: 'before', rate: exchangeRates.CNY },
+    KRW: { symbol: '₩', position: 'before', rate: exchangeRates.KRW }
   };
   
-  // Format currency value with conversion
-  const formatCurrency = (usdValue) => {
+  // Format as fiat currency (used for token list, always fiat)
+  const formatFiat = (usdValue) => {
     const info = currencyInfo[currency] || currencyInfo.USD;
     
-    // If showing native token currency
-    if (info.isNative) {
-      // For native token display, show the balance in native units
-      // usdValue is already in USD, convert back to native
-      const nativeAmount = usdValue / nativePrice;
-      if (nativeAmount === 0 || isNaN(nativeAmount)) return `0 ${nativeSymbol}`;
-      if (nativeAmount < 0.0001) return `<0.0001 ${nativeSymbol}`;
-      const formatted = nativeAmount.toLocaleString(undefined, { 
-        minimumFractionDigits: 2, 
-        maximumFractionDigits: 4 
-      });
-      return `${formatted} ${nativeSymbol}`;
-    }
-    
-    // Fiat currency conversion
     if (usdValue === null || usdValue === undefined || isNaN(usdValue)) {
       return info.position === 'after' ? '0.00 ' + info.symbol : info.symbol + '0.00';
     }
@@ -3604,28 +3668,38 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
     // For JPY and KRW, don't show decimals
     const decimals = (currency === 'JPY' || currency === 'KRW') ? 0 : 2;
     
+    if (convertedValue < 0.01 && decimals > 0) {
+      return info.position === 'after' ? '<0.01 ' + info.symbol : '<' + info.symbol + '0.01';
+    }
+    
     const formatted = convertedValue.toLocaleString(undefined, { 
       minimumFractionDigits: decimals, 
       maximumFractionDigits: decimals 
     });
     
-    if (convertedValue < 0.01 && decimals > 0) {
-      return info.position === 'after' ? '<0.01 ' + info.symbol : '<' + info.symbol + '0.01';
+    return info.position === 'after' ? formatted + ' ' + info.symbol : info.symbol + formatted;
+  };
+  
+  // Format currency value for hero - respects showNativeHero toggle
+  const formatCurrency = (usdValue) => {
+    // If showing native token in hero
+    if (showNativeHero) {
+      const nativeAmount = usdValue / nativePrice;
+      if (nativeAmount === 0 || isNaN(nativeAmount)) return `0 ${nativeSymbol}`;
+      if (nativeAmount < 0.0001) return `<0.0001 ${nativeSymbol}`;
+      const formatted = nativeAmount.toLocaleString(undefined, { 
+        minimumFractionDigits: 2, 
+        maximumFractionDigits: 4 
+      });
+      return `${formatted} ${nativeSymbol}`;
     }
     
-    return info.position === 'after' ? formatted + ' ' + info.symbol : info.symbol + formatted;
+    // Otherwise use fiat
+    return formatFiat(usdValue);
   };
   
   // Legacy formatUsd function (for compatibility)
   const formatUsd = formatCurrency;
-  
-  // Format as USD fiat (used as secondary display when native token is primary)
-  const formatFiat = (usdValue) => {
-    if (usdValue === null || usdValue === undefined || isNaN(usdValue)) return '$0.00';
-    if (usdValue === 0) return '$0.00';
-    if (usdValue < 0.01) return '<$0.01';
-    return '$' + usdValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  };
   
   // Format balance - Backpack style: 4 decimals, remove trailing zeros
   const formatBalance = (balance, maxDecimals = 4) => {
@@ -4528,9 +4602,8 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
                       }
                       
                       const value = (token.uiAmount || 0) * price;
-                      return value > 0 
-                        ? `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` 
-                        : '$0.00';
+                      // formatFiat uses lastFiatCurrency when native is selected
+                      return formatFiat(value);
                     })()}
                   </span>
                 </div>
@@ -4573,6 +4646,7 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
             tokens={tokens} 
             isSolana={isSolana}
             onStake={onStake}
+            formatFiat={formatFiat}
           />
         )}
 

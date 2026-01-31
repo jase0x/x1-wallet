@@ -115,6 +115,54 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
   const [recentAddresses, setRecentAddresses] = useState([]);
   const [priority, setPriority] = useState('auto');
   const [customFee, setCustomFee] = useState('');
+  
+  // Currency setting - read from localStorage
+  const [currency, setCurrency] = useState(() => {
+    try {
+      const saved = localStorage.getItem('x1wallet_currency');
+      const parsed = saved ? JSON.parse(saved) : 'USD';
+      return parsed === 'NATIVE' ? 'USD' : parsed;
+    } catch {
+      return 'USD';
+    }
+  });
+  
+  // Currency configuration - use cached live rates
+  const getExchangeRates = () => {
+    try {
+      const cached = localStorage.getItem('x1wallet_exchange_rates');
+      if (cached) {
+        const { rates } = JSON.parse(cached);
+        return rates;
+      }
+    } catch {}
+    // Fallback rates
+    return { EUR: 0.92, GBP: 0.79, PLN: 4.02, JPY: 156, CAD: 1.44, AUD: 1.57, CNY: 7.24, KRW: 1380 };
+  };
+  
+  const exchangeRates = getExchangeRates();
+  
+  const currencyInfo = {
+    USD: { symbol: '$', position: 'before', rate: 1 },
+    EUR: { symbol: '€', position: 'before', rate: exchangeRates.EUR },
+    GBP: { symbol: '£', position: 'before', rate: exchangeRates.GBP },
+    PLN: { symbol: 'zł', position: 'after', rate: exchangeRates.PLN },
+    JPY: { symbol: '¥', position: 'before', rate: exchangeRates.JPY },
+    CAD: { symbol: 'C$', position: 'before', rate: exchangeRates.CAD },
+    AUD: { symbol: 'A$', position: 'before', rate: exchangeRates.AUD },
+    CNY: { symbol: '¥', position: 'before', rate: exchangeRates.CNY },
+    KRW: { symbol: '₩', position: 'before', rate: exchangeRates.KRW }
+  };
+  
+  // Format currency with conversion
+  const formatCurrency = (usdValue) => {
+    if (usdValue === null || usdValue === undefined || isNaN(usdValue) || usdValue <= 0) return '';
+    const info = currencyInfo[currency] || currencyInfo.USD;
+    const convertedValue = usdValue * (info.rate || 1);
+    const decimals = (currency === 'JPY' || currency === 'KRW') ? 0 : 2;
+    const formatted = convertedValue.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+    return info.position === 'after' ? formatted + ' ' + info.symbol : info.symbol + formatted;
+  };
 
   // Hardware wallet detection
   const isHardwareWallet = wallet?.wallet?.isHardware || 
@@ -862,7 +910,7 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
                     <div className="send-token-balance-col">
                       <span className="send-token-balance-amount">{balance.toLocaleString(undefined, { maximumFractionDigits: 6 })}</span>
                       {usdValue > 0 && (
-                        <span className="send-token-balance-usd">${usdValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <span className="send-token-balance-usd">{formatCurrency(usdValue)}</span>
                       )}
                     </div>
                   </div>

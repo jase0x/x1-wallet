@@ -381,6 +381,37 @@ function removePendingRequest(id) {
     if (entry.timeoutId) clearTimeout(entry.timeoutId);
     pendingRequests.delete(id);
     console.log('[Background] Removed pending request:', id, 'Remaining:', pendingRequests.size);
+    
+    // If there are more pending requests, notify the popup to show the next one
+    if (pendingRequests.size > 0) {
+      const next = getOldestPendingRequest();
+      if (next) {
+        console.log('[Background] Pushing next pending request to popup:', next.id);
+        for (const [port, currentRequestId] of connectedPorts) {
+          // Update ports that were handling the removed request
+          if (currentRequestId === id) {
+            try {
+              port.postMessage({ 
+                type: 'pending-request', 
+                request: next.request,
+                requestId: next.id 
+              });
+              connectedPorts.set(port, next.id);
+              console.log('[Background] Sent next request to popup');
+            } catch (e) {
+              console.log('[Background] Failed to send next request to port:', e.message);
+              connectedPorts.delete(port);
+            }
+          }
+        }
+        // Update badge to show remaining count
+        chrome.action.setBadgeText({ text: pendingRequests.size.toString() });
+        chrome.action.setBadgeBackgroundColor({ color: '#FF6B00' });
+      }
+    } else {
+      // Clear badge when no more requests
+      clearBadge();
+    }
   }
 }
 

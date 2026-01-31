@@ -470,6 +470,7 @@ function App() {
   const [hasDAppRequest, setHasDAppRequest] = useState(false);
   const [dappRequiresReauth, setDappRequiresReauth] = useState(false);  // X1W-SEC: Track if signing needs password re-entry
   const [currentRequestId, setCurrentRequestId] = useState(null);  // X1W-SEC: Track which request is being handled
+  const pendingRequestRef = useRef(null);  // Track incoming request to prevent race condition
   const [alertModal, setAlertModal] = useState({ show: false, title: '', message: '', type: 'error' });
   const [passwordPrompt, setPasswordPrompt] = useState({ show: false, title: '', message: '', resolve: null });
   const lastActivityRef = useRef(Date.now());
@@ -595,7 +596,9 @@ function App() {
         
         port.onMessage.addListener((message) => {
           if (message.type === 'pending-request' && message.request) {
-            logger.log('[App] Received pending request via port:', message.request.type);
+            logger.log('[App] Received pending request via port:', message.request.type, 'id:', message.requestId);
+            // Store in ref first to prevent race condition with onComplete
+            pendingRequestRef.current = message.requestId || message.request.requestId;
             setHasDAppRequest(true);
             setCurrentRequestId(message.requestId || message.request.requestId);  // X1W-SEC: Track request ID
             // X1W-SEC: Check if this request requires password re-authentication
@@ -1983,8 +1986,25 @@ function App() {
           wallet={wallet} 
           requestId={currentRequestId}  // X1W-SEC: Pass request ID for proper routing
           onComplete={() => {
-            setHasDAppRequest(false);
-            setCurrentRequestId(null);
+            // Check if a new request arrived while processing the current one
+            // The ref will be updated by the port message handler before this callback fires
+            const completedId = currentRequestId;
+            
+            // Small delay to allow port message to arrive and update state
+            setTimeout(() => {
+              // Only clear state if no new request has arrived
+              // If pendingRequestRef has a different ID, a new request came in
+              if (pendingRequestRef.current === completedId || pendingRequestRef.current === null) {
+                logger.log('[App] DApp request completed, no more pending requests');
+                setHasDAppRequest(false);
+                setCurrentRequestId(null);
+                pendingRequestRef.current = null;
+              } else {
+                logger.log('[App] New pending request detected:', pendingRequestRef.current, '- keeping approval screen open');
+                // State already updated by port message handler, just reset reauth flag
+                setDappRequiresReauth(false);
+              }
+            }, 100);  // 100ms delay to allow port message to be processed
           }} 
         />
       </div>

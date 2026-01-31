@@ -43,6 +43,65 @@ export default function TokenDetail({
   const [priceChange24h, setPriceChange24h] = useState(null);
   const [loading, setLoading] = useState(true);
   const [mintCopied, setMintCopied] = useState(false);
+  
+  // Currency setting - read from localStorage
+  const [currency, setCurrency] = useState(() => {
+    try {
+      const saved = localStorage.getItem('x1wallet_currency');
+      const parsed = saved ? JSON.parse(saved) : 'USD';
+      return parsed === 'NATIVE' ? 'USD' : parsed;
+    } catch {
+      return 'USD';
+    }
+  });
+  
+  // Listen for currency changes
+  useEffect(() => {
+    const checkCurrency = () => {
+      try {
+        const saved = localStorage.getItem('x1wallet_currency');
+        let newCurrency = saved ? JSON.parse(saved) : 'USD';
+        if (newCurrency === 'NATIVE') newCurrency = 'USD';
+        if (newCurrency !== currency) {
+          setCurrency(newCurrency);
+        }
+      } catch {}
+    };
+    
+    window.addEventListener('storage', checkCurrency);
+    window.addEventListener('focus', checkCurrency);
+    return () => {
+      window.removeEventListener('storage', checkCurrency);
+      window.removeEventListener('focus', checkCurrency);
+    };
+  }, [currency]);
+  
+  // Currency configuration - use cached live rates
+  const getExchangeRates = () => {
+    try {
+      const cached = localStorage.getItem('x1wallet_exchange_rates');
+      if (cached) {
+        const { rates } = JSON.parse(cached);
+        return rates;
+      }
+    } catch {}
+    // Fallback rates
+    return { EUR: 0.92, GBP: 0.79, PLN: 4.02, JPY: 156, CAD: 1.44, AUD: 1.57, CNY: 7.24, KRW: 1380 };
+  };
+  
+  const exchangeRates = getExchangeRates();
+  
+  const currencyInfo = {
+    USD: { symbol: '$', position: 'before', rate: 1 },
+    EUR: { symbol: '€', position: 'before', rate: exchangeRates.EUR },
+    GBP: { symbol: '£', position: 'before', rate: exchangeRates.GBP },
+    PLN: { symbol: 'zł', position: 'after', rate: exchangeRates.PLN },
+    JPY: { symbol: '¥', position: 'before', rate: exchangeRates.JPY },
+    CAD: { symbol: 'C$', position: 'before', rate: exchangeRates.CAD },
+    AUD: { symbol: 'A$', position: 'before', rate: exchangeRates.AUD },
+    CNY: { symbol: '¥', position: 'before', rate: exchangeRates.CNY },
+    KRW: { symbol: '₩', position: 'before', rate: exchangeRates.KRW }
+  };
 
   // Network config
   const network = wallet?.network || 'X1 Mainnet';
@@ -292,17 +351,25 @@ export default function TokenDetail({
     );
   };
 
-  // Format currency
+  // Format currency with conversion
   const formatUsd = (value) => {
     if (value === null || value === undefined || isNaN(value)) return '--';
-    if (value < 0.0001) return `$${value.toFixed(8)}`;
-    if (value < 0.01) return `$${value.toFixed(6)}`;
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    }).format(value);
+    
+    const info = currencyInfo[currency] || currencyInfo.USD;
+    const convertedValue = value * (info.rate || 1);
+    const decimals = (currency === 'JPY' || currency === 'KRW') ? 0 : 2;
+    
+    // Handle very small values
+    if (convertedValue < 0.01 && decimals > 0) {
+      return info.position === 'after' ? '<0.01 ' + info.symbol : '<' + info.symbol + '0.01';
+    }
+    
+    const formatted = convertedValue.toLocaleString(undefined, {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals
+    });
+    
+    return info.position === 'after' ? formatted + ' ' + info.symbol : info.symbol + formatted;
   };
 
   // Format balance
