@@ -11,22 +11,69 @@ const XDEX_API = 'https://api.xdex.xyz/api/xendex';
 const XDEX_DEVAPI = 'https://devapi.xdex.xyz/api/xendex';
 
 // =======================================================
-// XNT PRICE CONFIGURATION
-// Currently pegged to $1.00 USD
-// TODO: Replace with oracle price feed when available
+// XNT PRICE - Fetched from XDEX swap/quote API
 // =======================================================
-const XNT_PEGGED_PRICE = 1.00;
 
 /**
- * Get the current XNT price
- * Currently returns the pegged price of $1.00
- * Future: This will fetch from an oracle price feed
- * 
- * @returns {number} The current XNT price in USD
+ * Get the current XNT price from cache or fetch from API
+ * @param {string} network - Network name
+ * @returns {Promise<number>} The current XNT price in USD
  */
-const getXNTPrice = () => {
-  // TODO: Replace with oracle integration
-  return XNT_PEGGED_PRICE;
+const getXNTPrice = async (network = 'X1 Mainnet') => {
+  // Check cache first
+  try {
+    const cached = localStorage.getItem('x1wallet_xnt_price');
+    if (cached) {
+      const { price, timestamp } = JSON.parse(cached);
+      // Use cache if less than 5 minutes old
+      if (Date.now() - timestamp < 5 * 60 * 1000 && price > 0) {
+        return price;
+      }
+    }
+  } catch {}
+  
+  // Fetch from XDEX swap/quote (1 XNT -> USDC.X)
+  try {
+    const USDC_X_MINT = 'B69chRzqzDCmdB5WYB8NRu5Yv5ZA95ABiZcdzCgGm9Tq';
+    const NATIVE_MINT = 'So11111111111111111111111111111111111111112';
+    
+    // Use full network name
+    const networkName = network || 'X1 Mainnet';
+    
+    const params = new URLSearchParams({
+      network: networkName,
+      token_in: NATIVE_MINT,
+      token_out: USDC_X_MINT,
+      token_in_amount: '1',
+      is_exact_amount_in: 'true'
+    });
+    
+    const response = await fetch(`${XDEX_API}/swap/quote?${params}`, {
+      headers: { 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(5000)
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      // API returns: { success: true, data: { rate: 0.547, outputAmount: 0.547, ... } }
+      const price = parseFloat(data?.data?.rate || data?.data?.outputAmount || data?.rate || data?.outputAmount || 0);
+      
+      if (price > 0 && price < 1000) {
+        // Cache the price
+        localStorage.setItem('x1wallet_xnt_price', JSON.stringify({
+          price,
+          timestamp: Date.now()
+        }));
+        logger.log('[TokenDetail] XNT price from XDEX:', price);
+        return price;
+      }
+    }
+  } catch (e) {
+    logger.warn('[TokenDetail] Failed to fetch XNT price:', e.message);
+  }
+  
+  // Fallback - no price available
+  return null;
 };
 
 export default function TokenDetail({ 
@@ -243,17 +290,17 @@ export default function TokenDetail({
       }
       // Fallbacks for known tokens if no XDEX price available
       else if (isNative) {
-        // XNT native token - fallback to pegged price
-        price = getXNTPrice();
+        // XNT native token - fetch from XDEX swap/quote
+        price = await getXNTPrice(network);
       } else if (symbol === 'USDC.X' || symbol === 'USDC' || symbol === 'USDT') {
         // Stablecoins are pegged to $1.00
         price = 1.00;
       } else if (symbol === 'pXNT') {
         // pXNT (staked XNT) is pegged 1:1 with XNT
-        price = getXNTPrice();
+        price = await getXNTPrice(network);
       } else if (symbol === 'WXNT') {
         // Wrapped XNT is pegged 1:1 with XNT
-        price = getXNTPrice();
+        price = await getXNTPrice(network);
       } else if (mint) {
         // For other X1 tokens, try to get price from XDEX
         // Try single token endpoint first

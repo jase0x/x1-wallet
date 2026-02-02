@@ -3470,6 +3470,21 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
     return { EUR: 0.92, GBP: 0.79, PLN: 4.02, JPY: 156, CAD: 1.44, AUD: 1.57, CNY: 7.24, KRW: 1380 };
   });
   
+  // XNT price - fetched from XDEX API (XNT/USDC.X pool)
+  const [xntPrice, setXntPrice] = useState(() => {
+    try {
+      const cached = localStorage.getItem('x1wallet_xnt_price');
+      if (cached) {
+        const { price, timestamp } = JSON.parse(cached);
+        // Use cache if less than 5 minutes old
+        if (Date.now() - timestamp < 5 * 60 * 1000) {
+          return price;
+        }
+      }
+    } catch {}
+    return null; // No fallback - show "--" if price unavailable
+  });
+  
   // Fetch live exchange rates on mount
   useEffect(() => {
     const fetchExchangeRates = async () => {
@@ -3515,6 +3530,118 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
     
     fetchExchangeRates();
   }, []);
+  
+  // Fetch XNT price from XDEX API on mount and when network changes
+  useEffect(() => {
+    console.log('[XNT] useEffect running, wallet.network:', wallet.network);
+    
+    const fetchXntPrice = async () => {
+      console.log('[XNT] fetchXntPrice called');
+      // Only fetch for X1 networks
+      const isX1Network = !wallet.network?.includes('Solana');
+      console.log('[XNT] isX1Network:', isX1Network, 'wallet.network:', wallet.network);
+      if (!isX1Network) {
+        console.log('[XNT] Skipping - not X1 network');
+        return;
+      }
+      
+      try {
+        // Check cache first
+        const cached = localStorage.getItem('x1wallet_xnt_price');
+        console.log('[XNT] Cache check:', cached);
+        if (cached) {
+          const { price, timestamp } = JSON.parse(cached);
+          const age = Date.now() - timestamp;
+          console.log('[XNT] Cache age:', age, 'ms, price:', price);
+          // Use cache if less than 5 minutes old
+          if (age < 5 * 60 * 1000) {
+            if (price && price > 0) {
+              console.log('[XNT] Using cached price:', price);
+              setXntPrice(price);
+              return;
+            }
+          }
+          console.log('[XNT] Cache expired or invalid, fetching fresh');
+        }
+        
+        // Get XNT price from swap/quote (XNT -> USDC.X pool)
+        const USDC_X_MINT = 'B69chRzqzDCmdB5WYB8NRu5Yv5ZA95ABiZcdzCgGm9Tq';
+        const NATIVE_MINT = 'So11111111111111111111111111111111111111112';
+        
+        // Use full network name as xdex.js does
+        const networkName = wallet.network || 'X1 Mainnet';
+        
+        const params = new URLSearchParams({
+          network: networkName,
+          token_in: NATIVE_MINT,
+          token_out: USDC_X_MINT,
+          token_in_amount: '1',
+          is_exact_amount_in: 'true'
+        });
+        
+        console.log('[XNT] Fetching price from:', `https://api.xdex.xyz/api/xendex/swap/quote?${params}`);
+        
+        const response = await fetch(`https://api.xdex.xyz/api/xendex/swap/quote?${params}`, {
+          headers: { 'Accept': 'application/json' }
+        });
+        
+        console.log('[XNT] Response status:', response.status);
+        
+        if (response.ok) {
+          const data = await response.json();
+          console.log('[XNT] Response data:', JSON.stringify(data).slice(0, 500));
+          
+          // API returns: { success: true, data: { rate: 0.547, outputAmount: 0.547, ... } }
+          // rate and outputAmount represent USDC.X per 1 XNT = XNT price
+          const price = parseFloat(data?.data?.rate || data?.data?.outputAmount || data?.rate || data?.outputAmount || 0);
+          
+          console.log('[XNT] Extracted price:', price);
+          
+          if (price > 0 && price < 1000) {
+            setXntPrice(price);
+            localStorage.setItem('x1wallet_xnt_price', JSON.stringify({
+              price,
+              timestamp: Date.now()
+            }));
+            console.log('[XNT] Price set:', price);
+            return;
+          }
+        }
+        
+        // If API failed, try to use expired cache as fallback
+        if (cached) {
+          const { price } = JSON.parse(cached);
+          if (price && price > 0) {
+            setXntPrice(price);
+            console.log('[XNT] Using expired cache:', price);
+            return;
+          }
+        }
+        
+        console.warn('[XNT] Could not fetch price, no cache available');
+      } catch (e) {
+        console.warn('[XNT] Failed to fetch price:', e.message);
+        
+        // Try expired cache on error
+        try {
+          const cached = localStorage.getItem('x1wallet_xnt_price');
+          if (cached) {
+            const { price } = JSON.parse(cached);
+            if (price && price > 0) {
+              setXntPrice(price);
+              console.log('[XNT] Using expired cache after error:', price);
+            }
+          }
+        } catch {}
+      }
+    };
+    
+    fetchXntPrice();
+    
+    // Refresh price every 5 minutes
+    const interval = setInterval(fetchXntPrice, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [wallet.network]);
   
   // Listen for currency and showNativeHero changes from Settings
   useEffect(() => {
@@ -3594,13 +3721,13 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
     if (token.symbol === 'USDC' || token.symbol === 'USDT' || token.symbol === 'USDC.X') {
       price = 1;
     }
-    // pXNT is staked XNT, same price as XNT ($1.00)
+    // pXNT is staked XNT, same price as XNT
     else if (token.symbol === 'pXNT') {
-      price = 1;
+      price = xntPrice;
     }
-    // WXNT is wrapped XNT, same price as XNT ($1.00)
+    // WXNT is wrapped XNT, same price as XNT
     else if (token.symbol === 'WXNT') {
-      price = 1;
+      price = xntPrice;
     }
     
     const tokenValue = (token.uiAmount || 0) * price;
@@ -3624,11 +3751,11 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
   })();
   
   // Add native balance value
-  // XNT is pegged at $1.00, SOL fetches real price (fallback to estimate)
-  const nativePrice = isSolana ? 150 : 1; // SOL price estimate, XNT = $1.00 (pegged)
-  const nativeUsdValue = displayBalance * nativePrice;
+  // XNT price from XDEX API, SOL uses estimate
+  const nativePrice = isSolana ? 150 : xntPrice;
+  const nativeUsdValue = nativePrice ? displayBalance * nativePrice : null;
   
-  const totalPortfolioUsd = tokensUsdValue + nativeUsdValue;
+  const totalPortfolioUsd = (nativeUsdValue || 0) + tokensUsdValue;
   logger.log('[Portfolio] Total USD:', totalPortfolioUsd, 'tokens:', tokensUsdValue, 'native:', nativeUsdValue);
   
   // Get the native symbol for the current network
@@ -3655,8 +3782,12 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
   const formatFiat = (usdValue) => {
     const info = currencyInfo[currency] || currencyInfo.USD;
     
-    if (usdValue === null || usdValue === undefined || isNaN(usdValue)) {
-      return info.position === 'after' ? '0.00 ' + info.symbol : info.symbol + '0.00';
+    // If price unavailable, show "--"
+    if (usdValue === null || usdValue === undefined) {
+      return '--';
+    }
+    if (isNaN(usdValue)) {
+      return '--';
     }
     if (usdValue === 0) {
       return info.position === 'after' ? '0.00 ' + info.symbol : info.symbol + '0.00';
@@ -3684,6 +3815,7 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
   const formatCurrency = (usdValue) => {
     // If showing native token in hero
     if (showNativeHero) {
+      if (!nativePrice) return '--';
       const nativeAmount = usdValue / nativePrice;
       if (nativeAmount === 0 || isNaN(nativeAmount)) return `0 ${nativeSymbol}`;
       if (nativeAmount < 0.0001) return `<0.0001 ${nativeSymbol}`;
@@ -4589,11 +4721,11 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
                       }
                       // pXNT is staked XNT, same price as XNT
                       else if (token.symbol === 'pXNT') {
-                        price = 1; // XNT is pegged at $1.00
+                        price = xntPrice;
                       }
                       // WXNT is wrapped XNT, same price as XNT
                       else if (token.symbol === 'WXNT') {
-                        price = 1; // XNT is pegged at $1.00
+                        price = xntPrice;
                       }
                       
                       // If no price available, show --
