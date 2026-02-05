@@ -3192,6 +3192,13 @@ function BrowserScreen({ wallet, onBack }) {
       color: '#ff6b35' 
     },
     { 
+      name: 'CORE', 
+      url: 'https://core.x1.xyz', 
+      logo: '/icons/48-core.png',
+      desc: 'Staking & Rewards',
+      color: '#f7931a' 
+    },
+    { 
       name: 'Vero', 
       url: 'https://vero.x1.xyz/', 
       letter: 'V',
@@ -4744,7 +4751,10 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
             })}
             
             {/* Show hidden tokens toggle */}
-            {hiddenTokens.length > 0 && (
+            {(() => {
+              // Only count hidden tokens that are actually in the current token list
+              const actualHiddenCount = tokens.filter(t => hiddenTokens.includes(t.mint)).length;
+              return actualHiddenCount > 0 && (
               <button 
                 className="show-hidden-tokens-btn"
                 onClick={() => setShowHiddenTokens(!showHiddenTokens)}
@@ -4762,9 +4772,10 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
                     </>
                   )}
                 </svg>
-                {showHiddenTokens ? 'Hide' : 'Show'} {hiddenTokens.length} hidden token{hiddenTokens.length !== 1 ? 's' : ''}
+                {showHiddenTokens ? 'Hide' : 'Show'} {actualHiddenCount} hidden token{actualHiddenCount !== 1 ? 's' : ''}
               </button>
-            )}
+            );
+            })()}
           </div>
         )}
 

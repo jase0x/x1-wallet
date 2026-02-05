@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "X1 Wallet",
-  "version": "0.10.75",
+  "version": "0.10.78",
   "description": "X1 Blockchain Native Wallet",
   "action": {
     "default_popup": "index.html",
@@ -65,7 +65,9 @@
     "https://*.helius-rpc.com/*",
     "https://raw.githubusercontent.com/*",
     "https://connect.trezor.io/*",
-    "https://open.er-api.com/*"
+    "https://open.er-api.com/*",
+    "https://bridge-api.x1.xyz/*",
+    "https://app.bridge.x1.xyz/*"
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"

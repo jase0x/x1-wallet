@@ -755,11 +755,17 @@ function App() {
   const hasPassword = hasPasswordAsync;
 
   // Track user activity - persist to storage so it survives popup close
+  // Throttle to only update once per 30 seconds to reduce storage writes
+  const lastStorageUpdateRef = useRef(0);
   const updateActivity = useCallback(() => {
     const now = Date.now();
     lastActivityRef.current = now;
-    // Persist to storage for cross-session tracking
-    storage.set('lastActivity', now);
+    
+    // Only persist to storage every 30 seconds to reduce spam
+    if (now - lastStorageUpdateRef.current > 30000) {
+      lastStorageUpdateRef.current = now;
+      storage.set('lastActivity', now);
+    }
   }, []);
 
   // Check for auto-lock
@@ -1808,11 +1814,15 @@ function App() {
       <div className="app">
         <BridgeScreen
           wallet={wallet}
+          userTokens={userTokens}
           onBack={(action) => {
             setScreen('main');
             if (action === 'network') {
               sessionStorage.setItem('openNetworkPanel', 'true');
             }
+          }}
+          onNetworkSwitch={(targetNetwork) => {
+            wallet.setNetwork(targetNetwork);
           }}
         />
         <BottomNav />
@@ -1862,6 +1872,12 @@ function App() {
         url: 'https://degen.fyi', 
         logo: '/icons/48-degen.png',
         desc: 'Launchpad' 
+      },
+      { 
+        name: 'CORE', 
+        url: 'https://core.x1.xyz', 
+        logo: '/icons/48-core.png',
+        desc: 'Staking & Rewards' 
       },
       { 
         name: 'Vero', 

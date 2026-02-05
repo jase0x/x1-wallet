@@ -280,6 +280,19 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
   useEffect(() => { storage.set('biometricEnabled', biometricEnabled); }, [biometricEnabled]);
   useEffect(() => { storage.set('customExplorer', customExplorer); }, [customExplorer]);
   
+  // Scroll to top when subScreen changes
+  useEffect(() => {
+    const container = document.querySelector('.settings-screen .settings-content');
+    if (container) {
+      container.scrollTop = 0;
+    }
+    // Also try scrolling the screen itself
+    const screen = document.querySelector('.settings-screen');
+    if (screen) {
+      screen.scrollTop = 0;
+    }
+  }, [subScreen]);
+  
   // Reset recovery state when leaving recovery screen
   useEffect(() => {
     if (subScreen !== 'recovery') {
@@ -384,10 +397,12 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
     localStorage.setItem('x1wallet_rpcOverrides', JSON.stringify(newOverrides));
   };
 
-  // Start editing RPC override
+  // Start editing RPC override - show custom URLs but not default network URLs
   const startEditingRpcOverride = (networkName) => {
     setEditingRpcOverride(networkName);
-    setRpcOverrideUrl(rpcOverrides[networkName] || '');
+    // Only show URL if it's a user-configured override, not the default
+    const override = rpcOverrides[networkName];
+    setRpcOverrideUrl(override || ''); // Show user's custom RPC, empty if using default
     setError('');
   };
 
@@ -698,8 +713,8 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
                     <button 
                       className="btn-secondary" 
                       style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px' }}
-                      onClick={async () => {
-                        await navigator.clipboard.writeText(phrase);
+                      onClick={() => {
+                        navigator.clipboard.writeText(phrase);
                         setCopied(true);
                         setTimeout(() => setCopied(false), 2000);
                       }}
@@ -736,8 +751,8 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
   if (subScreen === 'privatekey') {
     const currentPrivateKey = wallet.wallet?.privateKey || '';
     
-    const copyPrivateKey = async () => {
-      await navigator.clipboard.writeText(currentPrivateKey);
+    const copyPrivateKey = () => {
+      navigator.clipboard.writeText(currentPrivateKey);
       setPrivateKeyCopied(true);
       setTimeout(() => setPrivateKeyCopied(false), 2000);
     };
@@ -1639,7 +1654,7 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
                       <span>{net}</span>
                       {rpcOverrides[net] && (
                         <span style={{ fontSize: 11, color: 'var(--primary)', display: 'block' }}>
-                          Custom: {rpcOverrides[net].length > 30 ? rpcOverrides[net].slice(0, 30) + '...' : rpcOverrides[net]}
+                          Custom RPC configured
                         </span>
                       )}
                     </div>
@@ -1647,7 +1662,7 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
                       {/* Gear icon for RPC override */}
                       <button
                         onClick={(e) => { e.stopPropagation(); startEditingRpcOverride(net); }}
-                        style={{ background: 'none', border: 'none', color: rpcOverrides[net] ? 'var(--primary)' : 'var(--text-muted)', cursor: 'pointer', padding: '4px' }}
+                        style={{ background: 'none', border: 'none', color: rpcOverrides[net] ? 'var(--primary)' : 'var(--text-muted)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                         title="Set custom RPC"
                       >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1655,7 +1670,7 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
                           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
                         </svg>
                       </button>
-                      <div className="radio-option-check">
+                      <div className="radio-option-check" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         {wallet.network === net && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12" /></svg>}
                       </div>
                     </div>
@@ -1669,7 +1684,7 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
                       <input
                         type="text"
                         className="form-input"
-                        placeholder={NETWORKS[net]?.rpcUrl || 'https://rpc.example.com'}
+                        placeholder="Enter custom RPC URL"
                         value={rpcOverrideUrl}
                         onChange={e => setRpcOverrideUrl(e.target.value)}
                         style={{ marginBottom: '8px' }}
@@ -1720,7 +1735,7 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
                       <span>{net}</span>
                       {rpcOverrides[net] && (
                         <span style={{ fontSize: 11, color: 'var(--primary)', display: 'block' }}>
-                          Custom: {rpcOverrides[net].length > 30 ? rpcOverrides[net].slice(0, 30) + '...' : rpcOverrides[net]}
+                          Custom RPC configured
                         </span>
                       )}
                     </div>
@@ -1728,7 +1743,7 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
                       {/* Gear icon for RPC override */}
                       <button
                         onClick={(e) => { e.stopPropagation(); startEditingRpcOverride(net); }}
-                        style={{ background: 'none', border: 'none', color: rpcOverrides[net] ? 'var(--primary)' : 'var(--text-muted)', cursor: 'pointer', padding: '4px' }}
+                        style={{ background: 'none', border: 'none', color: rpcOverrides[net] ? 'var(--primary)' : 'var(--text-muted)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                         title="Set custom RPC"
                       >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1736,7 +1751,7 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
                           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
                         </svg>
                       </button>
-                      <div className="radio-option-check">
+                      <div className="radio-option-check" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         {wallet.network === net && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12" /></svg>}
                       </div>
                     </div>
@@ -1750,7 +1765,7 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
                       <input
                         type="text"
                         className="form-input"
-                        placeholder={NETWORKS[net]?.rpcUrl || 'https://rpc.example.com'}
+                        placeholder="Enter custom RPC URL"
                         value={rpcOverrideUrl}
                         onChange={e => setRpcOverrideUrl(e.target.value)}
                         style={{ marginBottom: '8px' }}
@@ -1843,12 +1858,102 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
           </button>
           <h2>About</h2>
         </div>
-        <div className="settings-content" style={{ textAlign: 'center', paddingTop: 40 }}>
-          <X1Logo size={64} />
-          <h3 style={{ marginTop: 16, marginBottom: 4 }}>X1 Wallet</h3>
-          <p style={{ color: 'var(--text-muted)', marginBottom: 8 }}>Version {appVersion}</p>
-          <p style={{ color: 'var(--text-muted)', marginBottom: 24, fontSize: 12 }}>
-            Network: {wallet?.network || 'Unknown'}
+        <div className="settings-content" style={{ paddingTop: 16 }}>
+          <div style={{ textAlign: 'center', marginBottom: 20 }}>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>X1 Wallet</h3>
+            <p style={{ color: 'var(--text-muted)', marginBottom: 0, fontSize: 13 }}>Version {appVersion}</p>
+          </div>
+          
+          {/* Description */}
+          <div style={{ 
+            textAlign: 'left', 
+            padding: '16px', 
+            background: 'var(--bg-secondary)', 
+            borderRadius: '12px', 
+            marginBottom: '20px'
+          }}>
+            <p style={{ color: 'var(--text-primary)', fontSize: '13px', lineHeight: '1.5', margin: 0 }}>
+              A secure, non-custodial cryptocurrency wallet for the X1 and Solana blockchains.
+            </p>
+          </div>
+          
+          {/* Features */}
+          <div style={{ 
+            textAlign: 'left', 
+            padding: '16px', 
+            background: 'var(--bg-secondary)', 
+            borderRadius: '12px', 
+            marginBottom: '20px'
+          }}>
+            <h4 style={{ fontSize: '13px', fontWeight: 600, marginBottom: '12px', color: 'var(--text-primary)' }}>Features</h4>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {/* Non-custodial */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                <div style={{ color: '#3b82f6', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                  </svg>
+                </div>
+                <span>Non-custodial — you control your keys</span>
+              </div>
+              {/* Token management */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                <div style={{ color: '#3b82f6', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                </div>
+                <span>Token management & DeFi access</span>
+              </div>
+              {/* Hardware wallet */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                <div style={{ color: '#3b82f6', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="4" y="4" width="16" height="16" rx="2" />
+                    <rect x="9" y="9" width="6" height="6" />
+                    <line x1="9" y1="1" x2="9" y2="4" />
+                    <line x1="15" y1="1" x2="15" y2="4" />
+                    <line x1="9" y1="20" x2="9" y2="23" />
+                    <line x1="15" y1="20" x2="15" y2="23" />
+                    <line x1="20" y1="9" x2="23" y2="9" />
+                    <line x1="20" y1="14" x2="23" y2="14" />
+                    <line x1="1" y1="9" x2="4" y2="9" />
+                    <line x1="1" y1="14" x2="4" y2="14" />
+                  </svg>
+                </div>
+                <span>Hardware wallet support (Ledger)</span>
+              </div>
+              {/* Swap, bridge, stake */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                <div style={{ color: '#3b82f6', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="17 1 21 5 17 9" />
+                    <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+                    <polyline points="7 23 3 19 7 15" />
+                    <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+                  </svg>
+                </div>
+                <span>Swap, bridge, and stake</span>
+              </div>
+              {/* Watch-only */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                <div style={{ color: '#3b82f6', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                </div>
+                <span>Watch-only wallet support</span>
+              </div>
+            </div>
+          </div>
+          
+          {/* Network Info */}
+          <p style={{ color: 'var(--text-muted)', marginBottom: 20, fontSize: 12 }}>
+            Current Network: {wallet?.network || 'Unknown'}
           </p>
           
           <div className="about-links">
@@ -1858,13 +1963,17 @@ export default function SettingsScreen({ wallet, onBack, onLock, initialPassword
             <a href="https://docs.x1.xyz" target="_blank" rel="noopener noreferrer" className="about-link">
               Documentation
             </a>
-            <a href="https://x.com/x1_chain" target="_blank" rel="noopener noreferrer" className="about-link">
+            <a href="https://x.com/x1_xyz" target="_blank" rel="noopener noreferrer" className="about-link">
               X
             </a>
-            <a href="https://t.me/x1_wallet" target="_blank" rel="noopener noreferrer" className="about-link">
+            <a href="https://t.me/x1_xyz" target="_blank" rel="noopener noreferrer" className="about-link">
               Telegram
             </a>
           </div>
+          
+          <p style={{ color: 'var(--text-muted)', fontSize: '11px', marginTop: '24px' }}>
+            © 2025 X1. All rights reserved.
+          </p>
         </div>
       </div>
     );

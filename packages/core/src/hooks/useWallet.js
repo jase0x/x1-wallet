@@ -124,11 +124,24 @@ function setCachedBalance(publicKey, network, balance) {
   } catch {}
 }
 
-// Helper to get network config (built-in or custom)
+// Helper to get network config (built-in or custom) with RPC overrides applied
 function getNetworkConfig(networkName) {
   // First check built-in networks
   if (NETWORKS[networkName]) {
-    return NETWORKS[networkName];
+    const config = { ...NETWORKS[networkName] };
+    
+    // Apply RPC override if set
+    try {
+      const overrides = JSON.parse(localStorage.getItem('x1wallet_rpcOverrides') || '{}');
+      if (overrides[networkName]) {
+        config.rpcUrl = overrides[networkName];
+        config.hasCustomRpc = true;
+      }
+    } catch (e) {
+      logger.warn('Failed to load RPC overrides:', e);
+    }
+    
+    return config;
   }
   
   // Then check custom networks
