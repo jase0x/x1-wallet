@@ -312,20 +312,28 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
   const walletBalance = wallet?.balance ?? 0;
 
   // Set initial from token when provided and tokens are loaded
+  // When navigating from a token detail, sell that token for XNT (native)
   useEffect(() => {
     if (initialFromToken && !initialTokenSet && tokens.length > 0) {
       logger.log('[SwapScreen] Setting initial from token:', initialFromToken.symbol);
-      
+
       // Find the token in our tokens list to get full data including balance
-      const matchedToken = tokens.find(t => 
-        t.mint === initialFromToken.mint || 
+      const matchedToken = tokens.find(t =>
+        t.mint === initialFromToken.mint ||
         t.address === initialFromToken.address ||
         (t.symbol === initialFromToken.symbol && t.isNative === initialFromToken.isNative)
       );
-      
+
       if (matchedToken) {
         setFromToken(matchedToken);
         setInitialTokenSet(true);
+        // Set "to" token to native (XNT on X1, SOL on Solana)
+        const nativeToToken = tokens.find(t =>
+          t.isNative || t.mint === 'native' || t.symbol === nativeSymbol
+        );
+        if (nativeToToken && nativeToToken.mint !== matchedToken.mint) {
+          setToToken(nativeToToken);
+        }
       } else if (initialFromToken.isNative) {
         // For native token, create it with current balance
         const nativeToken = {
@@ -683,47 +691,46 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
       // Preload token images for faster rendering
       preloadImages(tokensWithBalances);
       
-      // Set defaults - native token as from, USDC as to
-      // Solana: SOL -> USDC, X1: XNT -> USDC.X
+      // Set defaults - USDC.X as from, XNT as to
+      // X1: USDC.X -> XNT, Solana: USDC -> SOL
       if (tokensWithBalances.length >= 2) {
         // Find native token (SOL on Solana, XNT on X1)
-        const nativeToken = tokensWithBalances.find(t => 
-          t.isNative || 
-          t.mint === 'native' || 
+        const nativeToken = tokensWithBalances.find(t =>
+          t.isNative ||
+          t.mint === 'native' ||
           t.symbol === nativeSymbol ||
           t.symbol === 'SOL' ||
           t.symbol === 'XNT'
         ) || tokensWithBalances[0];
-        
-        // Find default "to" token based on network
-        // X1: USDC.X, Solana: USDC
+
+        // Find stablecoin token based on network
         const isX1Network = currentNetwork?.startsWith('X1');
-        
-        let otherToken;
+
+        let stableToken;
         if (isX1Network) {
-          // For X1, default to USDC.X
-          otherToken = tokensWithBalances.find(t => t.symbol === 'USDC.X');
+          stableToken = tokensWithBalances.find(t => t.symbol === 'USDC.X');
         }
-        
+
         // Fallback to USDC if not X1 or USDC.X not found
-        if (!otherToken) {
-          const usdcToken = tokensWithBalances.find(t => 
-            t.symbol === 'USDC' || 
-            t.symbol === 'USDC.X' || 
+        if (!stableToken) {
+          const usdcToken = tokensWithBalances.find(t =>
+            t.symbol === 'USDC' ||
+            t.symbol === 'USDC.X' ||
             t.symbol?.toUpperCase() === 'USDC'
           );
-          otherToken = usdcToken || tokensWithBalances.find(t => 
-            t.symbol !== nativeSymbol && 
-            t.mint !== 'native' && 
-            t.symbol !== 'SOL' && 
+          stableToken = usdcToken || tokensWithBalances.find(t =>
+            t.symbol !== nativeSymbol &&
+            t.mint !== 'native' &&
+            t.symbol !== 'SOL' &&
             t.symbol !== 'XNT' &&
             !t.isNative
           ) || tokensWithBalances[1];
         }
-        
+
+        // Default: stablecoin -> native (USDC.X -> XNT)
         // Only set if not already set (to preserve user selection within same network)
-        setFromToken(prev => prev || nativeToken);
-        setToToken(prev => prev || otherToken);
+        setFromToken(prev => prev || stableToken);
+        setToToken(prev => prev || nativeToken);
       }
     };
     loadTokens();

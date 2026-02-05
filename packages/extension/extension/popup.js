@@ -30608,6 +30608,12 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
       if (matchedToken) {
         setFromToken(matchedToken);
         setInitialTokenSet(true);
+        const nativeToToken = tokens$1.find(
+          (t2) => t2.isNative || t2.mint === "native" || t2.symbol === nativeSymbol
+        );
+        if (nativeToToken && nativeToToken.mint !== matchedToken.mint) {
+          setToToken(nativeToToken);
+        }
       } else if (initialFromToken.isNative) {
         const nativeToken = {
           symbol: nativeSymbol,
@@ -30893,23 +30899,23 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
           (t2) => t2.isNative || t2.mint === "native" || t2.symbol === nativeSymbol || t2.symbol === "SOL" || t2.symbol === "XNT"
         ) || tokensWithBalances[0];
         const isX1Network2 = currentNetwork2 == null ? void 0 : currentNetwork2.startsWith("X1");
-        let otherToken;
+        let stableToken;
         if (isX1Network2) {
-          otherToken = tokensWithBalances.find((t2) => t2.symbol === "USDC.X");
+          stableToken = tokensWithBalances.find((t2) => t2.symbol === "USDC.X");
         }
-        if (!otherToken) {
+        if (!stableToken) {
           const usdcToken = tokensWithBalances.find(
             (t2) => {
               var _a4;
               return t2.symbol === "USDC" || t2.symbol === "USDC.X" || ((_a4 = t2.symbol) == null ? void 0 : _a4.toUpperCase()) === "USDC";
             }
           );
-          otherToken = usdcToken || tokensWithBalances.find(
+          stableToken = usdcToken || tokensWithBalances.find(
             (t2) => t2.symbol !== nativeSymbol && t2.mint !== "native" && t2.symbol !== "SOL" && t2.symbol !== "XNT" && !t2.isNative
           ) || tokensWithBalances[1];
         }
-        setFromToken((prev) => prev || nativeToken);
-        setToToken((prev) => prev || otherToken);
+        setFromToken((prev) => prev || stableToken);
+        setToToken((prev) => prev || nativeToken);
       }
     };
     loadTokens();
