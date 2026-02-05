@@ -3426,6 +3426,7 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
   
   const [copiedTokenMint, setCopiedTokenMint] = useState(null);
   const [showHiddenTokens, setShowHiddenTokens] = useState(false);
+  const [tokenContextMenu, setTokenContextMenu] = useState(null); // { token, x, y }
   const [hiddenTokens, setHiddenTokens] = useState(() => {
     try {
       const saved = localStorage.getItem('x1wallet_hidden_tokens');
@@ -4573,7 +4574,7 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
             )}
 
             {tokens
-              .filter(token => showHiddenTokens || !hiddenTokens.includes(token.mint))
+              .filter(token => !hiddenTokens.includes(token.mint))
               .sort((a, b) => {
                 // Sort by USD value (highest first), fallback to raw balance
                 const aBalance = parseFloat(a.uiAmount || a.balance || 0);
@@ -4631,10 +4632,29 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
               }
               
               return (
-              <div 
-                key={token.address} 
+              <div
+                key={token.address}
                 className={`token-item clickable${isHidden ? ' token-hidden' : ''}`}
                 onClick={() => onTokenClick ? onTokenClick(token) : onSend(token)}
+                onContextMenu={(e) => {
+                  if (!token.isNative) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setTokenContextMenu({ token, x: e.clientX, y: e.clientY, isHidden });
+                  }
+                }}
+                onTouchStart={(e) => {
+                  if (token.isNative) return;
+                  const touch = e.touches[0];
+                  const tx = touch.clientX, ty = touch.clientY;
+                  const timer = setTimeout(() => {
+                    e.preventDefault();
+                    setTokenContextMenu({ token, x: tx, y: ty, isHidden });
+                  }, 500);
+                  e.currentTarget._longPressTimer = timer;
+                }}
+                onTouchEnd={(e) => { if (e.currentTarget._longPressTimer) clearTimeout(e.currentTarget._longPressTimer); }}
+                onTouchMove={(e) => { if (e.currentTarget._longPressTimer) clearTimeout(e.currentTarget._longPressTimer); }}
               >
                 <div className="token-icon">
                   {hasLogo ? (
@@ -4685,26 +4705,6 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
                         </svg>
                       )}
                     </button>
-                    <button 
-                      className="token-hide-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleHiddenToken(token.mint);
-                      }}
-                      title={isHidden ? "Show token" : "Hide token"}
-                    >
-                      {isHidden ? (
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2">
-                          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
-                          <line x1="1" y1="1" x2="23" y2="23" />
-                        </svg>
-                      ) : (
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2">
-                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                          <circle cx="12" cy="12" r="3" />
-                        </svg>
-                      )}
-                    </button>
                   </div>
                   <span className="token-amount-sub">
                     {(() => {
@@ -4750,32 +4750,129 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
               );
             })}
             
-            {/* Show hidden tokens toggle */}
+            {/* Collapsed hidden tokens section */}
             {(() => {
-              // Only count hidden tokens that are actually in the current token list
-              const actualHiddenCount = tokens.filter(t => hiddenTokens.includes(t.mint)).length;
+              const hiddenList = tokens.filter(t => hiddenTokens.includes(t.mint));
+              const actualHiddenCount = hiddenList.length;
               return actualHiddenCount > 0 && (
-              <button 
-                className="show-hidden-tokens-btn"
-                onClick={() => setShowHiddenTokens(!showHiddenTokens)}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  {showHiddenTokens ? (
-                    <>
-                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                      <circle cx="12" cy="12" r="3" />
-                    </>
-                  ) : (
-                    <>
-                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
-                      <line x1="1" y1="1" x2="23" y2="23" />
-                    </>
-                  )}
-                </svg>
-                {showHiddenTokens ? 'Hide' : 'Show'} {actualHiddenCount} hidden token{actualHiddenCount !== 1 ? 's' : ''}
-              </button>
+              <>
+                <button
+                  className="show-hidden-tokens-btn"
+                  onClick={() => setShowHiddenTokens(!showHiddenTokens)}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                    <line x1="1" y1="1" x2="23" y2="23" />
+                  </svg>
+                  {actualHiddenCount} hidden token{actualHiddenCount !== 1 ? 's' : ''}
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginLeft: 'auto', transform: showHiddenTokens ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                </button>
+                {showHiddenTokens && hiddenList.map(token => (
+                    <div
+                      key={token.address}
+                      className="token-item token-hidden"
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setTokenContextMenu({ token, x: e.clientX, y: e.clientY, isHidden: true });
+                      }}
+                      onTouchStart={(e) => {
+                        const touch = e.touches[0];
+                        const tx = touch.clientX, ty = touch.clientY;
+                        const timer = setTimeout(() => {
+                          e.preventDefault();
+                          setTokenContextMenu({ token, x: tx, y: ty, isHidden: true });
+                        }, 500);
+                        e.currentTarget._longPressTimer = timer;
+                      }}
+                      onTouchEnd={(e) => { if (e.currentTarget._longPressTimer) clearTimeout(e.currentTarget._longPressTimer); }}
+                      onTouchMove={(e) => { if (e.currentTarget._longPressTimer) clearTimeout(e.currentTarget._longPressTimer); }}
+                    >
+                      <div className="token-icon">
+                        {token.logoURI && (token.logoURI.startsWith('http') || token.logoURI.startsWith('/')) ? (
+                          <img src={token.logoURI} alt={token.symbol} className="token-logo" onError={(e) => { e.target.style.display = 'none'; if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex'; }} />
+                        ) : null}
+                        <div className="token-logo-fallback" style={{ display: token.logoURI && (token.logoURI.startsWith('http') || token.logoURI.startsWith('/')) ? 'none' : 'flex' }}>
+                          {token.symbol?.charAt(0) || '?'}
+                        </div>
+                      </div>
+                      <div className="token-info">
+                        <span className="token-name">{token.name || 'Unknown Token'}</span>
+                        <span className="token-amount-sub">
+                          {(() => {
+                            const amt = token.uiAmount || 0;
+                            if (amt === 0) return '0';
+                            if (amt < 0.0001) return amt.toExponential(2);
+                            return parseFloat(amt.toFixed(4)).toLocaleString(undefined, { maximumFractionDigits: 4 });
+                          })()} {token.symbol}
+                        </span>
+                      </div>
+                      <div className="token-balance">
+                        <span className="token-usd" style={{ opacity: 0.5 }}>hidden</span>
+                      </div>
+                    </div>
+                  ))
+                }
+              </>
             );
             })()}
+
+            {/* Token context menu (long-press / right-click) */}
+            {tokenContextMenu && (
+              <>
+                <div className="token-context-overlay" onClick={() => setTokenContextMenu(null)} />
+                <div
+                  className="token-context-menu"
+                  style={{
+                    top: Math.min(tokenContextMenu.y, window.innerHeight - 120),
+                    left: Math.min(tokenContextMenu.x, window.innerWidth - 160)
+                  }}
+                >
+                  <button
+                    className="token-context-item"
+                    onClick={() => {
+                      navigator.clipboard.writeText(tokenContextMenu.token.mint);
+                      setCopiedTokenMint(tokenContextMenu.token.mint);
+                      setTimeout(() => setCopiedTokenMint(null), 2000);
+                      setTokenContextMenu(null);
+                    }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                    </svg>
+                    Copy address
+                  </button>
+                  <button
+                    className="token-context-item token-context-danger"
+                    onClick={() => {
+                      toggleHiddenToken(tokenContextMenu.token.mint);
+                      setTokenContextMenu(null);
+                    }}
+                  >
+                    {tokenContextMenu.isHidden ? (
+                      <>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                          <circle cx="12" cy="12" r="3" />
+                        </svg>
+                        Show token
+                      </>
+                    ) : (
+                      <>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                          <line x1="1" y1="1" x2="23" y2="23" />
+                        </svg>
+                        Hide token
+                      </>
+                    )}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         )}
 

@@ -100,13 +100,35 @@ chrome.runtime.onConnect.addListener((port) => {
     // Send oldest pending request if any (FIFO - first in, first out)
     const oldest = getOldestPendingRequest();
     let displayedRequestId = null;
-    
+
     if (oldest) {
       displayedRequestId = oldest.id;
-      port.postMessage({ 
-        type: 'pending-request', 
+
+      // Reset timeout: user has opened the popup and may need to authenticate.
+      // The original 30s timeout is too short when password entry is required.
+      const entry = pendingRequests.get(oldest.id);
+      if (entry && entry.timeoutId) {
+        clearTimeout(entry.timeoutId);
+        entry.timeoutId = setTimeout(() => {
+          const e = getPendingRequestById(oldest.id);
+          if (e) {
+            console.log('[Background] Request timeout (extended) for:', oldest.id);
+            e.callback({ error: 'Request timeout' });
+            removePendingRequest(oldest.id);
+            if (pendingRequests.size > 0) {
+              chrome.action.setBadgeText({ text: pendingRequests.size.toString() });
+            } else {
+              clearBadge();
+            }
+          }
+        }, 120000); // 2 minutes when popup is open (user may need to enter password)
+        console.log('[Background] Extended timeout for request:', oldest.id);
+      }
+
+      port.postMessage({
+        type: 'pending-request',
         request: oldest.request,
-        requestId: oldest.id 
+        requestId: oldest.id
       });
     }
     
@@ -435,6 +457,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handleWalletChanged(message.publicKey);
     sendResponse({ success: true });
     return;
+  }
+  
+  // Handle wallet unlock - reset lastSensitiveOp for all connected sites
+  // This allows signing immediately after password entry without re-auth
+  if (message.type === 'wallet-unlocked') {
+    console.log('[Background] Wallet unlocked - resetting lastSensitiveOp for all sites');
+    getConnectedSites().then(sites => {
+      const now = Date.now();
+      Object.keys(sites).forEach(origin => {
+        sites[origin].lastSensitiveOp = now;
+      });
+      return saveConnectedSites(sites);
+    }).then(() => {
+      console.log('[Background] Reset lastSensitiveOp for all connected sites');
+      sendResponse({ success: true });
+    }).catch(err => {
+      console.error('[Background] Error resetting lastSensitiveOp:', err);
+      sendResponse({ success: false, error: err.message });
+    });
+    return true; // Keep channel open for async response
   }
   
   // Handle provider requests from content script

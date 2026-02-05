@@ -1424,12 +1424,33 @@ function App() {
     );
   }
 
-  // Lock screen
+  // DApp request with lock: when there's a pending dApp request AND the wallet is locked,
+  // show a single combined lock screen that satisfies both auto-lock AND reauth.
+  // This prevents the user from having to enter their password twice and avoids
+  // the request timing out in the background while the user is authenticating.
+  if (hasDAppRequest && isLocked && screen !== 'welcome') {
+    return (
+      <div className="app">
+        <LockScreen
+          onUnlock={(password) => {
+            // Single password entry satisfies both auto-lock AND dApp reauth
+            setDappRequiresReauth(false);
+            handleUnlock(password);
+          }}
+          walletUnlock={wallet.isEncrypted ? wallet.unlockWallet : null}
+          title="Authentication Required"
+          subtitle="Enter your password to approve this transaction"
+        />
+      </div>
+    );
+  }
+
+  // Lock screen (normal, no pending dApp request)
   if (isLocked && screen !== 'welcome') {
     return (
       <div className="app">
-        <LockScreen 
-          onUnlock={handleUnlock} 
+        <LockScreen
+          onUnlock={handleUnlock}
           walletUnlock={wallet.isEncrypted ? wallet.unlockWallet : null}
         />
       </div>
