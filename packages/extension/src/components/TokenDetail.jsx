@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import X1Logo from './X1Logo';
 import { NETWORKS } from '@x1-wallet/core/services/networks';
-import { logger } from '@x1-wallet/core';
+import { logger, fetchSolanaUSDCPrice } from '@x1-wallet/core';
 
 // API endpoints
 const JUPITER_PRICE_API = 'https://price.jup.ag/v6/price';
@@ -292,8 +292,11 @@ export default function TokenDetail({
       else if (isNative) {
         // XNT native token - fetch from XDEX swap/quote
         price = await getXNTPrice(network);
-      } else if (symbol === 'USDC.X' || symbol === 'USDC' || symbol === 'USDT') {
-        // Stablecoins are pegged to $1.00
+      } else if (symbol === 'USDC.X' || symbol === 'USDC') {
+        // USDC.X is wrapped USDC - use Solana USDC price
+        price = await fetchSolanaUSDCPrice();
+      } else if (symbol === 'USDT') {
+        // USDT pegged to $1.00
         price = 1.00;
       } else if (symbol === 'pXNT') {
         // pXNT (staked XNT) is pegged 1:1 with XNT
