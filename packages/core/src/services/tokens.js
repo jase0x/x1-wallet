@@ -131,6 +131,57 @@ export async function fetchSolanaUSDCPrice() {
   }
 }
 
+// ============================================
+// XDEX SWAP QUOTE PRICE - Pool-based pricing for X1 tokens
+// ============================================
+const XDEX_SWAP_API = 'https://api.xdex.xyz/api/xendex/swap/quote';
+const swapQuotePriceCache = new Map();
+const SWAP_QUOTE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Get the pool-based price for an X1 token via XDEX swap quote (token → USDC.X)
+ * This reflects actual DEX liquidity and is more reliable than the wallet API prices.
+ */
+async function fetchSwapQuotePrice(mint, decimals = 9, network = 'X1 Mainnet') {
+  const cacheKey = `swap-price:${mint}`;
+  const cached = swapQuotePriceCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < SWAP_QUOTE_CACHE_TTL) {
+    return cached.price;
+  }
+
+  try {
+    // Quote a reasonable amount of the token → USDC.X
+    const amount = Math.pow(10, Math.min(decimals, 6)).toString(); // 1M smallest units or 1 token
+    const params = new URLSearchParams({
+      network,
+      token_in: mint,
+      token_out: USDCX_MINT,
+      token_in_amount: amount,
+      is_exact_amount_in: 'true'
+    });
+
+    const response = await fetch(`${XDEX_SWAP_API}?${params}`, {
+      headers: { 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(3000)
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      const rate = parseFloat(data?.data?.rate || data?.data?.outputAmount || 0);
+      if (rate > 0) {
+        // rate = USDC.X per 1 token (in UI amounts)
+        const price = rate;
+        swapQuotePriceCache.set(cacheKey, { price, timestamp: Date.now() });
+        logger.log('[SwapQuote] Pool price for', mint.slice(0, 8), ':', price);
+        return price;
+      }
+    }
+  } catch (e) {
+    logger.warn('[SwapQuote] Failed for', mint.slice(0, 8), ':', e.message);
+  }
+  return null;
+}
+
 function getCachedRPCTokenAccounts(ownerAddress, rpcUrl) {
   const cacheKey = `${ownerAddress}:${rpcUrl}`;
   const cached = rpcTokenAccountsCache.get(cacheKey);
@@ -1166,6 +1217,39 @@ async function fetchXDEXWalletTokens(walletAddress, network) {
       }
     } catch (e) {
       logger.warn('[XDEX] Failed to apply Solana USDC price:', e.message);
+    }
+
+    // Use XDEX swap quote (pool-based) prices for X1 non-stablecoin tokens
+    // The wallet API can return incorrect prices from other chains
+    if (networkName.includes('X1')) {
+      const NATIVE_MINT = 'So11111111111111111111111111111111111111112';
+      const skipMints = new Set([SOLANA_USDC_MINT, USDCX_MINT, NATIVE_MINT]);
+      const tokensToQuote = Object.entries(priceMap).filter(([mint, data]) => {
+        if (skipMints.has(mint)) return false;
+        if (data.isLPToken) return false;
+        // Only re-price tokens that have a price from the wallet API
+        return data.price !== null && data.price !== undefined;
+      });
+
+      if (tokensToQuote.length > 0) {
+        logger.log('[XDEX] Fetching swap quote prices for', tokensToQuote.length, 'X1 tokens');
+        // Fetch pool prices in parallel (max 5 at a time)
+        const batchSize = 5;
+        for (let i = 0; i < tokensToQuote.length; i += batchSize) {
+          const batch = tokensToQuote.slice(i, i + batchSize);
+          const results = await Promise.allSettled(
+            batch.map(([mint]) => fetchSwapQuotePrice(mint, 9, networkName))
+          );
+          results.forEach((result, idx) => {
+            if (result.status === 'fulfilled' && result.value !== null) {
+              const [mint, data] = batch[idx];
+              const oldPrice = data.price;
+              data.price = result.value;
+              logger.log('[XDEX] Pool price override for', data.symbol || mint.slice(0, 8), ':', oldPrice, '->', result.value);
+            }
+          });
+        }
+      }
     }
 
     // Cache the result

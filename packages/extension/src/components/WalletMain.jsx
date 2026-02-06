@@ -3725,9 +3725,9 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
     // Calculate price based on token type
     let price = token.price || 0;
     
-    // Stablecoins
+    // Stablecoins - use token.price (Solana USDC price) if available, else $1
     if (token.symbol === 'USDC' || token.symbol === 'USDT' || token.symbol === 'USDC.X') {
-      price = 1;
+      price = token.price || 1;
     }
     // pXNT is staked XNT, same price as XNT
     else if (token.symbol === 'pXNT') {
@@ -4722,9 +4722,9 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
                       // Calculate USD price based on token type
                       let price = token.price;
                       
-                      // Stablecoins
+                      // Stablecoins - use token.price (Solana USDC price) if available, else $1
                       if (token.symbol === 'USDC' || token.symbol === 'USDT' || token.symbol === 'USDC.X') {
-                        price = 1;
+                        price = token.price || 1;
                       }
                       // pXNT is staked XNT, same price as XNT
                       else if (token.symbol === 'pXNT') {

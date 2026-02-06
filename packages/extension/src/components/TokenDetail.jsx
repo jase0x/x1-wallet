@@ -305,56 +305,32 @@ export default function TokenDetail({
         // Wrapped XNT is pegged 1:1 with XNT
         price = await getXNTPrice(network);
       } else if (mint) {
-        // For other X1 tokens, try to get price from XDEX
-        // Try single token endpoint first
+        // For other X1 tokens, use swap quote (pool-based price) as primary source
+        const USDC_X_MINT = 'B69chRzqzDCmdB5WYB8NRu5Yv5ZA95ABiZcdzCgGm9Tq';
         try {
-          const tokenResponse = await fetch(`${XDEX_API}/tokens/${mint}`, {
-            signal: AbortSignal.timeout(3000)
+          const params = new URLSearchParams({
+            network: network || 'X1 Mainnet',
+            token_in: mint,
+            token_out: USDC_X_MINT,
+            token_in_amount: '1',
+            is_exact_amount_in: 'true'
           });
-          
-          if (tokenResponse.ok) {
-            const tokenData = await tokenResponse.json();
-            logger.log('[TokenDetail] XDEX token data for', symbol, ':', tokenData);
-            
-            const tokenPrice = tokenData.price ?? tokenData.priceUsd ?? tokenData.price_usd;
-            if (tokenPrice !== undefined && tokenPrice !== null) {
-              price = parseFloat(tokenPrice);
-              logger.log('[TokenDetail] Got price from XDEX token endpoint:', price);
+
+          const quoteResponse = await fetch(`${XDEX_API}/swap/quote?${params}`, {
+            headers: { 'Accept': 'application/json' },
+            signal: AbortSignal.timeout(5000)
+          });
+
+          if (quoteResponse.ok) {
+            const quoteData = await quoteResponse.json();
+            const rate = parseFloat(quoteData?.data?.rate || quoteData?.data?.outputAmount || 0);
+            if (rate > 0) {
+              price = rate;
+              logger.log('[TokenDetail] Pool price for', symbol, ':', price);
             }
           }
         } catch (e) {
-          logger.log('[TokenDetail] XDEX token endpoint failed:', e.message);
-        }
-        
-        // Fallback: try pools endpoint
-        if (!price) {
-          try {
-            const response = await fetch(`${XDEX_API}/pools`, {
-              signal: AbortSignal.timeout(3000)
-            });
-            
-            if (response.ok) {
-              const pools = await response.json();
-              logger.log('[TokenDetail] XDEX pools:', pools?.length || 0);
-              
-              // Find pool for this token
-              const tokenPool = pools.find(p => 
-                p.tokenA?.mint === mint || p.tokenB?.mint === mint
-              );
-              
-              if (tokenPool) {
-                const isTokenA = tokenPool.tokenA?.mint === mint;
-                const reserveToken = parseFloat(isTokenA ? tokenPool.reserveA : tokenPool.reserveB) || 0;
-                const reserveOther = parseFloat(isTokenA ? tokenPool.reserveB : tokenPool.reserveA) || 0;
-                
-                if (reserveToken > 0 && reserveOther > 0) {
-                  price = reserveOther / reserveToken;
-                }
-              }
-            }
-          } catch (e) {
-            logger.log('[TokenDetail] XDEX pools endpoint failed:', e.message);
-          }
+          logger.log('[TokenDetail] Swap quote failed for', symbol, ':', e.message);
         }
       }
 
