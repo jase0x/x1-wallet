@@ -38562,18 +38562,26 @@ function App() {
     return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app loading", style: { background: "#0a0a0a", minHeight: "100vh" }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "spinner" }) });
   }
   if (hasDAppRequest && isLocked && screen !== "welcome") {
-    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-      LockScreen,
-      {
-        onUnlock: (password) => {
-          setDappRequiresReauth(false);
-          handleUnlock(password);
-        },
-        walletUnlock: wallet.isEncrypted ? wallet.unlockWallet : null,
-        title: "Authentication Required",
-        subtitle: "Enter your password to approve this transaction"
-      }
-    ) });
+    if (wallet.wallet) {
+      setIsLocked(false);
+      setDappRequiresReauth(false);
+      const now = Date.now();
+      lastActivityRef.current = now;
+      storage.set("lastActivity", now);
+    } else {
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+        LockScreen,
+        {
+          onUnlock: (password) => {
+            setDappRequiresReauth(false);
+            handleUnlock(password);
+          },
+          walletUnlock: wallet.isEncrypted ? wallet.unlockWallet : null,
+          title: "Authentication Required",
+          subtitle: "Enter your password to approve this transaction"
+        }
+      ) });
+    }
   }
   if (isLocked && screen !== "welcome") {
     return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -39075,18 +39083,7 @@ function App() {
   }
   if (hasDAppRequest && wallet.wallet) {
     if (dappRequiresReauth) {
-      return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-        LockScreen,
-        {
-          onUnlock: (password) => {
-            setDappRequiresReauth(false);
-            handleUnlock(password);
-          },
-          walletUnlock: wallet.isEncrypted ? wallet.unlockWallet : null,
-          title: "Re-authentication Required",
-          subtitle: "Enter your password to approve this transaction"
-        }
-      ) });
+      setDappRequiresReauth(false);
     }
     return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
       DAppApproval,

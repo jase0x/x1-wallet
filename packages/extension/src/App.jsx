@@ -1429,24 +1429,34 @@ function App() {
   }
 
   // DApp request with lock: when there's a pending dApp request AND the wallet is locked,
-  // show a single combined lock screen that satisfies both auto-lock AND reauth.
-  // This prevents the user from having to enter their password twice and avoids
-  // the request timing out in the background while the user is authenticating.
+  // but the wallet data loaded from session (wallet.wallet exists), the session IS the
+  // authentication. Skip the lock screen and go straight to approval.
+  // Only show lock screen if the wallet actually needs to be decrypted (no session data).
   if (hasDAppRequest && isLocked && screen !== 'welcome') {
-    return (
-      <div className="app">
-        <LockScreen
-          onUnlock={(password) => {
-            // Single password entry satisfies both auto-lock AND dApp reauth
-            setDappRequiresReauth(false);
-            handleUnlock(password);
-          }}
-          walletUnlock={wallet.isEncrypted ? wallet.unlockWallet : null}
-          title="Authentication Required"
-          subtitle="Enter your password to approve this transaction"
-        />
-      </div>
-    );
+    if (wallet.wallet) {
+      // Session is valid - wallet loaded from session storage.
+      // Auto-clear the lock and reauth, update activity, and proceed to approval.
+      setIsLocked(false);
+      setDappRequiresReauth(false);
+      const now = Date.now();
+      lastActivityRef.current = now;
+      storage.set('lastActivity', now);
+    } else {
+      // Wallet needs decryption - show lock screen
+      return (
+        <div className="app">
+          <LockScreen
+            onUnlock={(password) => {
+              setDappRequiresReauth(false);
+              handleUnlock(password);
+            }}
+            walletUnlock={wallet.isEncrypted ? wallet.unlockWallet : null}
+            title="Authentication Required"
+            subtitle="Enter your password to approve this transaction"
+          />
+        </div>
+      );
+    }
   }
 
   // Lock screen (normal, no pending dApp request)
@@ -2003,24 +2013,12 @@ function App() {
   // If this is an approval window with a pending request, ONLY show DAppApproval (not the main wallet)
   // X1W-SEC: If reauth is required, show password screen first
   if (hasDAppRequest && wallet.wallet) {
+    // If session is valid (wallet.wallet exists), reauth is not needed - session IS auth.
+    // Clear any stale reauth flag and proceed directly to approval.
     if (dappRequiresReauth) {
-      // Show lock screen to verify password before allowing signing
-      return (
-        <div className="app">
-          <LockScreen 
-            onUnlock={(password) => {
-              // Password verified, clear reauth requirement and proceed to approval
-              setDappRequiresReauth(false);
-              handleUnlock(password);
-            }} 
-            walletUnlock={wallet.isEncrypted ? wallet.unlockWallet : null}
-            title="Re-authentication Required"
-            subtitle="Enter your password to approve this transaction"
-          />
-        </div>
-      );
+      setDappRequiresReauth(false);
     }
-    
+
     return (
       <div className="app">
         <DAppApproval 
