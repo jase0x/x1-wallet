@@ -37929,6 +37929,8 @@ function App() {
             if (pendingReq.requiresReauth) {
               logger$1.log("[App] Pending request requires reauth");
               setDappRequiresReauth(true);
+            } else {
+              setDappRequiresReauth(false);
             }
             return;
           }
@@ -37956,6 +37958,8 @@ function App() {
             if (message.request.requiresReauth) {
               logger$1.log("[App] Request requires reauth");
               setDappRequiresReauth(true);
+            } else {
+              setDappRequiresReauth(false);
             }
           }
         });
