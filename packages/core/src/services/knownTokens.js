@@ -65,8 +65,7 @@ export const KNOWN_TOKENS = {
     name: 'USDC X1',
     decimals: 6,
     logoURI: ICONS.USDCX,
-    isToken2022: true,
-    price: 1
+    isToken2022: true
   },
   
   // === Liquid Staking Tokens ===

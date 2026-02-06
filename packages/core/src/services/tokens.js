@@ -61,6 +61,76 @@ const RPC_CACHE_TTL = 15 * 1000; // 15 seconds - short enough to catch external 
 const walletTokensCache = new Map();
 const WALLET_TOKENS_CACHE_TTL = 60 * 1000; // 60 seconds for prices
 
+// ============================================
+// SOLANA USDC PRICE - For USDC and USDC.X pricing
+// ============================================
+const SOLANA_USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+const USDCX_MINT = 'B69chRzqzDCmdB5WYB8NRu5Yv5ZA95ABiZcdzCgGm9Tq';
+const USDC_PRICE_CACHE_KEY = 'x1wallet_usdc_solana_price';
+const USDC_PRICE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+let solanaUSDCPricePromise = null;
+
+export async function fetchSolanaUSDCPrice() {
+  // Check localStorage cache first
+  try {
+    const cached = localStorage.getItem(USDC_PRICE_CACHE_KEY);
+    if (cached) {
+      const { price, timestamp } = JSON.parse(cached);
+      if (Date.now() - timestamp < USDC_PRICE_CACHE_TTL && price > 0) {
+        return price;
+      }
+    }
+  } catch {}
+
+  // Deduplicate concurrent requests
+  if (solanaUSDCPricePromise) return solanaUSDCPricePromise;
+
+  solanaUSDCPricePromise = (async () => {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      const response = await fetch(
+        `https://api.jup.ag/price/v2?ids=${SOLANA_USDC_MINT}`,
+        { signal: controller.signal, headers: { 'Accept': 'application/json' } }
+      );
+      clearTimeout(timeout);
+
+      if (response.ok) {
+        const data = await response.json();
+        const priceStr = data?.data?.[SOLANA_USDC_MINT]?.price;
+        if (priceStr) {
+          const price = parseFloat(priceStr);
+          if (!isNaN(price) && price > 0) {
+            logger.log('[USDC] Solana USDC price from Jupiter:', price);
+            try {
+              localStorage.setItem(USDC_PRICE_CACHE_KEY, JSON.stringify({ price, timestamp: Date.now() }));
+            } catch {}
+            return price;
+          }
+        }
+      }
+    } catch (e) {
+      logger.warn('[USDC] Failed to fetch Solana USDC price:', e.message);
+    }
+    // Fallback: try expired cache
+    try {
+      const cached = localStorage.getItem(USDC_PRICE_CACHE_KEY);
+      if (cached) {
+        const { price } = JSON.parse(cached);
+        if (price > 0) return price;
+      }
+    } catch {}
+    return 1; // Last resort fallback
+  })();
+
+  try {
+    return await solanaUSDCPricePromise;
+  } finally {
+    solanaUSDCPricePromise = null;
+  }
+}
+
 function getCachedRPCTokenAccounts(ownerAddress, rpcUrl) {
   const cacheKey = `${ownerAddress}:${rpcUrl}`;
   const cached = rpcTokenAccountsCache.get(cacheKey);
@@ -721,6 +791,16 @@ export async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null, o
           token.price = parseFloat(xdexPrice);
           updatePriceCache(token.mint, token.price);
           logger.log('[Tokens] XDEX price for', token.symbol, ':', token.price);
+        } else if (token.mint === SOLANA_USDC_MINT || token.mint === USDCX_MINT) {
+          // USDC/USDC.X: fetch Solana price if XDEX didn't provide one
+          try {
+            const usdcPrice = await fetchSolanaUSDCPrice();
+            if (usdcPrice > 0) {
+              token.price = usdcPrice;
+              updatePriceCache(token.mint, token.price);
+              logger.log('[Tokens] Solana USDC price for', token.symbol, ':', token.price);
+            }
+          } catch {}
         }
         metadataCache.set(cacheKey, { symbol: token.symbol, name: token.name, logoURI: token.logoURI, price: token.price });
         continue;
@@ -1069,10 +1149,28 @@ async function fetchXDEXWalletTokens(walletAddress, network) {
     }
     
     logger.log('[XDEX] Total prices extracted:', Object.values(priceMap).filter(p => p.price !== null).length);
-    
+
+    // Apply Solana USDC price for USDC and USDC.X
+    try {
+      const usdcPrice = await fetchSolanaUSDCPrice();
+      if (usdcPrice > 0) {
+        // USDC (Solana)
+        if (priceMap[SOLANA_USDC_MINT]) {
+          priceMap[SOLANA_USDC_MINT].price = usdcPrice;
+        }
+        // USDC.X (X1 wrapped USDC)
+        if (priceMap[USDCX_MINT]) {
+          priceMap[USDCX_MINT].price = usdcPrice;
+        }
+        logger.log('[XDEX] Applied Solana USDC price to USDC/USDC.X:', usdcPrice);
+      }
+    } catch (e) {
+      logger.warn('[XDEX] Failed to apply Solana USDC price:', e.message);
+    }
+
     // Cache the result
     walletTokensCache.set(cacheKey, { data: priceMap, timestamp: Date.now() });
-    
+
     return priceMap;
   } catch (e) {
     if (e.name === 'AbortError') {

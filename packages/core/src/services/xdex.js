@@ -53,8 +53,7 @@ const KNOWN_TOKENS = {
       name: 'USD Coin (X1)',
       decimals: 6,
       logoURI: XDEX_LOGOS.USDC_X,
-      isToken2022: true,
-      price: 1
+      isToken2022: true
     },
     'AvNDf423kEmWNP6AZHFV7DkNG4YRgt6qbdyyryjaa4PQ': {
       symbol: 'XNM',
@@ -71,8 +70,7 @@ const KNOWN_TOKENS = {
       name: 'USD Coin (X1)',
       decimals: 6,
       logoURI: XDEX_LOGOS.USDC_X,
-      isToken2022: true,
-      price: 1
+      isToken2022: true
     },
     'AvNDf423kEmWNP6AZHFV7DkNG4YRgt6qbdyyryjaa4PQ': {
       symbol: 'XNM',
