@@ -128,18 +128,18 @@ export default function SendFlow({ wallet, selectedToken: initialToken, userToke
   });
   
   // Currency configuration - use cached live rates
+  const FALLBACK_RATES = { EUR: 0.85, GBP: 0.74, PLN: 3.57, JPY: 157, CAD: 1.37, AUD: 1.43, CNY: 6.95, KRW: 1464 };
   const getExchangeRates = () => {
     try {
       const cached = localStorage.getItem('x1wallet_exchange_rates');
       if (cached) {
         const { rates } = JSON.parse(cached);
-        return rates;
+        if (rates) return { ...FALLBACK_RATES, ...rates };
       }
     } catch {}
-    // Fallback rates
-    return { EUR: 0.92, GBP: 0.79, PLN: 4.02, JPY: 156, CAD: 1.44, AUD: 1.57, CNY: 7.24, KRW: 1380 };
+    return FALLBACK_RATES;
   };
-  
+
   const exchangeRates = getExchangeRates();
   
   const currencyInfo = {

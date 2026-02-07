@@ -3463,21 +3463,22 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
   });
   
   // Exchange rates - live fetched with cache and fallback
+  const FALLBACK_RATES = { EUR: 0.85, GBP: 0.74, PLN: 3.57, JPY: 157, CAD: 1.37, AUD: 1.43, CNY: 6.95, KRW: 1464 };
+
   const [exchangeRates, setExchangeRates] = useState(() => {
     try {
       const cached = localStorage.getItem('x1wallet_exchange_rates');
       if (cached) {
         const { rates, timestamp } = JSON.parse(cached);
-        // Use cache if less than 1 hour old
-        if (Date.now() - timestamp < 60 * 60 * 1000) {
-          return rates;
+        // Use cache if less than 1 hour old, merge with fallback for safety
+        if (rates && Date.now() - timestamp < 60 * 60 * 1000) {
+          return { ...FALLBACK_RATES, ...rates };
         }
       }
     } catch {}
-    // Fallback rates (approximate)
-    return { EUR: 0.92, GBP: 0.79, PLN: 4.02, JPY: 156, CAD: 1.44, AUD: 1.57, CNY: 7.24, KRW: 1380 };
+    return FALLBACK_RATES;
   });
-  
+
   // XNT price - fetched from XDEX API (XNT/USDC.X pool)
   const [xntPrice, setXntPrice] = useState(() => {
     try {
@@ -3492,7 +3493,7 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
     } catch {}
     return null; // No fallback - show "--" if price unavailable
   });
-  
+
   // Fetch live exchange rates on mount
   useEffect(() => {
     const fetchExchangeRates = async () => {
@@ -3501,41 +3502,40 @@ export default function WalletMain({ wallet, userTokens: initialTokens = [], onT
         const cached = localStorage.getItem('x1wallet_exchange_rates');
         if (cached) {
           const { timestamp } = JSON.parse(cached);
-          // Skip fetch if cache is less than 1 hour old
           if (Date.now() - timestamp < 60 * 60 * 1000) {
             return;
           }
         }
-        
-        // Fetch fresh rates from free API (no API key required)
-        const response = await fetch('https://open.er-api.com/v6/latest/USD');
+
+        const response = await fetch('https://open.er-api.com/v6/latest/USD', {
+          signal: AbortSignal.timeout(5000)
+        });
         if (response.ok) {
           const data = await response.json();
           if (data.rates) {
             const rates = {
-              EUR: data.rates.EUR || 0.92,
-              GBP: data.rates.GBP || 0.79,
-              PLN: data.rates.PLN || 4.02,
-              JPY: data.rates.JPY || 156,
-              CAD: data.rates.CAD || 1.44,
-              AUD: data.rates.AUD || 1.57,
-              CNY: data.rates.CNY || 7.24,
-              KRW: data.rates.KRW || 1380
+              EUR: data.rates.EUR || FALLBACK_RATES.EUR,
+              GBP: data.rates.GBP || FALLBACK_RATES.GBP,
+              PLN: data.rates.PLN || FALLBACK_RATES.PLN,
+              JPY: data.rates.JPY || FALLBACK_RATES.JPY,
+              CAD: data.rates.CAD || FALLBACK_RATES.CAD,
+              AUD: data.rates.AUD || FALLBACK_RATES.AUD,
+              CNY: data.rates.CNY || FALLBACK_RATES.CNY,
+              KRW: data.rates.KRW || FALLBACK_RATES.KRW
             };
             setExchangeRates(rates);
-            // Cache with timestamp
             localStorage.setItem('x1wallet_exchange_rates', JSON.stringify({
               rates,
               timestamp: Date.now()
             }));
-            logger.log('[Currency] Live exchange rates fetched:', rates);
+            console.log('[Currency] Live exchange rates fetched:', rates);
           }
         }
       } catch (e) {
-        logger.warn('[Currency] Failed to fetch exchange rates, using fallback:', e.message);
+        console.warn('[Currency] Failed to fetch exchange rates:', e.message);
       }
     };
-    
+
     fetchExchangeRates();
   }, []);
   
