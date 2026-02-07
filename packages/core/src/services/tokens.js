@@ -140,7 +140,7 @@ const SWAP_QUOTE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 /**
  * Get the pool-based price for an X1 token via XDEX swap quote (token → USDC.X)
- * This reflects actual DEX liquidity and is more reliable than the wallet API prices.
+ * Tries increasing amounts since very low-value tokens (e.g. XEN) return zero for small quotes.
  */
 async function fetchSwapQuotePrice(mint, network = 'X1 Mainnet') {
   const cacheKey = `swap-price:${mint}`;
@@ -149,31 +149,46 @@ async function fetchSwapQuotePrice(mint, network = 'X1 Mainnet') {
     return cached.price;
   }
 
-  try {
-    const params = new URLSearchParams({
-      network,
-      token_in: mint,
-      token_out: USDCX_MINT,
-      token_in_amount: '1',
-      is_exact_amount_in: 'true'
-    });
+  // Try increasing amounts: 1, 1K, 1M, 1B - needed for very low-value tokens
+  const amounts = ['1', '1000', '1000000', '1000000000'];
 
-    const response = await fetch(`${XDEX_SWAP_API}?${params}`, {
-      headers: { 'Accept': 'application/json' },
-      signal: AbortSignal.timeout(3000)
-    });
+  for (const amount of amounts) {
+    try {
+      const params = new URLSearchParams({
+        network,
+        token_in: mint,
+        token_out: USDCX_MINT,
+        token_in_amount: amount,
+        is_exact_amount_in: 'true'
+      });
 
-    if (response.ok) {
-      const data = await response.json();
-      const rate = parseFloat(data?.data?.rate || data?.data?.outputAmount || 0);
-      if (rate > 0) {
-        swapQuotePriceCache.set(cacheKey, { price: rate, timestamp: Date.now() });
-        logger.log('[SwapQuote] Pool price for', mint.slice(0, 8), ':', rate);
-        return rate;
+      const response = await fetch(`${XDEX_SWAP_API}?${params}`, {
+        headers: { 'Accept': 'application/json' },
+        signal: AbortSignal.timeout(3000)
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data?.success === false) continue; // "output amount is zero" - try larger amount
+        const rate = parseFloat(data?.data?.rate || 0);
+        if (rate > 0) {
+          swapQuotePriceCache.set(cacheKey, { price: rate, timestamp: Date.now() });
+          logger.log('[SwapQuote] Pool price for', mint.slice(0, 8), ':', rate, '(amount:', amount + ')');
+          return rate;
+        }
+        // If rate is 0 but outputAmount exists, compute from output/input
+        const output = parseFloat(data?.data?.outputAmount || 0);
+        const input = parseFloat(data?.data?.inputAmount || amount);
+        if (output > 0 && input > 0) {
+          const price = output / input;
+          swapQuotePriceCache.set(cacheKey, { price, timestamp: Date.now() });
+          logger.log('[SwapQuote] Computed price for', mint.slice(0, 8), ':', price, '(amount:', amount + ')');
+          return price;
+        }
       }
+    } catch (e) {
+      logger.warn('[SwapQuote] Failed for', mint.slice(0, 8), 'amount:', amount, ':', e.message);
     }
-  } catch (e) {
-    logger.warn('[SwapQuote] Failed for', mint.slice(0, 8), ':', e.message);
   }
   return null;
 }

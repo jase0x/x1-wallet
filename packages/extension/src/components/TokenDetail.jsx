@@ -306,31 +306,44 @@ export default function TokenDetail({
         price = await getXNTPrice(network);
       } else if (mint) {
         // For other X1 tokens, use swap quote (pool-based price) as primary source
+        // Try increasing amounts for very low-value tokens (e.g. XEN)
         const USDC_X_MINT = 'B69chRzqzDCmdB5WYB8NRu5Yv5ZA95ABiZcdzCgGm9Tq';
-        try {
-          const params = new URLSearchParams({
-            network: network || 'X1 Mainnet',
-            token_in: mint,
-            token_out: USDC_X_MINT,
-            token_in_amount: '1',
-            is_exact_amount_in: 'true'
-          });
+        const amounts = ['1', '1000', '1000000', '1000000000'];
+        for (const amount of amounts) {
+          try {
+            const params = new URLSearchParams({
+              network: network || 'X1 Mainnet',
+              token_in: mint,
+              token_out: USDC_X_MINT,
+              token_in_amount: amount,
+              is_exact_amount_in: 'true'
+            });
 
-          const quoteResponse = await fetch(`${XDEX_API}/swap/quote?${params}`, {
-            headers: { 'Accept': 'application/json' },
-            signal: AbortSignal.timeout(5000)
-          });
+            const quoteResponse = await fetch(`${XDEX_API}/swap/quote?${params}`, {
+              headers: { 'Accept': 'application/json' },
+              signal: AbortSignal.timeout(5000)
+            });
 
-          if (quoteResponse.ok) {
-            const quoteData = await quoteResponse.json();
-            const rate = parseFloat(quoteData?.data?.rate || quoteData?.data?.outputAmount || 0);
-            if (rate > 0) {
-              price = rate;
-              logger.log('[TokenDetail] Pool price for', symbol, ':', price);
+            if (quoteResponse.ok) {
+              const quoteData = await quoteResponse.json();
+              if (quoteData?.success === false) continue;
+              const rate = parseFloat(quoteData?.data?.rate || 0);
+              if (rate > 0) {
+                price = rate;
+                logger.log('[TokenDetail] Pool price for', symbol, ':', price, '(amount:', amount + ')');
+                break;
+              }
+              const output = parseFloat(quoteData?.data?.outputAmount || 0);
+              const input = parseFloat(quoteData?.data?.inputAmount || amount);
+              if (output > 0 && input > 0) {
+                price = output / input;
+                logger.log('[TokenDetail] Computed price for', symbol, ':', price, '(amount:', amount + ')');
+                break;
+              }
             }
+          } catch (e) {
+            logger.log('[TokenDetail] Swap quote failed for', symbol, ':', e.message);
           }
-        } catch (e) {
-          logger.log('[TokenDetail] Swap quote failed for', symbol, ':', e.message);
         }
       }
 
