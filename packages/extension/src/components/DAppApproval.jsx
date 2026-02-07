@@ -1318,12 +1318,29 @@ export default function DAppApproval({ wallet, requestId, onComplete }) {
         logger.warn('[DAppApproval] Failed to send error to background:', e);
       }
       
-      setError(getUserFriendlyError(err, ErrorMessages.transaction.failed));
+      // Parse specific program errors for better user messaging
+      const errMsg = err?.message || '';
+      let friendlyError;
+
+      if (errMsg.includes('custom program error')) {
+        // Detect common DEX/swap program errors
+        if (errMsg.includes('0x1775') || errMsg.includes('0x1771')) {
+          friendlyError = 'Swap failed: price moved beyond slippage tolerance. Please increase slippage on the DApp and try again.';
+        } else if (errMsg.includes('0x1786')) {
+          friendlyError = 'Invalid market state. The liquidity pool may be temporarily unavailable. Please try again later.';
+        } else if (errMsg.includes('0x1787')) {
+          friendlyError = 'Swap route expired or liquidity changed. Please refresh and try again.';
+        } else if (errMsg.includes('0xbc4')) {
+          friendlyError = 'Price moved beyond slippage tolerance. Please increase slippage on the DApp or use a smaller amount.';
+        }
+      }
+
+      setError(friendlyError || getUserFriendlyError(err, ErrorMessages.transaction.failed));
       setProcessing(false);
     } finally {
       // ALWAYS clear signing state when done (success or failure)
       signingInProgress.current = false;
-      
+
       // ALWAYS clear Ledger busy state when done (success or failure)
       if (isHardwareWallet) {
         try {

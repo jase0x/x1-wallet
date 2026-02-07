@@ -16,9 +16,14 @@ const ERROR_MAPPINGS = [
   { pattern: /rate limit|429|too many requests/i, message: 'Too many requests. Please wait a moment and try again.' },
   { pattern: /blockhash not found|expired/i, message: 'Transaction expired. Please try again.' },
   
-  // Transaction errors  
+  // Transaction errors
   { pattern: /insufficient.*balance|insufficient.*funds/i, message: 'Insufficient balance for this transaction.' },
   { pattern: /invalid.*signature/i, message: 'Transaction signing failed. Please try again.' },
+  { pattern: /0x1775|0x1771/, message: 'Swap failed: price moved beyond slippage tolerance. Please increase slippage and try again.' },
+  { pattern: /0x1787/, message: 'Swap route expired or liquidity changed. Please try again.' },
+  { pattern: /0x1786/, message: 'Invalid market state. The liquidity pool may be temporarily unavailable.' },
+  { pattern: /0xbc4/, message: 'Price moved beyond slippage tolerance. Please increase slippage or use a smaller amount.' },
+  { pattern: /custom program error.*simulation failed|simulation failed.*custom program error/i, message: 'Transaction simulation failed. This may be due to price changes or expired quotes. Please try again.' },
   { pattern: /simulation failed/i, message: 'Transaction simulation failed. Please check the details and try again.' },
   { pattern: /account.*not found|account does not exist/i, message: 'Account not found. Please verify the address.' },
   

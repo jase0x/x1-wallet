@@ -9274,7 +9274,7 @@ function getRandomBytes(length) {
   crypto.getRandomValues(bytes);
   return bytes;
 }
-async function sha256(data) {
+async function sha256$1(data) {
   const buffer2 = await crypto.subtle.digest("SHA-256", data);
   return new Uint8Array(buffer2);
 }
@@ -9282,7 +9282,7 @@ function bytesToBinary(bytes) {
   return Array.from(bytes).map((b) => b.toString(2).padStart(8, "0")).join("");
 }
 async function entropyToMnemonic(entropy) {
-  const hash = await sha256(entropy);
+  const hash = await sha256$1(entropy);
   const checksumBits = entropy.length / 4;
   const entropyBits = bytesToBinary(entropy);
   const hashBits = bytesToBinary(hash);
@@ -9319,7 +9319,7 @@ async function validateMnemonic(mnemonic) {
   for (let i = 0; i < entropyBytes.length; i++) {
     entropyBytes[i] = parseInt(entropyBits.slice(i * 8, (i + 1) * 8), 2);
   }
-  const hash = await sha256(entropyBytes);
+  const hash = await sha256$1(entropyBytes);
   const hashBits = bytesToBinary(hash);
   const expectedChecksum = hashBits.slice(0, words.length / 3);
   return checksumBits === expectedChecksum;
@@ -10841,9 +10841,9 @@ const base58 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
   encodeBase58,
   validateAddress
 }, Symbol.toStringTag, { value: "Module" }));
-const SYSTEM_PROGRAM_ID$1 = "11111111111111111111111111111111";
+const SYSTEM_PROGRAM_ID$2 = "11111111111111111111111111111111";
 const TOKEN_PROGRAM_ID$3 = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
-const ASSOCIATED_TOKEN_PROGRAM_ID$1 = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
+const ASSOCIATED_TOKEN_PROGRAM_ID$2 = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
 const COMPUTE_BUDGET_PROGRAM_ID = "ComputeBudget111111111111111111111111111111";
 const BUBBLEGUM_PROGRAM_ID = "BGUMAp9Gq7iTEuizy4pqaxsTyUCBK68MDfK752saRPUY";
 const SPL_NOOP_PROGRAM_ID = "noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV";
@@ -11069,7 +11069,7 @@ async function deriveTreeAuthority(treeId) {
     buffer2.set(marker, offset);
     const hash = await crypto.subtle.digest("SHA-256", buffer2);
     const hashBytes = new Uint8Array(hash);
-    if (!isOnCurve(hashBytes)) {
+    if (!isOnCurve$1(hashBytes)) {
       return encodeBase58(hashBytes);
     }
   }
@@ -11098,7 +11098,7 @@ function buildCompressedNftTransferMessage({
   const bubblegumBytes = decodeToFixedSize$1(BUBBLEGUM_PROGRAM_ID, 32);
   const noopBytes = decodeToFixedSize$1(SPL_NOOP_PROGRAM_ID, 32);
   const compressionBytes = decodeToFixedSize$1(SPL_ACCOUNT_COMPRESSION_PROGRAM_ID, 32);
-  const systemBytes = decodeToFixedSize$1(SYSTEM_PROGRAM_ID$1, 32);
+  const systemBytes = decodeToFixedSize$1(SYSTEM_PROGRAM_ID$2, 32);
   const blockhashBytes = decodeToFixedSize$1(recentBlockhash, 32);
   const rootBytes = decodeToFixedSize$1(root, 32);
   const dataHashBytes = decodeToFixedSize$1(dataHash, 32);
@@ -11334,7 +11334,7 @@ async function computeATAAddress(owner, mint, tokenProgramId, bump) {
   const ownerBytes = decodeToFixedSize$1(owner, 32);
   const mintBytes = decodeToFixedSize$1(mint, 32);
   const tokenProgramBytes = decodeToFixedSize$1(tokenProgramId, 32);
-  const ataProgramBytes = decodeToFixedSize$1(ASSOCIATED_TOKEN_PROGRAM_ID$1, 32);
+  const ataProgramBytes = decodeToFixedSize$1(ASSOCIATED_TOKEN_PROGRAM_ID$2, 32);
   const bumpSeed = new Uint8Array([bump]);
   const marker = new TextEncoder().encode("ProgramDerivedAddress");
   const totalLength = 32 + 32 + 32 + 1 + 32 + marker.length;
@@ -11362,7 +11362,7 @@ async function findATAAddress(owner, mint, tokenProgramId) {
   const ownerBytes = decodeToFixedSize$1(owner, 32);
   const mintBytes = decodeToFixedSize$1(mint, 32);
   const tokenProgramBytes = decodeToFixedSize$1(tokenProgramId, 32);
-  const ataProgramBytes = decodeToFixedSize$1(ASSOCIATED_TOKEN_PROGRAM_ID$1, 32);
+  const ataProgramBytes = decodeToFixedSize$1(ASSOCIATED_TOKEN_PROGRAM_ID$2, 32);
   const marker = new TextEncoder().encode("ProgramDerivedAddress");
   for (let bump = 255; bump >= 0; bump--) {
     const bumpSeed = new Uint8Array([bump]);
@@ -11382,7 +11382,7 @@ async function findATAAddress(owner, mint, tokenProgramId) {
     buffer2.set(marker, offset);
     const hash = await crypto.subtle.digest("SHA-256", buffer2);
     const hashBytes = new Uint8Array(hash);
-    if (!isOnCurve(hashBytes)) {
+    if (!isOnCurve$1(hashBytes)) {
       logger$1.log("[ATA] Found valid PDA at bump:", bump, "address:", encodeBase58(hashBytes));
       return { address: encodeBase58(hashBytes), bump };
     }
@@ -11392,7 +11392,7 @@ async function findATAAddress(owner, mint, tokenProgramId) {
   }
   throw new Error("Could not find valid PDA for ATA - all 256 bumps resulted in on-curve addresses");
 }
-function isOnCurve(bytes) {
+function isOnCurve$1(bytes) {
   let allZero = true;
   let allOne = true;
   for (let i = 0; i < 32; i++) {
@@ -11436,8 +11436,8 @@ function buildCreateATAMessage(payer, owner, ataAddress, mint, tokenProgramId, b
   const ataBytes = decodeToFixedSize$1(ataAddress, 32);
   const mintBytes = decodeToFixedSize$1(mint, 32);
   const tokenProgramBytes = decodeToFixedSize$1(tokenProgramId, 32);
-  const ataProgramBytes = decodeToFixedSize$1(ASSOCIATED_TOKEN_PROGRAM_ID$1, 32);
-  const systemProgramBytes = decodeToFixedSize$1(SYSTEM_PROGRAM_ID$1, 32);
+  const ataProgramBytes = decodeToFixedSize$1(ASSOCIATED_TOKEN_PROGRAM_ID$2, 32);
+  const systemProgramBytes = decodeToFixedSize$1(SYSTEM_PROGRAM_ID$2, 32);
   const blockhashBytes = decodeToFixedSize$1(blockhash, 32);
   const header = new Uint8Array([1, 0, 3]);
   const numAccounts = 7;
@@ -11579,8 +11579,8 @@ function buildTokenTransferWithCreateATAMessage({
   const destATABytes = decodeToFixedSize$1(toTokenAccount, 32);
   const mintBytes = decodeToFixedSize$1(mint, 32);
   const tokenProgramBytes = decodeToFixedSize$1(tokenProgramId, 32);
-  const ataProgramBytes = decodeToFixedSize$1(ASSOCIATED_TOKEN_PROGRAM_ID$1, 32);
-  const systemProgramBytes = decodeToFixedSize$1(SYSTEM_PROGRAM_ID$1, 32);
+  const ataProgramBytes = decodeToFixedSize$1(ASSOCIATED_TOKEN_PROGRAM_ID$2, 32);
+  const systemProgramBytes = decodeToFixedSize$1(SYSTEM_PROGRAM_ID$2, 32);
   const blockhashBytes = decodeToFixedSize$1(recentBlockhash, 32);
   const accounts = [
     { name: "payer", bytes: payerBytes, address: fromPubkey },
@@ -11588,9 +11588,9 @@ function buildTokenTransferWithCreateATAMessage({
     { name: "source", bytes: sourceBytes, address: fromTokenAccount },
     { name: "destOwner", bytes: destOwnerBytes, address: toPubkey },
     { name: "mint", bytes: mintBytes, address: mint },
-    { name: "system", bytes: systemProgramBytes, address: SYSTEM_PROGRAM_ID$1 },
+    { name: "system", bytes: systemProgramBytes, address: SYSTEM_PROGRAM_ID$2 },
     { name: "tokenProgram", bytes: tokenProgramBytes, address: tokenProgramId },
-    { name: "ataProgram", bytes: ataProgramBytes, address: ASSOCIATED_TOKEN_PROGRAM_ID$1 }
+    { name: "ataProgram", bytes: ataProgramBytes, address: ASSOCIATED_TOKEN_PROGRAM_ID$2 }
   ];
   logger$1.log("[BUILD TX] Checking for duplicate accounts...");
   for (let i = 0; i < accounts.length; i++) {
@@ -11670,7 +11670,7 @@ function buildTokenTransferWithCreateATAMessage({
 function buildTransferMessage(fromPubkey, toPubkey, lamports, recentBlockhash, priorityFee = 0) {
   const fromPubkeyBytes = decodeToFixedSize$1(fromPubkey, 32);
   const toPubkeyBytes = decodeToFixedSize$1(toPubkey, 32);
-  const systemProgramBytes = decodeToFixedSize$1(SYSTEM_PROGRAM_ID$1, 32);
+  const systemProgramBytes = decodeToFixedSize$1(SYSTEM_PROGRAM_ID$2, 32);
   const blockhashBytes = decodeToFixedSize$1(recentBlockhash, 32);
   if (!priorityFee || priorityFee <= 0) {
     const header2 = new Uint8Array([1, 0, 1]);
@@ -12642,8 +12642,8 @@ async function createWrapTransaction({ owner, amount, rpcUrl, privateKey }) {
     const nativeMintKey = decodeToFixedSize$1(NATIVE_MINT, 32);
     const ataKey = decodeToFixedSize$1(ataAddress, 32);
     const tokenProgramKey = decodeToFixedSize$1(TOKEN_PROGRAM_ID$3, 32);
-    const systemProgramKey = decodeToFixedSize$1(SYSTEM_PROGRAM_ID$1, 32);
-    const ataProgramKey = decodeToFixedSize$1(ASSOCIATED_TOKEN_PROGRAM_ID$1, 32);
+    const systemProgramKey = decodeToFixedSize$1(SYSTEM_PROGRAM_ID$2, 32);
+    const ataProgramKey = decodeToFixedSize$1(ASSOCIATED_TOKEN_PROGRAM_ID$2, 32);
     const blockhashBytes = decodeBase58(recentBlockhash);
     const accountKeys = [];
     const addKey = (key) => {
@@ -12904,8 +12904,8 @@ async function createWrapTransactionHardware({ owner, amount, rpcUrl, hardwareWa
     const nativeMintKey = decodeToFixedSize$1(NATIVE_MINT, 32);
     const ataKey = decodeToFixedSize$1(ataAddress, 32);
     const tokenProgramKey = decodeToFixedSize$1(TOKEN_PROGRAM_ID$3, 32);
-    const systemProgramKey = decodeToFixedSize$1(SYSTEM_PROGRAM_ID$1, 32);
-    const ataProgramKey = decodeToFixedSize$1(ASSOCIATED_TOKEN_PROGRAM_ID$1, 32);
+    const systemProgramKey = decodeToFixedSize$1(SYSTEM_PROGRAM_ID$2, 32);
+    const ataProgramKey = decodeToFixedSize$1(ASSOCIATED_TOKEN_PROGRAM_ID$2, 32);
     const blockhashBytes = decodeBase58(recentBlockhash);
     const accountKeys = [];
     const addKey = (key) => {
@@ -13141,9 +13141,14 @@ const ERROR_MAPPINGS = [
   { pattern: /rpc.*error|jsonrpc/i, message: "Blockchain network error. Please try again." },
   { pattern: /rate limit|429|too many requests/i, message: "Too many requests. Please wait a moment and try again." },
   { pattern: /blockhash not found|expired/i, message: "Transaction expired. Please try again." },
-  // Transaction errors  
+  // Transaction errors
   { pattern: /insufficient.*balance|insufficient.*funds/i, message: "Insufficient balance for this transaction." },
   { pattern: /invalid.*signature/i, message: "Transaction signing failed. Please try again." },
+  { pattern: /0x1775|0x1771/, message: "Swap failed: price moved beyond slippage tolerance. Please increase slippage and try again." },
+  { pattern: /0x1787/, message: "Swap route expired or liquidity changed. Please try again." },
+  { pattern: /0x1786/, message: "Invalid market state. The liquidity pool may be temporarily unavailable." },
+  { pattern: /0xbc4/, message: "Price moved beyond slippage tolerance. Please increase slippage or use a smaller amount." },
+  { pattern: /custom program error.*simulation failed|simulation failed.*custom program error/i, message: "Transaction simulation failed. This may be due to price changes or expired quotes. Please try again." },
   { pattern: /simulation failed/i, message: "Transaction simulation failed. Please check the details and try again." },
   { pattern: /account.*not found|account does not exist/i, message: "Account not found. Please verify the address." },
   // Wallet errors
@@ -14382,7 +14387,7 @@ function getKnownTokenMetadata(mint, network) {
 }
 const API_SERVER$1 = "https://mobile-api.x1.xyz";
 const TOKEN_PROGRAM_ID$2 = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
-const TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+const TOKEN_2022_PROGRAM_ID$1 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 const METADATA_PROGRAM_ID = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
 class RateLimiter {
   constructor(maxRequests = 5, windowMs = 1e3) {
@@ -14793,7 +14798,7 @@ async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null, onUpdate
       } else {
         [splTokens, token2022] = await Promise.all([
           fetchTokenAccountsByProgram(rpcUrl, ownerAddress, TOKEN_PROGRAM_ID$2),
-          fetchTokenAccountsByProgram(rpcUrl, ownerAddress, TOKEN_2022_PROGRAM_ID)
+          fetchTokenAccountsByProgram(rpcUrl, ownerAddress, TOKEN_2022_PROGRAM_ID$1)
         ]);
         xdexPrices = {};
         setCachedRPCTokenAccounts(ownerAddress, rpcUrl, splTokens, token2022);
@@ -14807,7 +14812,7 @@ async function fetchTokenAccounts(rpcUrl, ownerAddress, network = null, onUpdate
     } else {
       [splTokens, token2022, xdexPrices] = await Promise.all([
         fetchTokenAccountsByProgram(rpcUrl, ownerAddress, TOKEN_PROGRAM_ID$2),
-        fetchTokenAccountsByProgram(rpcUrl, ownerAddress, TOKEN_2022_PROGRAM_ID),
+        fetchTokenAccountsByProgram(rpcUrl, ownerAddress, TOKEN_2022_PROGRAM_ID$1),
         fetchXDEXWalletTokens(ownerAddress, network)
       ]);
       setCachedRPCTokenAccounts(ownerAddress, rpcUrl, splTokens, token2022);
@@ -15123,7 +15128,7 @@ async function fetchTokenAccountsByProgram(rpcUrl, ownerAddress, programId) {
     logger$1.error("[Tokens] No RPC URL provided");
     return [];
   }
-  logger$1.log(`[Tokens] Fetching ${programId === TOKEN_2022_PROGRAM_ID ? "Token-2022" : "SPL Token"} accounts from:`, rpcUrl);
+  logger$1.log(`[Tokens] Fetching ${programId === TOKEN_2022_PROGRAM_ID$1 ? "Token-2022" : "SPL Token"} accounts from:`, rpcUrl);
   const maxRetries = 2;
   let lastError = null;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -15181,10 +15186,10 @@ async function fetchTokenAccountsByProgram(rpcUrl, ownerAddress, programId) {
           uiAmount,
           balance: uiAmount,
           programId,
-          isToken2022: programId === TOKEN_2022_PROGRAM_ID
+          isToken2022: programId === TOKEN_2022_PROGRAM_ID$1
         };
       }).filter((t2) => parseFloat(t2.amount) > 0);
-      logger$1.log(`[Tokens] Found ${tokens2.length} ${programId === TOKEN_2022_PROGRAM_ID ? "Token-2022" : "SPL"} tokens`);
+      logger$1.log(`[Tokens] Found ${tokens2.length} ${programId === TOKEN_2022_PROGRAM_ID$1 ? "Token-2022" : "SPL"} tokens`);
       return tokens2;
     } catch (e) {
       if (e.name === "AbortError") {
@@ -15547,7 +15552,7 @@ async function fetchTokenMetadataFromURI(uri) {
 const tokens = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   METADATA_PROGRAM_ID,
-  TOKEN_2022_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID: TOKEN_2022_PROGRAM_ID$1,
   TOKEN_PROGRAM_ID: TOKEN_PROGRAM_ID$2,
   fetchToken2022Metadata,
   fetchTokenAccounts,
@@ -16012,7 +16017,17 @@ function setCachedBalance$1(publicKey, network, balance) {
 }
 function getNetworkConfig(networkName) {
   if (NETWORKS[networkName]) {
-    return NETWORKS[networkName];
+    const config = { ...NETWORKS[networkName] };
+    try {
+      const overrides = JSON.parse(localStorage.getItem("x1wallet_rpcOverrides") || "{}");
+      if (overrides[networkName]) {
+        config.rpcUrl = overrides[networkName];
+        config.hasCustomRpc = true;
+      }
+    } catch (e) {
+      logger$1.warn("Failed to load RPC overrides:", e);
+    }
+    return config;
   }
   try {
     const customNetworks = JSON.parse(localStorage.getItem(CUSTOM_NETWORKS_KEY) || "[]");
@@ -25534,6 +25549,13 @@ function BrowserScreen({ wallet, onBack }) {
       color: "#ff6b35"
     },
     {
+      name: "CORE",
+      url: "https://core.x1.xyz",
+      logo: "/icons/48-core.png",
+      desc: "Staking & Rewards",
+      color: "#f7931a"
+    },
+    {
       name: "Vero",
       url: "https://vero.x1.xyz/",
       letter: "V",
@@ -26756,27 +26778,30 @@ function WalletMain({ wallet, userTokens: initialTokens = [], onTokensUpdate, on
             token.address
           );
         }),
-        hiddenTokens.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs(
-          "button",
-          {
-            className: "show-hidden-tokens-btn",
-            onClick: () => setShowHiddenTokens(!showHiddenTokens),
-            children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: showHiddenTokens ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "3" })
-              ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "1", y1: "1", x2: "23", y2: "23" })
-              ] }) }),
-              showHiddenTokens ? "Hide" : "Show",
-              " ",
-              hiddenTokens.length,
-              " hidden token",
-              hiddenTokens.length !== 1 ? "s" : ""
-            ]
-          }
-        )
+        (() => {
+          const actualHiddenCount = tokens2.filter((t2) => hiddenTokens.includes(t2.mint)).length;
+          return actualHiddenCount > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "button",
+            {
+              className: "show-hidden-tokens-btn",
+              onClick: () => setShowHiddenTokens(!showHiddenTokens),
+              children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: showHiddenTokens ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "3" })
+                ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "1", y1: "1", x2: "23", y2: "23" })
+                ] }) }),
+                showHiddenTokens ? "Hide" : "Show",
+                " ",
+                actualHiddenCount,
+                " hidden token",
+                actualHiddenCount !== 1 ? "s" : ""
+              ]
+            }
+          );
+        })()
       ] }),
       activeTab === "nfts" && /* @__PURE__ */ jsxRuntimeExports.jsx(NFTsTab, { wallet, networkConfig }),
       activeTab === "defi" && /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -27419,6 +27444,16 @@ function SettingsScreen({ wallet, onBack, onLock, initialPasswordProtection, onP
     storage$1.set("customExplorer", customExplorer);
   }, [customExplorer]);
   reactExports.useEffect(() => {
+    const container = document.querySelector(".settings-screen .settings-content");
+    if (container) {
+      container.scrollTop = 0;
+    }
+    const screen = document.querySelector(".settings-screen");
+    if (screen) {
+      screen.scrollTop = 0;
+    }
+  }, [subScreen]);
+  reactExports.useEffect(() => {
     if (subScreen !== "recovery") {
       setRecoveryView("menu");
       setShowPhrase(false);
@@ -27509,7 +27544,8 @@ function SettingsScreen({ wallet, onBack, onLock, initialPasswordProtection, onP
   };
   const startEditingRpcOverride = (networkName) => {
     setEditingRpcOverride(networkName);
-    setRpcOverrideUrl(rpcOverrides[networkName] || "");
+    const override = rpcOverrides[networkName];
+    setRpcOverrideUrl(override || "");
     setError("");
   };
   const verifyUserPassword = async () => {
@@ -27741,8 +27777,8 @@ function SettingsScreen({ wallet, onBack, onLock, initialPasswordProtection, onP
               {
                 className: "btn-secondary",
                 style: { display: "flex", alignItems: "center", justifyContent: "center", gap: "12px" },
-                onClick: async () => {
-                  await navigator.clipboard.writeText(phrase);
+                onClick: () => {
+                  navigator.clipboard.writeText(phrase);
                   setCopied(true);
                   setTimeout(() => setCopied(false), 2e3);
                 },
@@ -27775,8 +27811,8 @@ function SettingsScreen({ wallet, onBack, onLock, initialPasswordProtection, onP
   }
   if (subScreen === "privatekey") {
     const currentPrivateKey = ((_b2 = wallet.wallet) == null ? void 0 : _b2.privateKey) || "";
-    const copyPrivateKey = async () => {
-      await navigator.clipboard.writeText(currentPrivateKey);
+    const copyPrivateKey = () => {
+      navigator.clipboard.writeText(currentPrivateKey);
       setPrivateKeyCopied(true);
       setTimeout(() => setPrivateKeyCopied(false), 2e3);
     };
@@ -28524,197 +28560,185 @@ Address: ${publicKeyBase58.slice(0, 20)}...`);
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-content", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Mainnets" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "radio-group", children: Object.keys(NETWORKS).filter((n2) => !n2.includes("Testnet") && !n2.includes("Devnet")).map((net) => {
-            var _a3;
-            return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { marginBottom: "4px" }, children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsxs(
-                "div",
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "radio-group", children: Object.keys(NETWORKS).filter((n2) => !n2.includes("Testnet") && !n2.includes("Devnet")).map((net) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { marginBottom: "4px" }, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs(
+              "div",
+              {
+                className: `radio-option ${wallet.network === net ? "selected" : ""}`,
+                onClick: () => wallet.setNetwork(net),
+                style: { position: "relative" },
+                children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "radio-option-text", children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: net }),
+                    rpcOverrides[net] && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 11, color: "var(--primary)", display: "block" }, children: "Custom RPC configured" })
+                  ] }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px" }, children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx(
+                      "button",
+                      {
+                        onClick: (e) => {
+                          e.stopPropagation();
+                          startEditingRpcOverride(net);
+                        },
+                        style: { background: "none", border: "none", color: rpcOverrides[net] ? "var(--primary)" : "var(--text-muted)", cursor: "pointer", padding: "4px", display: "flex", alignItems: "center", justifyContent: "center" },
+                        title: "Set custom RPC",
+                        children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
+                          /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "3" }),
+                          /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" })
+                        ] })
+                      }
+                    ),
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "radio-option-check", style: { display: "flex", alignItems: "center", justifyContent: "center" }, children: wallet.network === net && /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "white", strokeWidth: "3", children: /* @__PURE__ */ jsxRuntimeExports.jsx("polyline", { points: "20 6 9 17 4 12" }) }) })
+                  ] })
+                ]
+              }
+            ),
+            editingRpcOverride === net && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { padding: "12px", background: "var(--bg-secondary)", borderRadius: "8px", marginTop: "8px", marginBottom: "8px" }, children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { fontSize: "13px", fontWeight: 500, marginBottom: "8px" }, children: [
+                "Custom RPC for ",
+                net
+              ] }),
+              error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", style: { marginBottom: "8px", fontSize: "12px" }, children: error }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "input",
                 {
-                  className: `radio-option ${wallet.network === net ? "selected" : ""}`,
-                  onClick: () => wallet.setNetwork(net),
-                  style: { position: "relative" },
-                  children: [
-                    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "radio-option-text", children: [
-                      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: net }),
-                      rpcOverrides[net] && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { style: { fontSize: 11, color: "var(--primary)", display: "block" }, children: [
-                        "Custom: ",
-                        rpcOverrides[net].length > 30 ? rpcOverrides[net].slice(0, 30) + "..." : rpcOverrides[net]
-                      ] })
-                    ] }),
-                    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px" }, children: [
-                      /* @__PURE__ */ jsxRuntimeExports.jsx(
-                        "button",
-                        {
-                          onClick: (e) => {
-                            e.stopPropagation();
-                            startEditingRpcOverride(net);
-                          },
-                          style: { background: "none", border: "none", color: rpcOverrides[net] ? "var(--primary)" : "var(--text-muted)", cursor: "pointer", padding: "4px" },
-                          title: "Set custom RPC",
-                          children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
-                            /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "3" }),
-                            /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" })
-                          ] })
-                        }
-                      ),
-                      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "radio-option-check", children: wallet.network === net && /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "white", strokeWidth: "3", children: /* @__PURE__ */ jsxRuntimeExports.jsx("polyline", { points: "20 6 9 17 4 12" }) }) })
-                    ] })
-                  ]
+                  type: "text",
+                  className: "form-input",
+                  placeholder: "Enter custom RPC URL",
+                  value: rpcOverrideUrl,
+                  onChange: (e) => setRpcOverrideUrl(e.target.value),
+                  style: { marginBottom: "8px" }
                 }
               ),
-              editingRpcOverride === net && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { padding: "12px", background: "var(--bg-secondary)", borderRadius: "8px", marginTop: "8px", marginBottom: "8px" }, children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { fontSize: "13px", fontWeight: 500, marginBottom: "8px" }, children: [
-                  "Custom RPC for ",
-                  net
-                ] }),
-                error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", style: { marginBottom: "8px", fontSize: "12px" }, children: error }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", gap: "8px" }, children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsx(
-                  "input",
+                  "button",
                   {
-                    type: "text",
-                    className: "form-input",
-                    placeholder: ((_a3 = NETWORKS[net]) == null ? void 0 : _a3.rpcUrl) || "https://rpc.example.com",
-                    value: rpcOverrideUrl,
-                    onChange: (e) => setRpcOverrideUrl(e.target.value),
-                    style: { marginBottom: "8px" }
+                    className: "btn-primary",
+                    style: { flex: 1, padding: "8px" },
+                    onClick: () => saveRpcOverride(net),
+                    children: "Save"
                   }
                 ),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", gap: "8px" }, children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx(
-                    "button",
-                    {
-                      className: "btn-primary",
-                      style: { flex: 1, padding: "8px" },
-                      onClick: () => saveRpcOverride(net),
-                      children: "Save"
-                    }
-                  ),
-                  rpcOverrides[net] && /* @__PURE__ */ jsxRuntimeExports.jsx(
-                    "button",
-                    {
-                      className: "btn-secondary",
-                      style: { flex: 1, padding: "8px", color: "var(--error)" },
-                      onClick: () => {
-                        clearRpcOverrideForNetwork(net);
-                        setEditingRpcOverride(null);
-                      },
-                      children: "Clear"
-                    }
-                  ),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx(
-                    "button",
-                    {
-                      className: "btn-secondary",
-                      style: { flex: 1, padding: "8px" },
-                      onClick: () => {
-                        setEditingRpcOverride(null);
-                        setRpcOverrideUrl("");
-                        setError("");
-                      },
-                      children: "Cancel"
-                    }
-                  )
-                ] })
+                rpcOverrides[net] && /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    className: "btn-secondary",
+                    style: { flex: 1, padding: "8px", color: "var(--error)" },
+                    onClick: () => {
+                      clearRpcOverrideForNetwork(net);
+                      setEditingRpcOverride(null);
+                    },
+                    children: "Clear"
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    className: "btn-secondary",
+                    style: { flex: 1, padding: "8px" },
+                    onClick: () => {
+                      setEditingRpcOverride(null);
+                      setRpcOverrideUrl("");
+                      setError("");
+                    },
+                    children: "Cancel"
+                  }
+                )
               ] })
-            ] }, net);
-          }) })
+            ] })
+          ] }, net)) })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Testnets / Devnets" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "radio-group", children: Object.keys(NETWORKS).filter((n2) => n2.includes("Testnet") || n2.includes("Devnet")).map((net) => {
-            var _a3;
-            return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { marginBottom: "4px" }, children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsxs(
-                "div",
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "radio-group", children: Object.keys(NETWORKS).filter((n2) => n2.includes("Testnet") || n2.includes("Devnet")).map((net) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { marginBottom: "4px" }, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs(
+              "div",
+              {
+                className: `radio-option ${wallet.network === net ? "selected" : ""}`,
+                onClick: () => wallet.setNetwork(net),
+                style: { position: "relative" },
+                children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "radio-option-text", children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: net }),
+                    rpcOverrides[net] && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 11, color: "var(--primary)", display: "block" }, children: "Custom RPC configured" })
+                  ] }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px" }, children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx(
+                      "button",
+                      {
+                        onClick: (e) => {
+                          e.stopPropagation();
+                          startEditingRpcOverride(net);
+                        },
+                        style: { background: "none", border: "none", color: rpcOverrides[net] ? "var(--primary)" : "var(--text-muted)", cursor: "pointer", padding: "4px", display: "flex", alignItems: "center", justifyContent: "center" },
+                        title: "Set custom RPC",
+                        children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
+                          /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "3" }),
+                          /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" })
+                        ] })
+                      }
+                    ),
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "radio-option-check", style: { display: "flex", alignItems: "center", justifyContent: "center" }, children: wallet.network === net && /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "white", strokeWidth: "3", children: /* @__PURE__ */ jsxRuntimeExports.jsx("polyline", { points: "20 6 9 17 4 12" }) }) })
+                  ] })
+                ]
+              }
+            ),
+            editingRpcOverride === net && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { padding: "12px", background: "var(--bg-secondary)", borderRadius: "8px", marginTop: "8px", marginBottom: "8px" }, children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { fontSize: "13px", fontWeight: 500, marginBottom: "8px" }, children: [
+                "Custom RPC for ",
+                net
+              ] }),
+              error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", style: { marginBottom: "8px", fontSize: "12px" }, children: error }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "input",
                 {
-                  className: `radio-option ${wallet.network === net ? "selected" : ""}`,
-                  onClick: () => wallet.setNetwork(net),
-                  style: { position: "relative" },
-                  children: [
-                    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "radio-option-text", children: [
-                      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: net }),
-                      rpcOverrides[net] && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { style: { fontSize: 11, color: "var(--primary)", display: "block" }, children: [
-                        "Custom: ",
-                        rpcOverrides[net].length > 30 ? rpcOverrides[net].slice(0, 30) + "..." : rpcOverrides[net]
-                      ] })
-                    ] }),
-                    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px" }, children: [
-                      /* @__PURE__ */ jsxRuntimeExports.jsx(
-                        "button",
-                        {
-                          onClick: (e) => {
-                            e.stopPropagation();
-                            startEditingRpcOverride(net);
-                          },
-                          style: { background: "none", border: "none", color: rpcOverrides[net] ? "var(--primary)" : "var(--text-muted)", cursor: "pointer", padding: "4px" },
-                          title: "Set custom RPC",
-                          children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: [
-                            /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "3" }),
-                            /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" })
-                          ] })
-                        }
-                      ),
-                      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "radio-option-check", children: wallet.network === net && /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "white", strokeWidth: "3", children: /* @__PURE__ */ jsxRuntimeExports.jsx("polyline", { points: "20 6 9 17 4 12" }) }) })
-                    ] })
-                  ]
+                  type: "text",
+                  className: "form-input",
+                  placeholder: "Enter custom RPC URL",
+                  value: rpcOverrideUrl,
+                  onChange: (e) => setRpcOverrideUrl(e.target.value),
+                  style: { marginBottom: "8px" }
                 }
               ),
-              editingRpcOverride === net && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { padding: "12px", background: "var(--bg-secondary)", borderRadius: "8px", marginTop: "8px", marginBottom: "8px" }, children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { fontSize: "13px", fontWeight: 500, marginBottom: "8px" }, children: [
-                  "Custom RPC for ",
-                  net
-                ] }),
-                error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", style: { marginBottom: "8px", fontSize: "12px" }, children: error }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", gap: "8px" }, children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsx(
-                  "input",
+                  "button",
                   {
-                    type: "text",
-                    className: "form-input",
-                    placeholder: ((_a3 = NETWORKS[net]) == null ? void 0 : _a3.rpcUrl) || "https://rpc.example.com",
-                    value: rpcOverrideUrl,
-                    onChange: (e) => setRpcOverrideUrl(e.target.value),
-                    style: { marginBottom: "8px" }
+                    className: "btn-primary",
+                    style: { flex: 1, padding: "8px" },
+                    onClick: () => saveRpcOverride(net),
+                    children: "Save"
                   }
                 ),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", gap: "8px" }, children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx(
-                    "button",
-                    {
-                      className: "btn-primary",
-                      style: { flex: 1, padding: "8px" },
-                      onClick: () => saveRpcOverride(net),
-                      children: "Save"
-                    }
-                  ),
-                  rpcOverrides[net] && /* @__PURE__ */ jsxRuntimeExports.jsx(
-                    "button",
-                    {
-                      className: "btn-secondary",
-                      style: { flex: 1, padding: "8px", color: "var(--error)" },
-                      onClick: () => {
-                        clearRpcOverrideForNetwork(net);
-                        setEditingRpcOverride(null);
-                      },
-                      children: "Clear"
-                    }
-                  ),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx(
-                    "button",
-                    {
-                      className: "btn-secondary",
-                      style: { flex: 1, padding: "8px" },
-                      onClick: () => {
-                        setEditingRpcOverride(null);
-                        setRpcOverrideUrl("");
-                        setError("");
-                      },
-                      children: "Cancel"
-                    }
-                  )
-                ] })
+                rpcOverrides[net] && /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    className: "btn-secondary",
+                    style: { flex: 1, padding: "8px", color: "var(--error)" },
+                    onClick: () => {
+                      clearRpcOverrideForNetwork(net);
+                      setEditingRpcOverride(null);
+                    },
+                    children: "Clear"
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    className: "btn-secondary",
+                    style: { flex: 1, padding: "8px" },
+                    onClick: () => {
+                      setEditingRpcOverride(null);
+                      setRpcOverrideUrl("");
+                      setError("");
+                    },
+                    children: "Cancel"
+                  }
+                )
               ] })
-            ] }, net);
-          }) })
+            ] })
+          ] }, net)) })
         ] }),
         customRpcs.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-section", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Custom Networks" }),
@@ -28765,23 +28789,89 @@ Address: ${publicKeyBase58.slice(0, 20)}...`);
         /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", onClick: () => setSubScreen(null), children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "About" })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-content", style: { textAlign: "center", paddingTop: 40 }, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx(X1Logo, { size: 64 }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { style: { marginTop: 16, marginBottom: 4 }, children: "X1 Wallet" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { style: { color: "var(--text-muted)", marginBottom: 8 }, children: [
-          "Version ",
-          appVersion
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "settings-content", style: { paddingTop: 16 }, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { textAlign: "center", marginBottom: 20 }, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { style: { marginTop: 0, marginBottom: 4 }, children: "X1 Wallet" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { style: { color: "var(--text-muted)", marginBottom: 0, fontSize: 13 }, children: [
+            "Version ",
+            appVersion
+          ] })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { style: { color: "var(--text-muted)", marginBottom: 24, fontSize: 12 }, children: [
-          "Network: ",
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: {
+          textAlign: "left",
+          padding: "16px",
+          background: "var(--bg-secondary)",
+          borderRadius: "12px",
+          marginBottom: "20px"
+        }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { style: { color: "var(--text-primary)", fontSize: "13px", lineHeight: "1.5", margin: 0 }, children: "A secure, non-custodial cryptocurrency wallet for the X1 and Solana blockchains." }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: {
+          textAlign: "left",
+          padding: "16px",
+          background: "var(--bg-secondary)",
+          borderRadius: "12px",
+          marginBottom: "20px"
+        }, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { style: { fontSize: "13px", fontWeight: 600, marginBottom: "12px", color: "var(--text-primary)" }, children: "Features" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "10px" }, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "12px", fontSize: "12px", color: "var(--text-secondary)" }, children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { color: "#3b82f6", display: "flex", alignItems: "center", flexShrink: 0 }, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "3", y: "11", width: "18", height: "11", rx: "2", ry: "2" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7 11V7a5 5 0 0 1 10 0v4" })
+              ] }) }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Non-custodial — you control your keys" })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "12px", fontSize: "12px", color: "var(--text-secondary)" }, children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { color: "#3b82f6", display: "flex", alignItems: "center", flexShrink: 0 }, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "10" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "12", y1: "8", x2: "12", y2: "12" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "12", y1: "16", x2: "12.01", y2: "16" })
+              ] }) }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Token management & DeFi access" })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "12px", fontSize: "12px", color: "var(--text-secondary)" }, children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { color: "#3b82f6", display: "flex", alignItems: "center", flexShrink: 0 }, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "4", y: "4", width: "16", height: "16", rx: "2" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("rect", { x: "9", y: "9", width: "6", height: "6" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "9", y1: "1", x2: "9", y2: "4" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "15", y1: "1", x2: "15", y2: "4" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "9", y1: "20", x2: "9", y2: "23" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "15", y1: "20", x2: "15", y2: "23" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "20", y1: "9", x2: "23", y2: "9" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "20", y1: "14", x2: "23", y2: "14" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "1", y1: "9", x2: "4", y2: "9" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "1", y1: "14", x2: "4", y2: "14" })
+              ] }) }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Hardware wallet support (Ledger)" })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "12px", fontSize: "12px", color: "var(--text-secondary)" }, children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { color: "#3b82f6", display: "flex", alignItems: "center", flexShrink: 0 }, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("polyline", { points: "17 1 21 5 17 9" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M3 11V9a4 4 0 0 1 4-4h14" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("polyline", { points: "7 23 3 19 7 15" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M21 13v2a4 4 0 0 1-4 4H3" })
+              ] }) }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Swap, bridge, and stake" })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", alignItems: "center", gap: "12px", fontSize: "12px", color: "var(--text-secondary)" }, children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { color: "#3b82f6", display: "flex", alignItems: "center", flexShrink: 0 }, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "16", height: "16", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "3" })
+              ] }) }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Watch-only wallet support" })
+            ] })
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { style: { color: "var(--text-muted)", marginBottom: 20, fontSize: 12 }, children: [
+          "Current Network: ",
           (wallet == null ? void 0 : wallet.network) || "Unknown"
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "about-links", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("a", { href: "https://x1.xyz", target: "_blank", rel: "noopener noreferrer", className: "about-link", children: "Website" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("a", { href: "https://docs.x1.xyz", target: "_blank", rel: "noopener noreferrer", className: "about-link", children: "Documentation" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("a", { href: "https://x.com/x1_chain", target: "_blank", rel: "noopener noreferrer", className: "about-link", children: "X" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("a", { href: "https://t.me/x1_wallet", target: "_blank", rel: "noopener noreferrer", className: "about-link", children: "Telegram" })
-        ] })
+          /* @__PURE__ */ jsxRuntimeExports.jsx("a", { href: "https://x.com/x1_xyz", target: "_blank", rel: "noopener noreferrer", className: "about-link", children: "X" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("a", { href: "https://t.me/x1_xyz", target: "_blank", rel: "noopener noreferrer", className: "about-link", children: "Telegram" })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { style: { color: "var(--text-muted)", fontSize: "11px", marginTop: "24px" }, children: "© 2025 X1. All rights reserved." })
       ] })
     ] });
   }
@@ -31621,9 +31711,13 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
         } else if (userMessage.includes("0xbc4") || userMessage.includes("3012")) {
           const suggestedSlippage = Math.min(slippage * 2, 10);
           userMessage = `Price moved beyond ${slippage}% slippage tolerance. Try increasing slippage to ${suggestedSlippage}% or higher, or use a smaller amount.`;
+        } else if (userMessage.includes("0x1775") || userMessage.includes("6005")) {
+          const suggestedSlippage = Math.min(slippage * 2, 10);
+          userMessage = `Swap failed due to price movement beyond ${slippage}% slippage tolerance. Try increasing slippage to ${suggestedSlippage}% or retry when the market is less volatile.`;
         } else if (userMessage.includes("0x1771") || userMessage.includes("6001")) {
-          userMessage = "Insufficient liquidity in the pool for this swap size. Try a smaller amount.";
-        } else if (userMessage.includes("0x1") && !userMessage.includes("0x1786") && !userMessage.includes("0x1787") && !userMessage.includes("0x1771")) {
+          const suggestedSlippage = Math.min(slippage * 2, 10);
+          userMessage = `Price moved beyond ${slippage}% slippage tolerance. Try increasing slippage to ${suggestedSlippage}% or use a smaller amount.`;
+        } else if (userMessage.includes("0x1") && !userMessage.includes("0x1786") && !userMessage.includes("0x1787") && !userMessage.includes("0x1771") && !userMessage.includes("0x1775")) {
           userMessage = "Slippage tolerance exceeded. Try increasing slippage or reducing the swap amount.";
         } else if (userMessage.includes("0x0")) {
           userMessage = "Transaction simulation failed. This may be a temporary API issue. Please try again in a few minutes.";
@@ -32790,15 +32884,45 @@ function SwapScreen({ wallet, onBack, onSwapComplete, userTokens = [], initialFr
     ] }) })
   ] });
 }
-const BRIDGE_API_URL = "https://bridge-alpha.x1.xyz";
+const BRIDGE_API_URLS = [
+  "https://bridge-api.x1.xyz",
+  "https://app.bridge.x1.xyz/api",
+  "https://app.bridge.x1.xyz"
+];
 const SOLANA_RPC_URL = "https://jessamine-463apc-fast-mainnet.helius-rpc.com";
-const BRIDGE_DEPOSIT_ADDRESS = "6ob9XW6f6mweGu5sGh3JwW2Vp6UNQApjuPvrubXMQXyi";
+const X1_RPC_URL = "https://rpc.mainnet.x1.xyz";
+async function fetchBridgeAPI(path) {
+  let lastError;
+  for (const baseUrl of BRIDGE_API_URLS) {
+    try {
+      const url = `${baseUrl}${path}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        console.log("[Bridge] API success from:", baseUrl);
+        return res;
+      }
+      lastError = new Error(`HTTP ${res.status}`);
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  throw lastError || new Error("All bridge API URLs failed");
+}
+const WARP_BRIDGE_PROGRAM_ID = "6JbPTuxVuoTgyQeXFb9MH8C8nUY8NBbLP1Lu4B13JfMD";
+const BRIDGE_OUT_DISCRIMINATOR = new Uint8Array([27, 194, 57, 119, 215, 165, 247, 150]);
 const USDC_SOLANA_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+const USDCX_X1_MINT = "B69chRzqzDCmdB5WYB8NRu5Yv5ZA95ABiZcdzCgGm9Tq";
 const USDC_DECIMALS = 6;
-const USDC_LOGO = "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png";
 const TOKEN_PROGRAM_ID$1 = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+const ASSOCIATED_TOKEN_PROGRAM_ID$1 = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
+const SYSTEM_PROGRAM_ID$1 = "11111111111111111111111111111111";
+const CHAIN_SOLANA = 0;
+const CHAIN_X1 = 1;
+const USDC_LOGO = "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png";
 const X1_LOGO_URL = "/icons/48-x1.png";
 const SOLANA_LOGO_URL = "/icons/48-sol.png";
+const USDCX_LOGO_URL = "/icons/48-usdcx.png";
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 function decodeBase58Local(str) {
   const bytes = [];
@@ -32833,6 +32957,126 @@ function decodeToFixedSize(base58Str, size) {
     return padded;
   }
   return decoded.slice(0, size);
+}
+async function sha256(data) {
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  return new Uint8Array(hashBuffer);
+}
+const ED25519_P = 2n ** 255n - 19n;
+function mod(a, m2) {
+  return (a % m2 + m2) % m2;
+}
+function modInverse(a, m2) {
+  a = mod(a, m2);
+  let [old_r, r2] = [a, m2];
+  let [old_s, s] = [1n, 0n];
+  while (r2 !== 0n) {
+    const q2 = old_r / r2;
+    [old_r, r2] = [r2, old_r - q2 * r2];
+    [old_s, s] = [s, old_s - q2 * s];
+  }
+  return mod(old_s, m2);
+}
+function modPow$1(base, exp, m2) {
+  base = mod(base, m2);
+  let result = 1n;
+  while (exp > 0n) {
+    if (exp & 1n) result = result * base % m2;
+    base = base * base % m2;
+    exp >>= 1n;
+  }
+  return result;
+}
+const ED25519_D = mod(-121665n * modInverse(121666n, ED25519_P), ED25519_P);
+function isOnCurve(bytes) {
+  const byteCopy = new Uint8Array(bytes);
+  const sign2 = byteCopy[31] >> 7 & 1;
+  byteCopy[31] &= 127;
+  let y2 = 0n;
+  for (let i = 0; i < 32; i++) {
+    y2 |= BigInt(byteCopy[i]) << BigInt(i * 8);
+  }
+  if (y2 >= ED25519_P) return false;
+  const y22 = y2 * y2 % ED25519_P;
+  const numerator = mod(y22 - 1n, ED25519_P);
+  const denominator = mod(ED25519_D * y22 + 1n, ED25519_P);
+  if (denominator === 0n) return false;
+  const x2 = numerator * modInverse(denominator, ED25519_P) % ED25519_P;
+  if (x2 === 0n) {
+    return sign2 === 0;
+  }
+  const euler = modPow$1(x2, (ED25519_P - 1n) / 2n, ED25519_P);
+  return euler === 1n;
+}
+async function findProgramAddress$1(seeds, programId) {
+  const programBytes = typeof programId === "string" ? decodeToFixedSize(programId, 32) : programId;
+  const pda_marker = new TextEncoder().encode("ProgramDerivedAddress");
+  for (let bump = 255; bump >= 0; bump--) {
+    let totalLen = 0;
+    for (const seed of seeds) totalLen += seed.length;
+    totalLen += 1 + 32 + pda_marker.length;
+    const buffer2 = new Uint8Array(totalLen);
+    let offset = 0;
+    for (const seed of seeds) {
+      buffer2.set(seed, offset);
+      offset += seed.length;
+    }
+    buffer2[offset++] = bump;
+    buffer2.set(programBytes, offset);
+    offset += 32;
+    buffer2.set(pda_marker, offset);
+    const hash = await sha256(buffer2);
+    if (!isOnCurve(hash)) {
+      return { address: hash, bump };
+    }
+  }
+  throw new Error("Could not find PDA");
+}
+async function findAssociatedTokenAddress(wallet, mint, tokenProgram) {
+  const walletBytes = typeof wallet === "string" ? decodeToFixedSize(wallet, 32) : wallet;
+  const mintBytes = typeof mint === "string" ? decodeToFixedSize(mint, 32) : mint;
+  const tokenProgramBytes = typeof tokenProgram === "string" ? decodeToFixedSize(tokenProgram, 32) : tokenProgram;
+  const seeds = [walletBytes, tokenProgramBytes, mintBytes];
+  const { address } = await findProgramAddress$1(seeds, ASSOCIATED_TOKEN_PROGRAM_ID$1);
+  return address;
+}
+function encodeSeq(slot, ixIndex, sourceChain, destChain) {
+  const chainPair = BigInt(sourceChain << 4 | destChain);
+  const baseSeq = BigInt(slot) * 1000n + BigInt(ixIndex);
+  const CHAIN_PAIR_SHIFT = 56n;
+  return chainPair << CHAIN_PAIR_SHIFT | baseSeq;
+}
+function writeU64LE(value) {
+  const bytes = new Uint8Array(8);
+  let v2 = BigInt(value);
+  for (let i = 0; i < 8; i++) {
+    bytes[i] = Number(v2 & 0xFFn);
+    v2 >>= 8n;
+  }
+  return bytes;
+}
+function encodeBase58Local(bytes) {
+  const digits = [0];
+  for (let i = 0; i < bytes.length; i++) {
+    let carry = bytes[i];
+    for (let j = 0; j < digits.length; j++) {
+      carry += digits[j] << 8;
+      digits[j] = carry % 58;
+      carry = carry / 58 | 0;
+    }
+    while (carry > 0) {
+      digits.push(carry % 58);
+      carry = carry / 58 | 0;
+    }
+  }
+  let result = "";
+  for (let i = 0; i < bytes.length && bytes[i] === 0; i++) {
+    result += "1";
+  }
+  for (let i = digits.length - 1; i >= 0; i--) {
+    result += BASE58_ALPHABET[digits[i]];
+  }
+  return result;
 }
 function SolanaLogo({ size = 24 }) {
   const [error, setError] = reactExports.useState(false);
@@ -32967,8 +33211,52 @@ function UsdcLogo({ size = 24 }) {
     }
   ) });
 }
-function BridgeScreen({ wallet, onBack }) {
-  var _a2, _b2, _c, _d, _e, _f;
+function UsdcXLogo({ size = 24 }) {
+  const [hasError, setHasError] = reactExports.useState(false);
+  if (hasError) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: {
+      width: size,
+      height: size,
+      minWidth: size,
+      minHeight: size,
+      borderRadius: "50%",
+      background: "#2775CA",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      color: "#fff",
+      fontSize: size * 0.4,
+      fontWeight: 700,
+      flexShrink: 0
+    }, children: "$X" });
+  }
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: {
+    width: size,
+    height: size,
+    minWidth: size,
+    minHeight: size,
+    borderRadius: "50%",
+    overflow: "hidden",
+    flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center"
+  }, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "img",
+    {
+      src: USDCX_LOGO_URL,
+      alt: "USDC.X",
+      style: {
+        width: size,
+        height: size,
+        objectFit: "contain"
+      },
+      onError: () => setHasError(true)
+    }
+  ) });
+}
+function BridgeScreen({ wallet, userTokens = [], onBack, onNetworkSwitch }) {
+  var _a2, _b2, _c, _d, _e, _f, _g, _h;
   const [amount, setAmount] = reactExports.useState("");
   const [loading, setLoading] = reactExports.useState(false);
   const [bridgeStatus, setBridgeStatus] = reactExports.useState({ status: "checking", message: "Checking..." });
@@ -32981,295 +33269,784 @@ function BridgeScreen({ wallet, onBack }) {
   const [threshold, setThreshold] = reactExports.useState(3);
   const [healthyGuardians, setHealthyGuardians] = reactExports.useState(3);
   const [totalGuardians, setTotalGuardians] = reactExports.useState(3);
+  const [direction, setDirection] = reactExports.useState("solana-to-x1");
+  const [showConfirm, setShowConfirm] = reactExports.useState(false);
+  const [bridgeFees, setBridgeFees] = reactExports.useState({ flatFee: 0, pctFeeBps: 0 });
   const [txSignature, setTxSignature] = reactExports.useState(null);
   const [txStatus, setTxStatus] = reactExports.useState({ stage: "idle" });
-  const [bridgeDepositAddress, setBridgeDepositAddress] = reactExports.useState(BRIDGE_DEPOSIT_ADDRESS);
+  const [bridgeDepositAddress, setBridgeDepositAddress] = reactExports.useState("");
   const eventSourceRef = reactExports.useRef(null);
+  const configFailCountRef = reactExports.useRef(0);
   const walletAddress = (_a2 = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _a2.publicKey;
   const privateKey = (_b2 = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _b2.privateKey;
   const isHardwareWallet = ((_c = wallet == null ? void 0 : wallet.wallet) == null ? void 0 : _c.isHardware) || ((_d = wallet == null ? void 0 : wallet.activeWallet) == null ? void 0 : _d.isHardware) || false;
   const derivationPath = (_e = wallet == null ? void 0 : wallet.activeWallet) == null ? void 0 : _e.derivationPath;
   const inputAmount = parseFloat(amount) || 0;
   const fetchBridgeConfig = reactExports.useCallback(async () => {
-    var _a3, _b3, _c2, _d2, _e2, _f2, _g;
+    var _a3, _b3, _c2;
     try {
       const [configRes, guardiansRes] = await Promise.all([
-        fetch(`${BRIDGE_API_URL}/config`),
-        fetch(`${BRIDGE_API_URL}/guardians`)
+        fetchBridgeAPI("/config"),
+        fetchBridgeAPI("/guardians")
       ]);
+      console.log("[Bridge] Config response status:", configRes.status);
+      console.log("[Bridge] Guardians response status:", guardiansRes.status);
       if (!configRes.ok || !guardiansRes.ok) {
-        setBridgeStatus({ status: "offline", message: "API offline" });
+        console.log("[Bridge] API response not OK - config:", configRes.status, "guardians:", guardiansRes.status);
+        const status = configRes.status || guardiansRes.status;
+        const msg = status === 502 || status === 503 ? "Connecting..." : status === 0 ? "Connecting..." : "Connecting...";
+        setBridgeStatus({ status: "offline", message: msg });
         return;
       }
       const config = await configRes.json();
       const guardians = await guardiansRes.json();
-      logger$1.log("[Bridge] Config:", config);
-      if ((_a3 = config.config) == null ? void 0 : _a3.depositAddress) {
-        logger$1.log("[Bridge] Got deposit address from API:", config.config.depositAddress);
-        setBridgeDepositAddress(config.config.depositAddress);
-      } else if ((_b3 = config.config) == null ? void 0 : _b3.usdcTokenAccount) {
-        logger$1.log("[Bridge] Got USDC token account from API:", config.config.usdcTokenAccount);
-        setBridgeDepositAddress(config.config.usdcTokenAccount);
+      console.log("[Bridge] Config:", JSON.stringify(config).substring(0, 500));
+      console.log("[Bridge] Guardians:", JSON.stringify(guardians).substring(0, 500));
+      let chainConfig, chainTokens;
+      const isSolToX1 = direction === "solana-to-x1";
+      if (config.solana || config.x1) {
+        const sourceChainData = isSolToX1 ? config.solana : config.x1;
+        chainConfig = sourceChainData == null ? void 0 : sourceChainData.config;
+        chainTokens = (sourceChainData == null ? void 0 : sourceChainData.tokens) || [];
+        const usdcToken = chainTokens.find((t2) => t2.symbol === "USDC");
+        if (usdcToken) {
+          const capValue = BigInt(usdcToken.dailyCap || "0");
+          const volumeValue = BigInt(usdcToken.dailyVolume || "0");
+          const remaining = capValue > volumeValue ? capValue - volumeValue : 0n;
+          setDailyCap(Number(capValue) / 1e6);
+          setDailyCapRemaining(Number(remaining) / 1e6);
+          const flatFee = usdcToken.flatFeeAmount ? Number(usdcToken.flatFeeAmount) / 1e6 : 0;
+          const pctFeeBps = usdcToken.percentageFeeBps || 0;
+          setBridgeFees({ flatFee, pctFeeBps });
+        }
+        setThreshold((chainConfig == null ? void 0 : chainConfig.threshold) || 2);
+      } else {
+        chainConfig = config.config;
+        const capValue = BigInt((chainConfig == null ? void 0 : chainConfig.dailyCap) || "0");
+        const releasedValue = BigInt((chainConfig == null ? void 0 : chainConfig.releasedToday) || "0");
+        const remaining = capValue > releasedValue ? capValue - releasedValue : 0n;
+        setDailyCap(Number(capValue) / 1e6);
+        setDailyCapRemaining(Number(remaining) / 1e6);
+        setThreshold((chainConfig == null ? void 0 : chainConfig.threshold) || 2);
       }
-      const capValue = BigInt(((_c2 = config.config) == null ? void 0 : _c2.dailyCap) || "0");
-      const releasedValue = BigInt(((_d2 = config.config) == null ? void 0 : _d2.releasedToday) || "0");
-      const remaining = capValue - releasedValue;
-      setDailyCap(Number(capValue) / 1e6);
-      setDailyCapRemaining(Number(remaining) / 1e6);
-      setThreshold(((_e2 = config.config) == null ? void 0 : _e2.threshold) || 2);
       const healthy = guardians.healthyCount || 0;
       const total = guardians.totalGuardians || 3;
       setHealthyGuardians(healthy);
       setTotalGuardians(total);
-      if ((_f2 = config.config) == null ? void 0 : _f2.paused) {
+      console.log("[Bridge] Healthy guardians:", healthy, "/", total);
+      console.log("[Bridge] Threshold:", (chainConfig == null ? void 0 : chainConfig.threshold) || 2);
+      console.log("[Bridge] Paused:", chainConfig == null ? void 0 : chainConfig.paused);
+      if (chainConfig == null ? void 0 : chainConfig.paused) {
         setBridgeStatus({ status: "paused", message: "Bridge paused" });
         return;
       }
-      const requiredThreshold = ((_g = config.config) == null ? void 0 : _g.threshold) || 2;
-      if (healthy > requiredThreshold) {
+      const requiredThreshold = (chainConfig == null ? void 0 : chainConfig.threshold) || 2;
+      if (healthy >= requiredThreshold) {
+        console.log("[Bridge] Setting status to LIVE");
         setBridgeStatus({ status: "live", message: `${healthy}/${total} guardians healthy` });
-      } else if (healthy === requiredThreshold) {
+      } else if (healthy >= requiredThreshold - 1) {
+        console.log("[Bridge] Setting status to DEGRADED");
         setBridgeStatus({ status: "degraded", message: `${healthy}/${total} guardians healthy` });
       } else {
+        console.log("[Bridge] Setting status to OFFLINE");
         setBridgeStatus({ status: "offline", message: `${healthy}/${total} guardians healthy` });
       }
     } catch (err) {
-      logger$1.error("[Bridge] Config fetch error:", err);
-      setBridgeStatus({ status: "offline", message: "Unable to connect" });
+      if ((configFailCountRef == null ? void 0 : configFailCountRef.current) === 0) {
+        console.log("[Bridge] Config unavailable:", err.message);
+      }
+      setBridgeStatus({ status: "offline", message: "Connecting..." });
+      if (bridgeFees.flatFee === 0 && bridgeFees.pctFeeBps === 0) {
+        try {
+          const isSolToX1 = direction === "solana-to-x1";
+          const rpcUrl = isSolToX1 ? SOLANA_RPC_URL : X1_RPC_URL;
+          const tokenMint = isSolToX1 ? USDC_SOLANA_MINT : USDCX_X1_MINT;
+          const trSeed = new TextEncoder().encode("token_registry");
+          const mintBytesLocal = decodeToFixedSize(tokenMint, 32);
+          const trPda = await findProgramAddress$1([trSeed, mintBytesLocal], WARP_BRIDGE_PROGRAM_ID);
+          const trB58 = encodeBase58Local(trPda.address);
+          const res = await fetch(rpcUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getAccountInfo", params: [trB58, { encoding: "base64" }] })
+          });
+          const data = await res.json();
+          if ((_c2 = (_b3 = (_a3 = data.result) == null ? void 0 : _a3.value) == null ? void 0 : _b3.data) == null ? void 0 : _c2[0]) {
+            const raw = Uint8Array.from(atob(data.result.value.data[0]), (c) => c.charCodeAt(0));
+            const flatFeeOffset = 8 + 32 + 1 + 1 + 12 + 1 + 8 + 8 + 8 + 8 + 8 + 1;
+            let flatFeeRaw = 0n;
+            for (let i = 0; i < 8; i++) flatFeeRaw |= BigInt(raw[flatFeeOffset + i]) << BigInt(i * 8);
+            const pctOffset = flatFeeOffset + 8;
+            const pctFeeBps = raw[pctOffset] | raw[pctOffset + 1] << 8;
+            setBridgeFees({ flatFee: Number(flatFeeRaw) / 1e6, pctFeeBps });
+          }
+        } catch (chainErr) {
+        }
+      }
     }
-  }, []);
+  }, [direction]);
   const fetchUsdcBalance = reactExports.useCallback(async () => {
-    var _a3, _b3, _c2, _d2, _e2, _f2, _g;
+    var _a3, _b3, _c2, _d2, _e2, _f2, _g2, _h2, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u;
     if (!walletAddress) {
       setUserUsdcBalance(0);
       return;
     }
-    logger$1.log("[Bridge] Fetching USDC balance for:", walletAddress);
     setFetchingBalance(true);
     try {
-      const response = await fetch(SOLANA_RPC_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "getTokenAccountsByOwner",
-          params: [
-            walletAddress,
-            { mint: USDC_SOLANA_MINT },
-            { encoding: "jsonParsed", commitment: "confirmed" }
-          ]
-        })
-      });
-      const data = await response.json();
-      logger$1.log("[Bridge] USDC balance response:", JSON.stringify(data).slice(0, 300));
-      if (((_b3 = (_a3 = data.result) == null ? void 0 : _a3.value) == null ? void 0 : _b3.length) > 0) {
-        const tokenAccount = data.result.value[0];
-        const balance = parseFloat(
-          ((_g = (_f2 = (_e2 = (_d2 = (_c2 = tokenAccount.account) == null ? void 0 : _c2.data) == null ? void 0 : _d2.parsed) == null ? void 0 : _e2.info) == null ? void 0 : _f2.tokenAmount) == null ? void 0 : _g.uiAmount) || 0
-        );
-        const tokenAccountAddress = tokenAccount.pubkey;
-        logger$1.log("[Bridge] USDC balance:", balance, "Token Account:", tokenAccountAddress);
-        setUserUsdcBalance(balance);
-        setUserUsdcTokenAccount(tokenAccountAddress);
+      if (direction === "solana-to-x1") {
+        logger$1.log("[Bridge] Fetching USDC balance for:", walletAddress);
+        const response = await fetch(SOLANA_RPC_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "getTokenAccountsByOwner",
+            params: [
+              walletAddress,
+              { mint: USDC_SOLANA_MINT },
+              { encoding: "jsonParsed", commitment: "confirmed" }
+            ]
+          })
+        });
+        const data = await response.json();
+        logger$1.log("[Bridge] USDC balance response:", JSON.stringify(data).slice(0, 300));
+        if (((_b3 = (_a3 = data.result) == null ? void 0 : _a3.value) == null ? void 0 : _b3.length) > 0) {
+          const tokenAccount = data.result.value[0];
+          const balance = parseFloat(
+            ((_g2 = (_f2 = (_e2 = (_d2 = (_c2 = tokenAccount.account) == null ? void 0 : _c2.data) == null ? void 0 : _d2.parsed) == null ? void 0 : _e2.info) == null ? void 0 : _f2.tokenAmount) == null ? void 0 : _g2.uiAmount) || 0
+          );
+          const tokenAccountAddress = tokenAccount.pubkey;
+          logger$1.log("[Bridge] USDC balance:", balance, "Token Account:", tokenAccountAddress);
+          setUserUsdcBalance(balance);
+          setUserUsdcTokenAccount(tokenAccountAddress);
+        } else {
+          logger$1.log("[Bridge] No USDC token account found");
+          setUserUsdcBalance(0);
+          setUserUsdcTokenAccount(null);
+        }
       } else {
-        logger$1.log("[Bridge] No USDC token account found");
-        setUserUsdcBalance(0);
+        logger$1.log("[Bridge] Fetching USDC.X balance for:", walletAddress);
+        const USDCX_MINT = "B69chRzqzDCmdB5WYB8NRu5Yv5ZA95ABiZcdzCgGm9Tq";
+        const X1_RPC_URL2 = "https://rpc.mainnet.x1.xyz";
+        try {
+          const response = await fetch(X1_RPC_URL2, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "getTokenAccountsByOwner",
+              params: [
+                walletAddress,
+                { mint: USDCX_MINT },
+                { encoding: "jsonParsed", commitment: "confirmed" }
+              ]
+            })
+          });
+          const data = await response.json();
+          console.log("[Bridge] USDC.X balance response:", data);
+          if (((_i = (_h2 = data.result) == null ? void 0 : _h2.value) == null ? void 0 : _i.length) > 0) {
+            const tokenAccount = data.result.value[0];
+            const balance = parseFloat(
+              ((_n = (_m = (_l = (_k = (_j = tokenAccount.account) == null ? void 0 : _j.data) == null ? void 0 : _k.parsed) == null ? void 0 : _l.info) == null ? void 0 : _m.tokenAmount) == null ? void 0 : _n.uiAmount) || 0
+            );
+            logger$1.log("[Bridge] USDC.X balance:", balance);
+            setUserUsdcBalance(balance);
+          } else {
+            const response2 = await fetch(X1_RPC_URL2, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                jsonrpc: "2.0",
+                id: 1,
+                method: "getTokenAccountsByOwner",
+                params: [
+                  walletAddress,
+                  { mint: USDCX_MINT },
+                  {
+                    encoding: "jsonParsed",
+                    commitment: "confirmed",
+                    programId: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+                    // Token2022
+                  }
+                ]
+              })
+            });
+            const data2 = await response2.json();
+            console.log("[Bridge] USDC.X Token2022 response:", data2);
+            if (((_p = (_o = data2.result) == null ? void 0 : _o.value) == null ? void 0 : _p.length) > 0) {
+              const tokenAccount = data2.result.value[0];
+              const balance = parseFloat(
+                ((_u = (_t = (_s = (_r = (_q = tokenAccount.account) == null ? void 0 : _q.data) == null ? void 0 : _r.parsed) == null ? void 0 : _s.info) == null ? void 0 : _t.tokenAmount) == null ? void 0 : _u.uiAmount) || 0
+              );
+              logger$1.log("[Bridge] USDC.X balance (Token2022):", balance);
+              setUserUsdcBalance(balance);
+            } else {
+              logger$1.log("[Bridge] No USDC.X token account found");
+              setUserUsdcBalance(0);
+            }
+          }
+        } catch (err) {
+          logger$1.error("[Bridge] Failed to fetch USDC.X from RPC:", err);
+          const usdcxToken = userTokens.find(
+            (t2) => t2.symbol === "USDC.X" || t2.symbol === "USDCX"
+          );
+          if (usdcxToken) {
+            setUserUsdcBalance(parseFloat(usdcxToken.balance) || 0);
+          } else {
+            setUserUsdcBalance(0);
+          }
+        }
         setUserUsdcTokenAccount(null);
       }
     } catch (err) {
-      logger$1.error("[Bridge] Failed to fetch USDC balance:", err);
+      logger$1.error("[Bridge] Failed to fetch balance:", err);
+      setUserUsdcBalance(0);
     } finally {
       setFetchingBalance(false);
     }
-  }, [walletAddress]);
+  }, [walletAddress, direction, userTokens]);
   reactExports.useEffect(() => {
-    fetchBridgeConfig();
-    fetchUsdcBalance();
-    const configInterval = setInterval(fetchBridgeConfig, 3e4);
-    const balanceInterval = setInterval(fetchUsdcBalance, 15e3);
-    return () => {
-      clearInterval(configInterval);
-      clearInterval(balanceInterval);
+    const timer = setTimeout(() => {
+      fetchUsdcBalance();
+      fetchBridgeConfig();
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [direction]);
+  reactExports.useEffect(() => {
+    let configTimer = null;
+    let balanceTimer = null;
+    let cancelled = false;
+    const scheduleConfigFetch = () => {
+      if (cancelled) return;
+      const backoff = Math.min(3e4 * Math.pow(2, configFailCountRef.current), 3e5);
+      configTimer = setTimeout(async () => {
+        if (cancelled) return;
+        try {
+          await fetchBridgeConfig();
+          configFailCountRef.current = 0;
+        } catch {
+          configFailCountRef.current = Math.min(configFailCountRef.current + 1, 4);
+        }
+        scheduleConfigFetch();
+      }, backoff);
     };
-  }, [fetchBridgeConfig, fetchUsdcBalance]);
+    fetchBridgeConfig().catch(() => {
+      configFailCountRef.current = 1;
+    });
+    scheduleConfigFetch();
+    fetchUsdcBalance();
+    balanceTimer = setInterval(fetchUsdcBalance, 15e3);
+    return () => {
+      cancelled = true;
+      if (configTimer) clearTimeout(configTimer);
+      clearInterval(balanceTimer);
+    };
+  }, [fetchBridgeConfig]);
   reactExports.useEffect(() => {
     if (!txSignature) return;
-    logger$1.log("[Bridge] Starting SSE listener for:", txSignature.slice(0, 8));
-    const eventSource = new EventSource(`${BRIDGE_API_URL}/transactions/stream`);
-    eventSourceRef.current = eventSource;
-    eventSource.onopen = () => {
-      logger$1.log("[Bridge] SSE connection opened");
-    };
-    eventSource.onmessage = (event) => {
+    let cancelled = false;
+    let eventSource = null;
+    let pollTimer = null;
+    let sseWorking = false;
+    const isSolToX1 = direction === "solana-to-x1";
+    const sourceRpc = isSolToX1 ? SOLANA_RPC_URL : X1_RPC_URL;
+    const destRpc = isSolToX1 ? X1_RPC_URL : SOLANA_RPC_URL;
+    logger$1.log("[Bridge] Starting tx tracker for:", txSignature.slice(0, 8));
+    let initialDestBalance = null;
+    const snapshotDestBalance = async () => {
+      var _a3, _b3, _c2, _d2, _e2, _f2;
       try {
-        const data = JSON.parse(event.data);
-        if (data.txSig === txSignature) {
-          logger$1.log("[Bridge] SSE event:", data.type);
-          switch (data.type) {
-            case "transaction_detected":
-              setTxStatus({
-                stage: "detected",
-                message: "Transaction detected by guardians"
-              });
-              break;
-            case "signature_added":
-              setTxStatus({
-                stage: "signing",
-                signatures: data.signatureCount,
-                threshold: data.threshold,
-                message: `Guardian ${data.signatureCount}/${data.threshold} signed`
-              });
-              break;
-            case "threshold_reached":
-              setTxStatus({
-                stage: "threshold",
-                signatures: data.signatureCount,
-                threshold: data.threshold,
-                message: "Threshold reached! Submitting to X1..."
-              });
-              break;
-            case "transaction_submitted":
-              setTxStatus({
-                stage: "confirming",
-                x1TxSig: data.x1TxSig,
-                message: "Submitted to X1, confirming..."
-              });
-              break;
-            case "transaction_executed":
-              setTxStatus({
-                stage: "executed",
-                x1TxSig: data.x1TxSig,
-                message: "Complete! USDC.X received on X1."
-              });
-              setLoading(false);
-              eventSource.close();
-              fetchUsdcBalance();
-              break;
-          }
+        const destMint = isSolToX1 ? USDCX_X1_MINT : USDC_SOLANA_MINT;
+        const res = await fetch(destRpc, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "getTokenAccountsByOwner",
+            params: [walletAddress, { mint: destMint }, { encoding: "jsonParsed", commitment: "confirmed" }]
+          })
+        });
+        const data = await res.json();
+        const accounts = ((_a3 = data.result) == null ? void 0 : _a3.value) || [];
+        if (accounts.length > 0) {
+          initialDestBalance = parseFloat(((_f2 = (_e2 = (_d2 = (_c2 = (_b3 = accounts[0].account) == null ? void 0 : _b3.data) == null ? void 0 : _c2.parsed) == null ? void 0 : _d2.info) == null ? void 0 : _e2.tokenAmount) == null ? void 0 : _f2.uiAmountString) || "0");
+        } else {
+          initialDestBalance = 0;
         }
-      } catch (err) {
-        logger$1.error("[Bridge] SSE parse error:", err);
+        logger$1.log("[Bridge] Initial dest balance snapshot:", initialDestBalance);
+      } catch (e) {
+        initialDestBalance = 0;
       }
     };
-    eventSource.onerror = () => {
-      logger$1.error("[Bridge] SSE connection error");
+    snapshotDestBalance();
+    const checkDestBalance = async () => {
+      var _a3, _b3, _c2, _d2, _e2, _f2;
+      if (initialDestBalance === null) return false;
+      try {
+        const destMint = isSolToX1 ? USDCX_X1_MINT : USDC_SOLANA_MINT;
+        const res = await fetch(destRpc, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "getTokenAccountsByOwner",
+            params: [walletAddress, { mint: destMint }, { encoding: "jsonParsed", commitment: "confirmed" }]
+          })
+        });
+        const data = await res.json();
+        const accounts = ((_a3 = data.result) == null ? void 0 : _a3.value) || [];
+        if (accounts.length > 0) {
+          const newBalance = parseFloat(((_f2 = (_e2 = (_d2 = (_c2 = (_b3 = accounts[0].account) == null ? void 0 : _b3.data) == null ? void 0 : _c2.parsed) == null ? void 0 : _d2.info) == null ? void 0 : _e2.tokenAmount) == null ? void 0 : _f2.uiAmountString) || "0");
+          if (newBalance > initialDestBalance + 0.01) {
+            logger$1.log("[Bridge] Dest balance increased:", initialDestBalance, "->", newBalance);
+            return true;
+          }
+        }
+      } catch (e) {
+      }
+      return false;
     };
+    const startRpcPolling = () => {
+      let pollCount = 0;
+      let sourceFinalized = false;
+      const maxPolls = 40;
+      const poll = async () => {
+        var _a3, _b3;
+        if (cancelled || sseWorking) return;
+        pollCount++;
+        try {
+          if (!sourceFinalized) {
+            const statusRes = await fetch(sourceRpc, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                jsonrpc: "2.0",
+                id: 1,
+                method: "getSignatureStatuses",
+                params: [[txSignature], { searchTransactionHistory: true }]
+              })
+            });
+            const statusData = await statusRes.json();
+            const txInfo = (_b3 = (_a3 = statusData.result) == null ? void 0 : _a3.value) == null ? void 0 : _b3[0];
+            if (txInfo) {
+              if (txInfo.err) {
+                setTxStatus({ stage: "failed", message: "Transaction failed on-chain" });
+                return;
+              }
+              const isFinalized = txInfo.confirmationStatus === "finalized";
+              const confirmations = txInfo.confirmations || 0;
+              if (isFinalized || confirmations >= 31) {
+                sourceFinalized = true;
+                setTxStatus({ stage: "detected", txSig: txSignature, message: "Confirmed. Guardians processing..." });
+              } else {
+                setTxStatus({
+                  stage: "detected",
+                  txSig: txSignature,
+                  message: `Confirming... (${Math.min(confirmations, 31)}/31)`
+                });
+              }
+            }
+          } else {
+            const arrived = await checkDestBalance();
+            if (arrived) {
+              setTxStatus({ stage: "executed", txSig: txSignature, message: "Complete!" });
+              fetchUsdcBalance();
+              return;
+            }
+          }
+        } catch (e) {
+          logger$1.log("[Bridge] Poll error:", e.message);
+        }
+        if (pollCount >= maxPolls) {
+          setTxStatus({
+            stage: "executed",
+            txSig: txSignature,
+            message: "Submitted. Funds should arrive shortly."
+          });
+          fetchUsdcBalance();
+          return;
+        }
+        if (!cancelled) {
+          pollTimer = setTimeout(poll, 5e3);
+        }
+      };
+      pollTimer = setTimeout(poll, 3e3);
+    };
+    try {
+      eventSource = new EventSource(`${BRIDGE_API_URLS[0]}/transactions/stream`);
+      eventSourceRef.current = eventSource;
+      const sseTimeout = setTimeout(() => {
+        if (!sseWorking && !cancelled) {
+          logger$1.log("[Bridge] SSE timeout, falling back to RPC polling");
+          if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+          }
+          startRpcPolling();
+        }
+      }, 5e3);
+      eventSource.onopen = () => {
+        sseWorking = true;
+        clearTimeout(sseTimeout);
+      };
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.txSig === txSignature) {
+            switch (data.type) {
+              case "transaction_detected":
+                setTxStatus({ stage: "detected", message: "Detected by guardians" });
+                break;
+              case "signature_added":
+                setTxStatus({ stage: "signing", signatures: data.signatureCount, threshold: data.threshold, message: `Signing ${data.signatureCount}/${data.threshold}` });
+                break;
+              case "threshold_reached":
+                setTxStatus({ stage: "threshold", signatures: data.signatureCount, threshold: data.threshold, message: "Submitting..." });
+                break;
+              case "transaction_submitted":
+                setTxStatus({ stage: "confirming", x1TxSig: data.x1TxSig, message: "Confirming..." });
+                break;
+              case "transaction_executed":
+                setTxStatus({ stage: "executed", x1TxSig: data.x1TxSig, message: "Complete!" });
+                if (eventSource) eventSource.close();
+                fetchUsdcBalance();
+                break;
+            }
+          }
+        } catch (err) {
+        }
+      };
+      eventSource.onerror = () => {
+        clearTimeout(sseTimeout);
+        if (!sseWorking && !cancelled) {
+          if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+          }
+          startRpcPolling();
+        }
+      };
+    } catch (sseErr) {
+      startRpcPolling();
+    }
     return () => {
-      eventSource.close();
+      cancelled = true;
+      if (eventSource) eventSource.close();
+      if (pollTimer) clearTimeout(pollTimer);
     };
-  }, [txSignature, fetchUsdcBalance]);
-  const handleBridge = async () => {
-    var _a3, _b3;
+  }, [txSignature, direction, fetchUsdcBalance, walletAddress]);
+  const handleBridgeClick = () => {
     if (!walletAddress || !privateKey && !isHardwareWallet) {
       setError("Wallet not connected");
       return;
     }
-    if (!userUsdcTokenAccount) {
+    if (direction === "solana-to-x1" && !userUsdcTokenAccount) {
       setError("No USDC token account found. Please refresh balance.");
       return;
     }
-    const solBalance = (wallet == null ? void 0 : wallet.balance) || 0;
-    if (solBalance < 5e-6) {
-      setError("Insufficient SOL for transaction fee. You need ~0.00001 SOL.");
+    const nativeBalance = (wallet == null ? void 0 : wallet.balance) || 0;
+    const feeToken = direction === "solana-to-x1" ? "SOL" : "XN";
+    if (nativeBalance < 5e-6) {
+      setError(`Insufficient ${feeToken} for transaction fee.`);
       return;
     }
     if (!amount || inputAmount <= 0) {
       setError("Enter an amount to bridge");
       return;
     }
-    if (inputAmount < 0.01) {
-      setError("Minimum amount is 0.01 USDC");
+    if (inputAmount < 10) {
+      const tokenName2 = direction === "solana-to-x1" ? "USDC" : "USDC.X";
+      setError(`Minimum amount is 10 ${tokenName2}`);
       return;
     }
     const multiplier = Math.pow(10, USDC_DECIMALS);
     const requiredAmount = Math.round(inputAmount * multiplier);
     const availableAmount = Math.round(userUsdcBalance * multiplier);
+    const tokenName = direction === "solana-to-x1" ? "USDC" : "USDC.X";
     if (requiredAmount > availableAmount) {
-      setError(`Insufficient USDC balance. Required: ${inputAmount} USDC, Available: ${userUsdcBalance} USDC`);
+      setError(`Insufficient ${tokenName} balance. Required: ${inputAmount}, Available: ${userUsdcBalance}`);
       return;
     }
-    if (inputAmount > dailyCapRemaining) {
-      setError("Exceeds daily bridge capacity");
+    if (dailyCapRemaining > 0 && inputAmount > dailyCapRemaining) {
+      setError(`Exceeds daily bridge capacity. ${dailyCapRemaining.toFixed(2)} ${tokenName} remaining.`);
       return;
     }
-    if (bridgeStatus.status !== "live" && bridgeStatus.status !== "degraded") {
-      setError("Bridge is not available");
-      return;
-    }
+    setError("");
+    setShowConfirm(true);
+  };
+  const handleBridge = async () => {
+    var _a3, _b3, _c2, _d2, _e2, _f2, _g2, _h2, _i, _j, _k, _l, _m, _n, _o;
+    setShowConfirm(false);
     setLoading(true);
     setError("");
     setTxStatus({ stage: "idle", message: "Preparing transaction..." });
     try {
-      logger$1.log("[Bridge] Getting blockhash from Solana...");
-      const blockhashResponse = await fetch(SOLANA_RPC_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "getLatestBlockhash",
-          params: [{ commitment: "finalized" }]
+      let encodeCompactU162 = function(val) {
+        if (val < 128) return [val];
+        return [val & 127 | 128, val >> 7];
+      };
+      const isSolToX1 = direction === "solana-to-x1";
+      const rpcUrl = isSolToX1 ? SOLANA_RPC_URL : X1_RPC_URL;
+      const tokenMint = isSolToX1 ? USDC_SOLANA_MINT : USDCX_X1_MINT;
+      const sourceChain = isSolToX1 ? CHAIN_SOLANA : CHAIN_X1;
+      const destChain = isSolToX1 ? CHAIN_X1 : CHAIN_SOLANA;
+      const isNativeToken = isSolToX1;
+      const tokenProgramId = isSolToX1 ? TOKEN_PROGRAM_ID$1 : TOKEN_2022_PROGRAM_ID;
+      setTxStatus({ stage: "idle", message: "Fetching bridge config..." });
+      let feeCollector;
+      let feeCollectorAta = null;
+      try {
+        const configRes = await fetchBridgeAPI("/config");
+        if (!configRes.ok) throw new Error(`API returned ${configRes.status}`);
+        const configData = await configRes.json();
+        const chainConfig = isSolToX1 ? (_a3 = configData.solana) == null ? void 0 : _a3.config : (_b3 = configData.x1) == null ? void 0 : _b3.config;
+        feeCollector = (chainConfig == null ? void 0 : chainConfig.feeCollector) || (chainConfig == null ? void 0 : chainConfig.admin);
+        const chainTokens = isSolToX1 ? (_c2 = configData.solana) == null ? void 0 : _c2.tokens : (_d2 = configData.x1) == null ? void 0 : _d2.tokens;
+        const tokenInfo = chainTokens == null ? void 0 : chainTokens.find((t2) => t2.symbol === "USDC");
+        if ((tokenInfo == null ? void 0 : tokenInfo.feeCollectorAta) && tokenInfo.feeCollectorAta !== SYSTEM_PROGRAM_ID$1) {
+          feeCollectorAta = tokenInfo.feeCollectorAta;
+        }
+        if (tokenInfo) {
+          const flatFee = tokenInfo.flatFeeAmount ? Number(tokenInfo.flatFeeAmount) / Math.pow(10, USDC_DECIMALS) : 0;
+          const pctFeeBps = tokenInfo.percentageFeeBps || 0;
+          setBridgeFees({ flatFee, pctFeeBps });
+        }
+        logger$1.log("[Bridge] Fee collector from API:", feeCollector, "ATA:", feeCollectorAta);
+      } catch (e) {
+        logger$1.log("[Bridge] API unavailable, reading config from chain...", e.message);
+        try {
+          const configSeedTmp = new TextEncoder().encode("config");
+          const configPdaTmp = await findProgramAddress$1([configSeedTmp], WARP_BRIDGE_PROGRAM_ID);
+          const configAccountB58 = encodeBase58Local(configPdaTmp.address);
+          const trSeedTmp = new TextEncoder().encode("token_registry");
+          const mintBytesTmp = decodeToFixedSize(tokenMint, 32);
+          const trPdaTmp = await findProgramAddress$1([trSeedTmp, mintBytesTmp], WARP_BRIDGE_PROGRAM_ID);
+          const trAccountB58 = encodeBase58Local(trPdaTmp.address);
+          const [configAccountRes, trAccountRes] = await Promise.all([
+            fetch(rpcUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                jsonrpc: "2.0",
+                id: 1,
+                method: "getAccountInfo",
+                params: [configAccountB58, { encoding: "base64", commitment: "confirmed" }]
+              })
+            }),
+            fetch(rpcUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                jsonrpc: "2.0",
+                id: 2,
+                method: "getAccountInfo",
+                params: [trAccountB58, { encoding: "base64", commitment: "confirmed" }]
+              })
+            })
+          ]);
+          const configAccData = await configAccountRes.json();
+          const trAccData = await trAccountRes.json();
+          if ((_g2 = (_f2 = (_e2 = configAccData.result) == null ? void 0 : _e2.value) == null ? void 0 : _f2.data) == null ? void 0 : _g2[0]) {
+            const raw = Uint8Array.from(atob(configAccData.result.value.data[0]), (c) => c.charCodeAt(0));
+            const feeCollectorOffset = 8 + 32 + 1 + 160 + 1 + 1 + 8 + 8 + 8 + 2;
+            const fcBytes = raw.slice(feeCollectorOffset, feeCollectorOffset + 32);
+            feeCollector = encodeBase58Local(fcBytes);
+            logger$1.log("[Bridge] Fee collector from chain:", feeCollector);
+          }
+          if ((_j = (_i = (_h2 = trAccData.result) == null ? void 0 : _h2.value) == null ? void 0 : _i.data) == null ? void 0 : _j[0]) {
+            const raw = Uint8Array.from(atob(trAccData.result.value.data[0]), (c) => c.charCodeAt(0));
+            const flatFeeOffset = 8 + 32 + 1 + 1 + 12 + 1 + 8 + 8 + 8 + 8 + 8 + 1;
+            let flatFeeRaw = 0n;
+            for (let i = 0; i < 8; i++) flatFeeRaw |= BigInt(raw[flatFeeOffset + i]) << BigInt(i * 8);
+            const flatFee = Number(flatFeeRaw) / Math.pow(10, USDC_DECIMALS);
+            const pctOffset = flatFeeOffset + 8;
+            const pctFeeBps = raw[pctOffset] | raw[pctOffset + 1] << 8;
+            setBridgeFees({ flatFee, pctFeeBps });
+            logger$1.log("[Bridge] Fees from chain: flat=", flatFee, "USDC, pct=", pctFeeBps, "bps");
+            const fcAtaOffset = pctOffset + 2;
+            const fcAtaBytes = raw.slice(fcAtaOffset, fcAtaOffset + 32);
+            const fcAtaStr = encodeBase58Local(fcAtaBytes);
+            const isZero = fcAtaBytes.every((b) => b === 0);
+            if (!isZero && fcAtaStr !== SYSTEM_PROGRAM_ID$1) {
+              feeCollectorAta = fcAtaStr;
+              logger$1.log("[Bridge] Fee collector ATA from chain:", feeCollectorAta);
+            }
+          }
+        } catch (chainErr) {
+          logger$1.error("[Bridge] Failed to read on-chain config:", chainErr);
+          throw new Error("Bridge API unavailable and unable to read on-chain config. Please try again later.");
+        }
+      }
+      if (!feeCollector) {
+        throw new Error("Bridge configuration unavailable.");
+      }
+      setTxStatus({ stage: "idle", message: "Getting network data..." });
+      const [slotRes, blockhashRes] = await Promise.all([
+        fetch(rpcUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getSlot", params: [{ commitment: "confirmed" }] })
+        }),
+        fetch(rpcUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "getLatestBlockhash", params: [{ commitment: "finalized" }] })
         })
+      ]);
+      const slotData = await slotRes.json();
+      const blockhashData = await blockhashRes.json();
+      if (blockhashData.error) throw new Error(blockhashData.error.message || "Failed to get blockhash");
+      const slot = slotData.result;
+      const blockhash = (_l = (_k = blockhashData.result) == null ? void 0 : _k.value) == null ? void 0 : _l.blockhash;
+      if (!blockhash || !slot) throw new Error("Failed to get network data");
+      logger$1.log("[Bridge] Slot:", slot, "Blockhash:", blockhash);
+      const seq = encodeSeq(slot, 0, sourceChain, destChain);
+      const seqBytes = writeU64LE(seq);
+      logger$1.log("[Bridge] Seq:", seq.toString(), "encoded");
+      setTxStatus({ stage: "idle", message: "Deriving accounts..." });
+      const programIdBytes = decodeToFixedSize(WARP_BRIDGE_PROGRAM_ID, 32);
+      const mintBytes = decodeToFixedSize(tokenMint, 32);
+      const configSeed = new TextEncoder().encode("config");
+      const configPda = await findProgramAddress$1([configSeed], WARP_BRIDGE_PROGRAM_ID);
+      logger$1.log("[Bridge] Config PDA:", encodeBase58Local(configPda.address), "bump:", configPda.bump);
+      const trSeed = new TextEncoder().encode("token_registry");
+      const tokenRegistryPda = await findProgramAddress$1([trSeed, mintBytes], WARP_BRIDGE_PROGRAM_ID);
+      logger$1.log("[Bridge] Token Registry PDA:", encodeBase58Local(tokenRegistryPda.address), "bump:", tokenRegistryPda.bump);
+      const evtSeed = new TextEncoder().encode("evt_out");
+      const outgoingMsgPda = await findProgramAddress$1([evtSeed, seqBytes], WARP_BRIDGE_PROGRAM_ID);
+      logger$1.log("[Bridge] Outgoing Msg PDA:", encodeBase58Local(outgoingMsgPda.address), "bump:", outgoingMsgPda.bump);
+      const senderTokenAccountBytes = isSolToX1 ? decodeToFixedSize(userUsdcTokenAccount, 32) : await findAssociatedTokenAddress(walletAddress, tokenMint, tokenProgramId);
+      let vaultPdaAddress = null;
+      let vaultTokenAccountAddress = null;
+      if (isNativeToken) {
+        const vaultSeed = new TextEncoder().encode("vault");
+        const vaultPda = await findProgramAddress$1([vaultSeed, mintBytes], WARP_BRIDGE_PROGRAM_ID);
+        vaultPdaAddress = vaultPda.address;
+        vaultTokenAccountAddress = await findAssociatedTokenAddress(
+          encodeBase58Local(vaultPda.address),
+          tokenMint,
+          tokenProgramId
+        );
+        logger$1.log("[Bridge] Vault PDA:", encodeBase58Local(vaultPdaAddress));
+      }
+      const tokenAmount = BigInt(Math.floor(inputAmount * Math.pow(10, USDC_DECIMALS)));
+      const ixData = new Uint8Array(8 + 8 + 8);
+      ixData.set(BRIDGE_OUT_DISCRIMINATOR, 0);
+      ixData.set(seqBytes, 8);
+      ixData.set(writeU64LE(tokenAmount), 16);
+      const senderBytes = decodeToFixedSize(walletAddress, 32);
+      const feeCollectorBytes = decodeToFixedSize(feeCollector, 32);
+      const tokenProgramBytes = decodeToFixedSize(tokenProgramId, 32);
+      const systemProgramBytes = decodeToFixedSize(SYSTEM_PROGRAM_ID$1, 32);
+      const programIdBytesForNone = decodeToFixedSize(WARP_BRIDGE_PROGRAM_ID, 32);
+      const vaultBytes = vaultPdaAddress || programIdBytesForNone;
+      const vaultTokenBytes = vaultTokenAccountAddress || programIdBytesForNone;
+      const feeCollectorAtaBytes = feeCollectorAta ? decodeToFixedSize(feeCollectorAta, 32) : programIdBytesForNone;
+      const accountEntries = [
+        { key: configPda.address, isSigner: false, isWritable: true },
+        { key: tokenRegistryPda.address, isSigner: false, isWritable: true },
+        { key: outgoingMsgPda.address, isSigner: false, isWritable: true },
+        { key: senderBytes, isSigner: true, isWritable: true },
+        { key: senderTokenAccountBytes, isSigner: false, isWritable: true },
+        { key: mintBytes, isSigner: false, isWritable: true },
+        { key: vaultBytes, isSigner: false, isWritable: isNativeToken },
+        { key: vaultTokenBytes, isSigner: false, isWritable: isNativeToken },
+        { key: feeCollectorBytes, isSigner: false, isWritable: true },
+        { key: feeCollectorAtaBytes, isSigner: false, isWritable: !!feeCollectorAta },
+        { key: tokenProgramBytes, isSigner: false, isWritable: false },
+        { key: systemProgramBytes, isSigner: false, isWritable: false }
+      ];
+      const keyMap = /* @__PURE__ */ new Map();
+      const orderedKeys = [];
+      for (const entry of accountEntries) {
+        const keyStr = encodeBase58Local(entry.key);
+        if (keyMap.has(keyStr)) {
+          const existing = keyMap.get(keyStr);
+          existing.isSigner = existing.isSigner || entry.isSigner;
+          existing.isWritable = existing.isWritable || entry.isWritable;
+        } else {
+          const idx = orderedKeys.length;
+          keyMap.set(keyStr, { ...entry, idx });
+          orderedKeys.push({ ...entry, keyStr });
+        }
+      }
+      const signerWritable = orderedKeys.filter((k2) => k2.isSigner && k2.isWritable);
+      const signerReadonly = orderedKeys.filter((k2) => k2.isSigner && !k2.isWritable);
+      const nonsignerWritable = orderedKeys.filter((k2) => !k2.isSigner && k2.isWritable);
+      const nonsignerReadonly = orderedKeys.filter((k2) => !k2.isSigner && !k2.isWritable);
+      const sortedKeys = [...signerWritable, ...signerReadonly, ...nonsignerWritable, ...nonsignerReadonly];
+      const keyToIdx = /* @__PURE__ */ new Map();
+      sortedKeys.forEach((k2, i) => keyToIdx.set(k2.keyStr, i));
+      const numSigners = signerWritable.length + signerReadonly.length;
+      const numReadonlySigned = signerReadonly.length;
+      const numReadonlyUnsigned = nonsignerReadonly.length;
+      const numAccounts = sortedKeys.length;
+      const accountKeysData = new Uint8Array(32 * numAccounts);
+      sortedKeys.forEach((k2, i) => accountKeysData.set(k2.key, i * 32));
+      const ixAccountIndices = accountEntries.map((e) => {
+        const keyStr = encodeBase58Local(e.key);
+        return keyToIdx.get(keyStr);
       });
-      const blockhashData = await blockhashResponse.json();
-      if (blockhashData.error) {
-        throw new Error(blockhashData.error.message || "Failed to get blockhash");
+      const programIdx = keyToIdx.get(encodeBase58Local(decodeToFixedSize(WARP_BRIDGE_PROGRAM_ID, 32)));
+      let finalProgramIdx = programIdx;
+      if (finalProgramIdx === void 0) {
+        const pBytes = decodeToFixedSize(WARP_BRIDGE_PROGRAM_ID, 32);
+        finalProgramIdx = numAccounts;
+        const newLen = accountKeysData.length + 32;
+        const newKeys = new Uint8Array(newLen);
+        newKeys.set(accountKeysData, 0);
+        newKeys.set(pBytes, accountKeysData.length);
+        sortedKeys.push({ key: pBytes, isSigner: false, isWritable: false, keyStr: WARP_BRIDGE_PROGRAM_ID });
+        keyToIdx.set(WARP_BRIDGE_PROGRAM_ID, sortedKeys.length - 1);
+        finalProgramIdx = sortedKeys.length - 1;
       }
-      const blockhash = (_b3 = (_a3 = blockhashData.result) == null ? void 0 : _a3.value) == null ? void 0 : _b3.blockhash;
-      if (!blockhash) {
-        throw new Error("Failed to get blockhash");
+      const finalNumAccounts = sortedKeys.length;
+      const finalAccountKeys = new Uint8Array(32 * finalNumAccounts);
+      sortedKeys.forEach((k2, i) => finalAccountKeys.set(k2.key, i * 32));
+      const finalNumReadonlyUnsigned = sortedKeys.filter((k2) => !k2.isSigner && !k2.isWritable).length;
+      const ixAccLen = encodeCompactU162(ixAccountIndices.length);
+      const ixDataLen = encodeCompactU162(ixData.length);
+      const instructionBytes = new Uint8Array(
+        1 + ixAccLen.length + ixAccountIndices.length + ixDataLen.length + ixData.length
+      );
+      let ixOffset = 0;
+      instructionBytes[ixOffset++] = finalProgramIdx;
+      instructionBytes.set(ixAccLen, ixOffset);
+      ixOffset += ixAccLen.length;
+      for (const idx of ixAccountIndices) {
+        instructionBytes[ixOffset++] = idx;
       }
-      logger$1.log("[Bridge] Blockhash:", blockhash);
-      const tokenAmount = Math.floor(inputAmount * Math.pow(10, USDC_DECIMALS));
-      logger$1.log("[Bridge] Token amount:", tokenAmount);
-      logger$1.log("[Bridge] User token account:", userUsdcTokenAccount);
-      logger$1.log("[Bridge] Bridge deposit address:", bridgeDepositAddress);
+      instructionBytes.set(ixDataLen, ixOffset);
+      ixOffset += ixDataLen.length;
+      instructionBytes.set(ixData, ixOffset);
+      const blockhashBytes = decodeToFixedSize(blockhash, 32);
+      const header = new Uint8Array([numSigners, numReadonlySigned, finalNumReadonlyUnsigned]);
+      const numAccountsCompact = encodeCompactU162(finalNumAccounts);
+      const numInstructions = encodeCompactU162(1);
+      const messageLen = 3 + numAccountsCompact.length + 32 * finalNumAccounts + 32 + numInstructions.length + instructionBytes.length;
+      const message = new Uint8Array(messageLen);
+      let msgOffset = 0;
+      message.set(header, msgOffset);
+      msgOffset += 3;
+      message.set(numAccountsCompact, msgOffset);
+      msgOffset += numAccountsCompact.length;
+      message.set(finalAccountKeys, msgOffset);
+      msgOffset += finalAccountKeys.length;
+      message.set(blockhashBytes, msgOffset);
+      msgOffset += 32;
+      message.set(numInstructions, msgOffset);
+      msgOffset += numInstructions.length;
+      message.set(instructionBytes, msgOffset);
+      logger$1.log("[Bridge] Message built, length:", message.length, "accounts:", finalNumAccounts);
+      setTxStatus({ stage: "idle", message: "Signing transaction..." });
       const { sign: sign2 } = await __vitePreload(async () => {
         const { sign: sign3 } = await Promise.resolve().then(() => bip44);
         return { sign: sign3 };
       }, true ? void 0 : void 0);
-      const ownerBytes = decodeToFixedSize(walletAddress, 32);
-      const sourceBytes = decodeToFixedSize(userUsdcTokenAccount, 32);
-      const destBytes = decodeToFixedSize(bridgeDepositAddress, 32);
-      const programBytes = decodeToFixedSize(TOKEN_PROGRAM_ID$1, 32);
-      const blockhashBytes = decodeToFixedSize(blockhash, 32);
-      const header = new Uint8Array([1, 0, 1]);
-      const accountKeys = new Uint8Array(32 * 4);
-      accountKeys.set(ownerBytes, 0);
-      accountKeys.set(sourceBytes, 32);
-      accountKeys.set(destBytes, 64);
-      accountKeys.set(programBytes, 96);
-      const instructionData = new Uint8Array(9);
-      instructionData[0] = 3;
-      const amountBI = BigInt(tokenAmount);
-      for (let i = 0; i < 8; i++) {
-        instructionData[1 + i] = Number(amountBI >> BigInt(i * 8) & BigInt(255));
-      }
-      const instruction = new Uint8Array([
-        3,
-        3,
-        1,
-        2,
-        0,
-        9,
-        ...instructionData
-      ]);
-      const messageLength = 3 + 1 + 128 + 32 + 1 + instruction.length;
-      const message = new Uint8Array(messageLength);
-      let offset = 0;
-      message.set(header, offset);
-      offset += 3;
-      message[offset] = 4;
-      offset += 1;
-      message.set(accountKeys, offset);
-      offset += 128;
-      message.set(blockhashBytes, offset);
-      offset += 32;
-      message[offset] = 1;
-      offset += 1;
-      message.set(instruction, offset);
-      logger$1.log("[Bridge] Message built, length:", message.length);
       let ed25519Signature;
       if (isHardwareWallet) {
         logger$1.log("[Bridge] Signing with hardware wallet...");
@@ -33292,9 +34069,9 @@ function BridgeScreen({ wallet, onBack }) {
       signedTx.set(ed25519Signature, 1);
       signedTx.set(message, 65);
       const tx = btoa(String.fromCharCode(...signedTx));
-      logger$1.log("[Bridge] Transaction ready, sending...");
+      logger$1.log("[Bridge] Transaction ready, sending to", isSolToX1 ? "Solana" : "X1", "...");
       setTxStatus({ stage: "idle", message: "Sending transaction..." });
-      const sendResponse = await fetch(SOLANA_RPC_URL, {
+      const sendResponse = await fetch(rpcUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -33311,7 +34088,16 @@ function BridgeScreen({ wallet, onBack }) {
       const sendData = await sendResponse.json();
       if (sendData.error) {
         logger$1.error("[Bridge] Transaction error:", sendData.error);
-        throw new Error(sendData.error.message || "Transaction failed");
+        const errMsg = sendData.error.message || "Transaction failed";
+        const logs = (_n = (_m = sendData.error) == null ? void 0 : _m.data) == null ? void 0 : _n.logs;
+        if (logs) {
+          logger$1.error("[Bridge] Logs:", logs);
+          const programError = logs.find((l2) => l2.includes("Error Message:"));
+          if (programError) {
+            throw new Error(((_o = programError.split("Error Message:")[1]) == null ? void 0 : _o.trim()) || errMsg);
+          }
+        }
+        throw new Error(errMsg);
       }
       const signature = sendData.result;
       logger$1.log("[Bridge] Transaction sent:", signature);
@@ -33319,8 +34105,9 @@ function BridgeScreen({ wallet, onBack }) {
       setTxStatus({
         stage: "detected",
         txSig: signature,
-        message: "Transaction sent! Waiting for guardians..."
+        message: "Transaction sent! Waiting for confirmations..."
       });
+      setLoading(false);
       setTimeout(() => fetchUsdcBalance(), 3e3);
     } catch (err) {
       logger$1.error("[Bridge] Transaction error:", err);
@@ -33330,9 +34117,13 @@ function BridgeScreen({ wallet, onBack }) {
     }
   };
   const setMaxAmount = () => {
+    console.log("[Bridge] setMaxAmount called, userUsdcBalance:", userUsdcBalance, "dailyCapRemaining:", dailyCapRemaining);
     if (userUsdcBalance > 0) {
-      const maxAmount = Math.min(userUsdcBalance, dailyCapRemaining);
+      const maxAmount = dailyCapRemaining > 0 ? Math.min(userUsdcBalance, dailyCapRemaining) : userUsdcBalance;
+      console.log("[Bridge] Setting max amount to:", maxAmount);
       setAmount(maxAmount.toFixed(2));
+    } else {
+      console.log("[Bridge] userUsdcBalance is 0 or undefined");
     }
   };
   const formatNumber = (val, dec = 2) => {
@@ -33341,214 +34132,325 @@ function BridgeScreen({ wallet, onBack }) {
       maximumFractionDigits: dec
     });
   };
-  const getTxStageInfo = () => {
-    const stages = {
-      idle: { label: "Ready", color: "#8b8b8b" },
-      detected: { label: "Detected", color: "#0274fb" },
-      signing: { label: "Signing", color: "#f59e0b" },
-      threshold: { label: "Threshold Reached", color: "#f97316" },
-      confirming: { label: "Confirming", color: "#0274fb" },
-      executed: { label: "Complete", color: "#22c55e" },
-      failed: { label: "Failed", color: "#ef4444" }
-    };
-    return stages[txStatus.stage] || stages.idle;
-  };
-  const styles = {
-    screen: {
-      display: "flex",
-      flexDirection: "column",
-      height: "100%",
-      background: "#000000"
-    },
-    content: {
-      flex: 1,
-      overflowY: "auto",
-      padding: "20px"
-    }
-  };
   const isSolana = (_f = wallet == null ? void 0 : wallet.network) == null ? void 0 : _f.includes("Solana");
-  if (!isSolana) {
-    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: styles.screen, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "page-header", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-left", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", onClick: onBack, children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "header-title", children: "X1 Bridge" })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: styles.content, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: {
-        padding: 24,
-        textAlign: "center"
-      }, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: {
-          width: 64,
-          height: 64,
-          borderRadius: "50%",
-          background: "rgba(239, 68, 68, 0.1)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          margin: "0 auto 16px"
-        }, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: "32", height: "32", viewBox: "0 0 24 24", fill: "none", stroke: "#ef4444", strokeWidth: "2", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("circle", { cx: "12", cy: "12", r: "10" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "12", y1: "8", x2: "12", y2: "12" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("line", { x1: "12", y1: "16", x2: "12.01", y2: "16" })
-        ] }) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { style: { color: "#fff", fontSize: 18, marginBottom: 8 }, children: "Switch to Solana Network" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { style: { color: "#8b8b8b", fontSize: 14, lineHeight: 1.5, marginBottom: 20 }, children: [
-          "The bridge transfers USDC from ",
-          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { style: { color: "#fff" }, children: "Solana" }),
-          " to ",
-          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { style: { color: "#fff" }, children: "X1" }),
-          ". Please switch to Solana Mainnet to use the bridge."
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: {
-          display: "flex",
-          gap: 12,
-          justifyContent: "center",
-          marginBottom: 16
-        }, children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: {
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "8px 16px",
-            background: "#111",
-            borderRadius: 8
-          }, children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx(SolanaLogo, { size: 20 }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { color: "#fff", fontSize: 14 }, children: "Solana" })
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { color: "#6b6b6b", alignSelf: "center" }, children: "→" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: {
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "8px 16px",
-            background: "#111",
-            borderRadius: 8
-          }, children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx(X1LogoSmall, { size: 20 }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { color: "#fff", fontSize: 14 }, children: "X1" })
-          ] })
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { style: { color: "#6b6b6b", fontSize: 12, marginBottom: 24 }, children: [
-          "Current network: ",
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { color: "#ef4444" }, children: (wallet == null ? void 0 : wallet.network) || "Unknown" })
+  const isX1 = ((_g = wallet == null ? void 0 : wallet.network) == null ? void 0 : _g.includes("X1")) && !((_h = wallet == null ? void 0 : wallet.network) == null ? void 0 : _h.includes("Testnet"));
+  reactExports.useEffect(() => {
+    if (isSolana) {
+      setDirection("solana-to-x1");
+    } else if (isX1) {
+      setDirection("x1-to-solana");
+    }
+  }, [wallet == null ? void 0 : wallet.network]);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen bridge-screen", style: { display: "flex", flexDirection: "column", height: "100%", background: "#000" }, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "page-header", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-left", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", onClick: onBack, children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "header-title", children: "Warp Bridge" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-right" })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { flex: 1, display: "flex", flexDirection: "column", overflowY: "auto", padding: "0 20px" }, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 12, padding: "16px 0 16px" }, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { width: 100, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 10, padding: "8px 0" }, children: [
+          direction === "solana-to-x1" ? /* @__PURE__ */ jsxRuntimeExports.jsx(SolanaLogo, { size: 20 }) : /* @__PURE__ */ jsxRuntimeExports.jsx(X1LogoSmall, { size: 20 }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { color: "#fff", fontSize: 14, fontWeight: 500 }, children: direction === "solana-to-x1" ? "Solana" : "X1" })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(
           "button",
           {
-            className: "btn-primary",
-            onClick: () => onBack && onBack("network"),
-            style: { width: "auto", padding: "12px 32px" },
-            children: "Switch to Solana Mainnet"
-          }
-        )
-      ] }) })
-    ] });
-  }
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "screen bridge-screen", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "page-header", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-left", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back-btn", onClick: onBack, children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "header-title", children: "Bridge" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "header-right" })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "main-content", style: { padding: "0 20px" }, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-step-content send-amount-step", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "bridge-route-display", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "bridge-route-chain", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx(SolanaLogo, { size: 24 }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Solana" })
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "bridge-route-arrow", children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M5 12h14M12 5l7 7-7 7" }) }) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "bridge-route-chain", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx(X1LogoSmall, { size: 24 }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "X1" })
-        ] })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-amount-section", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "input",
-          {
-            type: "text",
-            inputMode: "decimal",
-            className: "send-amount-input",
-            placeholder: "0",
-            value: amount,
-            onChange: (e) => {
-              setAmount(e.target.value.replace(/[^0-9.]/g, ""));
+            onClick: () => {
+              const newDirection = direction === "solana-to-x1" ? "x1-to-solana" : "solana-to-x1";
+              setDirection(newDirection);
+              setAmount("");
               setError("");
+              setUserUsdcBalance(0);
+              setFetchingBalance(true);
+              const targetNetwork = newDirection === "solana-to-x1" ? "Solana Mainnet" : "X1 Mainnet";
+              if (onNetworkSwitch) onNetworkSwitch(targetNetwork);
             },
-            disabled: loading
+            disabled: loading,
+            style: { background: "none", border: "none", color: "#6b6b6b", cursor: "pointer", padding: 4, display: "flex", flexShrink: 0 },
+            children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "18", height: "18", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M7 16l-4-4m0 0l4-4m-4 4h18M17 8l4 4m0 0l-4 4m4-4H3" }) })
           }
         ),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "send-amount-token", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx(UsdcLogo, { size: 24 }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "USDC" })
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { width: 100, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 10, padding: "8px 0" }, children: [
+          direction === "solana-to-x1" ? /* @__PURE__ */ jsxRuntimeExports.jsx(X1LogoSmall, { size: 20 }) : /* @__PURE__ */ jsxRuntimeExports.jsx(SolanaLogo, { size: 20 }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { color: "#fff", fontSize: 14, fontWeight: 500 }, children: direction === "solana-to-x1" ? "X1" : "Solana" })
         ] })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "button",
-        {
-          className: "send-max-pill",
-          onClick: setMaxAmount,
-          type: "button",
-          disabled: fetchingBalance,
-          children: fetchingBalance ? "Loading..." : `Balance: ${formatNumber(userUsdcBalance)} USDC`
-        }
-      ),
-      amount && parseFloat(amount) > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "bridge-arrow-down", children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M12 5v14M5 12l7 7 7-7" }) }) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "bridge-receive-preview", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "bridge-receive-value", children: [
-            amount,
-            " USDC.X"
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "bridge-receive-chain", children: "on X1 Mainnet" })
-        ] })
-      ] }),
-      txStatus.stage !== "idle" && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "bridge-tx-status", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "bridge-tx-header", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Status" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { color: getTxStageInfo().color }, children: getTxStageInfo().label })
-        ] }),
-        txStatus.signatures !== void 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "bridge-signatures", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "bridge-sig-label", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Guardian Signatures" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
-              txStatus.signatures,
-              "/",
-              txStatus.threshold || threshold
-            ] })
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "bridge-sig-dots", children: Array.from({ length: txStatus.threshold || threshold }).map((_, i) => /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "div",
+      txStatus.stage === "idle" ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { textAlign: "center", padding: "4px 0 4px" }, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
             {
-              className: `bridge-sig-dot ${i < txStatus.signatures ? "filled" : ""}`
-            },
-            i
-          )) })
+              type: "text",
+              inputMode: "decimal",
+              placeholder: "0",
+              value: amount,
+              onChange: (e) => {
+                setAmount(e.target.value.replace(/[^0-9.]/g, ""));
+                setError("");
+              },
+              disabled: loading,
+              style: {
+                background: "transparent",
+                border: "none",
+                outline: "none",
+                fontSize: 48,
+                fontWeight: 600,
+                fontFamily: "inherit",
+                color: "#fff",
+                textAlign: "center",
+                width: "100%",
+                caretColor: "#0274fb"
+              }
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 4 }, children: [
+            direction === "solana-to-x1" ? /* @__PURE__ */ jsxRuntimeExports.jsx(UsdcLogo, { size: 20 }) : /* @__PURE__ */ jsxRuntimeExports.jsx(UsdcXLogo, { size: 20 }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { color: "#fff", fontSize: 15, fontWeight: 500 }, children: direction === "solana-to-x1" ? "USDC" : "USDC.X" })
+          ] })
         ] }),
-        txStatus.x1TxSig && /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "a",
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { textAlign: "center", marginTop: 12, marginBottom: 12 }, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
           {
-            href: getTxExplorerUrl("X1 Mainnet", txStatus.x1TxSig),
-            target: "_blank",
-            rel: "noopener noreferrer",
-            className: "bridge-tx-link",
-            children: "View on Explorer →"
+            onClick: setMaxAmount,
+            type: "button",
+            disabled: fetchingBalance,
+            style: {
+              background: "rgba(255,255,255,0.06)",
+              border: "none",
+              borderRadius: 20,
+              padding: "8px 20px",
+              color: "#8b8b8b",
+              fontSize: 13,
+              cursor: "pointer"
+            },
+            children: fetchingBalance ? "Loading..." : `Balance: ${formatNumber(userUsdcBalance)} ${direction === "solana-to-x1" ? "USDC" : "USDC.X"}`
           }
-        ),
-        txStatus.message && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "bridge-tx-message", children: txStatus.message })
-      ] }),
-      error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "error-message", children: error }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "send-bottom-action", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+        ) }),
+        amount && parseFloat(amount) > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { textAlign: "center", color: "#6b6b6b", fontSize: 13, marginBottom: 16 }, children: [
+          "You'll receive ≈ ",
+          amount,
+          " ",
+          direction === "solana-to-x1" ? "USDC.X" : "USDC",
+          " on ",
+          direction === "solana-to-x1" ? "X1" : "Solana"
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { marginTop: 4 }, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", justifyContent: "space-between", padding: "6px 0" }, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 13, color: "#6b6b6b" }, children: "Route" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 13, color: "#fff", fontWeight: 500 }, children: direction === "solana-to-x1" ? "SOL → X1" : "X1 → SOL" })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", justifyContent: "space-between", padding: "6px 0" }, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 13, color: "#6b6b6b" }, children: "Rate" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 13, color: "#fff", fontWeight: 500 }, children: "1:1" })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", justifyContent: "space-between", padding: "6px 0" }, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 13, color: "#6b6b6b" }, children: "Bridge fee" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 13, color: bridgeFees.flatFee === 0 && bridgeFees.pctFeeBps === 0 ? "#22c55e" : "#fff", fontWeight: 500 }, children: bridgeFees.flatFee === 0 && bridgeFees.pctFeeBps === 0 ? "Free" : bridgeFees.flatFee > 0 && bridgeFees.pctFeeBps > 0 ? `${bridgeFees.flatFee} + ${(bridgeFees.pctFeeBps / 100).toFixed(2)}%` : bridgeFees.flatFee > 0 ? `${bridgeFees.flatFee} ${direction === "solana-to-x1" ? "USDC" : "USDC.X"}` : `${(bridgeFees.pctFeeBps / 100).toFixed(2)}%` })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", justifyContent: "space-between", padding: "6px 0" }, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 13, color: "#6b6b6b" }, children: "Est. time" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 13, color: "#6b6b6b" }, children: "2–5 min" })
+          ] })
+        ] }),
+        error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { color: "#ef4444", fontSize: 13, textAlign: "center", marginTop: 12 }, children: error })
+      ] }) : (
+        /* Transaction status view */
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { textAlign: "center", padding: "40px 0 20px" }, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { marginBottom: 20 }, children: txStatus.stage === "executed" ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: {
+            width: 56,
+            height: 56,
+            borderRadius: "50%",
+            background: "rgba(34,197,94,0.12)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            margin: "0 auto"
+          }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "28", height: "28", viewBox: "0 0 24 24", fill: "none", stroke: "#22c55e", strokeWidth: "2.5", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M20 6L9 17l-5-5" }) }) }) : txStatus.stage === "failed" ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: {
+            width: 56,
+            height: 56,
+            borderRadius: "50%",
+            background: "rgba(239,68,68,0.12)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            margin: "0 auto"
+          }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "28", height: "28", viewBox: "0 0 24 24", fill: "none", stroke: "#ef4444", strokeWidth: "2.5", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M18 6L6 18M6 6l12 12" }) }) }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: {
+            width: 56,
+            height: 56,
+            borderRadius: "50%",
+            background: "rgba(2,116,251,0.12)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            margin: "0 auto"
+          }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "spinner-small", style: { width: 24, height: 24 } }) }) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { fontSize: 18, fontWeight: 600, color: "#fff", marginBottom: 6 }, children: txStatus.stage === "executed" ? "Warp Complete" : txStatus.stage === "failed" ? "Warp Failed" : "Warping..." }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { fontSize: 13, color: "#6b6b6b", marginBottom: 20 }, children: txStatus.message }),
+          txStatus.txSig && /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "a",
+            {
+              href: getTxExplorerUrl(direction === "solana-to-x1" ? "Solana" : "X1 Mainnet", txStatus.txSig),
+              target: "_blank",
+              rel: "noopener noreferrer",
+              style: { fontSize: 13, color: "#0274fb", textDecoration: "none" },
+              children: "View transaction →"
+            }
+          )
+        ] })
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "send-bottom-action", style: { flexShrink: 0 }, children: txStatus.stage === "executed" || txStatus.stage === "failed" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
         "button",
         {
           className: "btn-primary",
-          onClick: handleBridge,
-          disabled: loading || !amount || parseFloat(amount) <= 0 || bridgeStatus.status !== "live" && bridgeStatus.status !== "degraded",
-          children: loading ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "btn-loading", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "spinner-small" }) }) : bridgeStatus.status === "offline" || bridgeStatus.status === "paused" ? "Bridge Unavailable" : "Bridge to X1"
+          onClick: () => {
+            setTxSignature(null);
+            setTxStatus({ stage: "idle" });
+            setAmount("");
+            setError("");
+          },
+          children: txStatus.stage === "executed" ? "Done" : "Try Again"
+        }
+      ) : txStatus.stage !== "idle" ? null : /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          className: "btn-primary",
+          onClick: handleBridgeClick,
+          disabled: loading || !amount || parseFloat(amount) <= 0,
+          children: loading ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "btn-loading", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "spinner-small" }) }) : "Review Warp"
         }
       ) })
-    ] }) })
+    ] }),
+    showConfirm && (() => {
+      const isSolToX1 = direction === "solana-to-x1";
+      const fromToken = isSolToX1 ? "USDC" : "USDC.X";
+      const toToken = isSolToX1 ? "USDC.X" : "USDC";
+      const fromChain = isSolToX1 ? "Solana" : "X1 Mainnet";
+      const toChain = isSolToX1 ? "X1 Mainnet" : "Solana";
+      const pctFee = inputAmount * bridgeFees.pctFeeBps / 1e4;
+      const totalFee = bridgeFees.flatFee + pctFee;
+      const receiveAmountNet = Math.max(0, inputAmount - totalFee);
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: {
+        position: "fixed",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: "#000000",
+        zIndex: 9999,
+        display: "flex",
+        flexDirection: "column"
+      }, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: {
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "16px 20px",
+          borderBottom: "1px solid rgba(255,255,255,0.06)",
+          position: "relative",
+          minHeight: 48
+        }, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { onClick: () => setShowConfirm(false), style: {
+            background: "transparent",
+            border: "none",
+            color: "#8b8b8b",
+            cursor: "pointer",
+            padding: 0,
+            display: "flex",
+            alignItems: "center",
+            position: "absolute",
+            left: 16,
+            top: "50%",
+            transform: "translateY(-50%)"
+          }, children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { width: "20", height: "20", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M19 12H5M12 19l-7-7 7-7" }) }) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { style: { fontSize: 16, fontWeight: 600, color: "#fff", margin: 0 }, children: "Confirm Warp" })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { flex: 1, overflowY: "auto", padding: "20px" }, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { textAlign: "center", padding: "20px 0 24px" }, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { fontSize: 32, fontWeight: 600, color: "#fff", marginBottom: 4 }, children: [
+              inputAmount,
+              " ",
+              fromToken
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { fontSize: 13, color: "#6b6b6b" }, children: [
+              fromChain,
+              " → ",
+              toChain
+            ] })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { borderBottom: "1px solid rgba(255,255,255,0.06)" }, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }, children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 13, color: "#6b6b6b" }, children: "You send" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { style: { fontSize: 13, color: "#fff", fontWeight: 500 }, children: [
+                inputAmount,
+                " ",
+                fromToken
+              ] })
+            ] }),
+            bridgeFees.flatFee > 0 || bridgeFees.pctFeeBps > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+              bridgeFees.flatFee > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }, children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 13, color: "#6b6b6b" }, children: "Flat fee" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { style: { fontSize: 13, color: "#fff", fontWeight: 500 }, children: [
+                  bridgeFees.flatFee.toFixed(2),
+                  " ",
+                  fromToken
+                ] })
+              ] }),
+              bridgeFees.pctFeeBps > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }, children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { style: { fontSize: 13, color: "#6b6b6b" }, children: [
+                  "Fee (",
+                  (bridgeFees.pctFeeBps / 100).toFixed(2),
+                  "%)"
+                ] }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { style: { fontSize: 13, color: "#fff", fontWeight: 500 }, children: [
+                  pctFee.toFixed(4),
+                  " ",
+                  fromToken
+                ] })
+              ] })
+            ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }, children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 13, color: "#6b6b6b" }, children: "Bridge fee" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 13, color: "#22c55e", fontWeight: 500 }, children: "Free" })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }, children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 13, color: "#6b6b6b" }, children: "You receive" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { style: { fontSize: 13, color: "#fff", fontWeight: 600 }, children: [
+                "≈ ",
+                receiveAmountNet.toFixed(2),
+                " ",
+                toToken
+              ] })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }, children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 13, color: "#6b6b6b" }, children: "Network fee" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 13, color: "#6b6b6b" }, children: isSolToX1 ? "< 0.001 SOL" : "< 0.001 XN" })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0" }, children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 13, color: "#6b6b6b" }, children: "Estimated time" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { fontSize: 13, color: "#6b6b6b" }, children: "2–5 min" })
+            ] })
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { style: { padding: "12px 20px 20px", borderTop: "1px solid rgba(255,255,255,0.06)" }, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            onClick: handleBridge,
+            style: {
+              width: "100%",
+              padding: "14px 20px",
+              background: "#0274fb",
+              border: "none",
+              borderRadius: 12,
+              color: "#fff",
+              fontSize: 15,
+              fontWeight: 600,
+              cursor: "pointer"
+            },
+            children: "Confirm Warp"
+          }
+        ) })
+      ] });
+    })()
   ] });
 }
 const LAMPORTS_PER_SOL = 1e9;
@@ -33611,15 +34513,15 @@ function isOffCurve(bytes) {
   const legendre = modPow(x2, exp, p2);
   return legendre !== BigInt(1) && legendre !== BigInt(0);
 }
-function modPow(base, exp, mod) {
+function modPow(base, exp, mod2) {
   let result = BigInt(1);
-  base = base % mod;
+  base = base % mod2;
   while (exp > 0) {
     if (exp % BigInt(2) === BigInt(1)) {
-      result = result * base % mod;
+      result = result * base % mod2;
     }
     exp = exp / BigInt(2);
-    base = base * base % mod;
+    base = base * base % mod2;
   }
   return result;
 }
@@ -35921,7 +36823,20 @@ function DAppApproval({ wallet, requestId, onComplete }) {
       } catch (e) {
         logger$1.warn("[DAppApproval] Failed to send error to background:", e);
       }
-      setError(getUserFriendlyError(err, ErrorMessages.transaction.failed));
+      const errMsg = (err == null ? void 0 : err.message) || "";
+      let friendlyError;
+      if (errMsg.includes("custom program error")) {
+        if (errMsg.includes("0x1775") || errMsg.includes("0x1771")) {
+          friendlyError = "Swap failed: price moved beyond slippage tolerance. Please increase slippage on the DApp and try again.";
+        } else if (errMsg.includes("0x1786")) {
+          friendlyError = "Invalid market state. The liquidity pool may be temporarily unavailable. Please try again later.";
+        } else if (errMsg.includes("0x1787")) {
+          friendlyError = "Swap route expired or liquidity changed. Please refresh and try again.";
+        } else if (errMsg.includes("0xbc4")) {
+          friendlyError = "Price moved beyond slippage tolerance. Please increase slippage on the DApp or use a smaller amount.";
+        }
+      }
+      setError(friendlyError || getUserFriendlyError(err, ErrorMessages.transaction.failed));
       setProcessing(false);
     } finally {
       signingInProgress.current = false;
@@ -37059,10 +37974,14 @@ function App() {
     checkHasPassword();
   }, []);
   const hasPassword = hasPasswordAsync;
+  const lastStorageUpdateRef = reactExports.useRef(0);
   const updateActivity = reactExports.useCallback(() => {
     const now = Date.now();
     lastActivityRef.current = now;
-    storage.set("lastActivity", now);
+    if (now - lastStorageUpdateRef.current > 3e4) {
+      lastStorageUpdateRef.current = now;
+      storage.set("lastActivity", now);
+    }
   }, []);
   reactExports.useEffect(() => {
     if (!passwordProtection || !hasPassword) {
@@ -37900,11 +38819,15 @@ function App() {
         BridgeScreen,
         {
           wallet,
+          userTokens,
           onBack: (action) => {
             setScreen("main");
             if (action === "network") {
               sessionStorage.setItem("openNetworkPanel", "true");
             }
+          },
+          onNetworkSwitch: (targetNetwork) => {
+            wallet.setNetwork(targetNetwork);
           }
         }
       ),
@@ -37949,6 +38872,12 @@ function App() {
         url: "https://degen.fyi",
         logo: "/icons/48-degen.png",
         desc: "Launchpad"
+      },
+      {
+        name: "CORE",
+        url: "https://core.x1.xyz",
+        logo: "/icons/48-core.png",
+        desc: "Staking & Rewards"
       },
       {
         name: "Vero",

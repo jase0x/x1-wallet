@@ -1957,10 +1957,15 @@ export default function SwapScreen({ wallet, onBack, onSwapComplete, userTokens 
           // Suggest increasing slippage
           const suggestedSlippage = Math.min(slippage * 2, 10);
           userMessage = `Price moved beyond ${slippage}% slippage tolerance. Try increasing slippage to ${suggestedSlippage}% or higher, or use a smaller amount.`;
+        } else if (userMessage.includes('0x1775') || userMessage.includes('6005')) {
+          // 0x1775 (6005) - Slippage tolerance exceeded / route percentage error
+          const suggestedSlippage = Math.min(slippage * 2, 10);
+          userMessage = `Swap failed due to price movement beyond ${slippage}% slippage tolerance. Try increasing slippage to ${suggestedSlippage}% or retry when the market is less volatile.`;
         } else if (userMessage.includes('0x1771') || userMessage.includes('6001')) {
-          // Insufficient funds in pool
-          userMessage = 'Insufficient liquidity in the pool for this swap size. Try a smaller amount.';
-        } else if (userMessage.includes('0x1') && !userMessage.includes('0x1786') && !userMessage.includes('0x1787') && !userMessage.includes('0x1771')) {
+          // Slippage tolerance exceeded (variant)
+          const suggestedSlippage = Math.min(slippage * 2, 10);
+          userMessage = `Price moved beyond ${slippage}% slippage tolerance. Try increasing slippage to ${suggestedSlippage}% or use a smaller amount.`;
+        } else if (userMessage.includes('0x1') && !userMessage.includes('0x1786') && !userMessage.includes('0x1787') && !userMessage.includes('0x1771') && !userMessage.includes('0x1775')) {
           userMessage = 'Slippage tolerance exceeded. Try increasing slippage or reducing the swap amount.';
         } else if (userMessage.includes('0x0')) {
           userMessage = 'Transaction simulation failed. This may be a temporary API issue. Please try again in a few minutes.';
