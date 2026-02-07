@@ -1227,6 +1227,11 @@ async function fetchXDEXWalletTokens(walletAddress, network) {
       });
 
       if (tokensToQuote.length > 0) {
+        // Clear wallet API prices first — they come from other chains and are unreliable
+        for (const [mint, data] of tokensToQuote) {
+          data.price = null;
+        }
+
         logger.log('[XDEX] Fetching swap quote prices for', tokensToQuote.length, 'X1 tokens');
         const batchSize = 5;
         for (let i = 0; i < tokensToQuote.length; i += batchSize) {
@@ -1237,9 +1242,8 @@ async function fetchXDEXWalletTokens(walletAddress, network) {
           results.forEach((result, idx) => {
             if (result.status === 'fulfilled' && result.value !== null) {
               const [mint, data] = batch[idx];
-              const oldPrice = data.price;
               data.price = result.value;
-              logger.log('[XDEX] Pool price for', data.symbol || mint.slice(0, 8), ':', oldPrice, '->', result.value);
+              logger.log('[XDEX] Pool price for', data.symbol || mint.slice(0, 8), ':', result.value);
             }
           });
         }
