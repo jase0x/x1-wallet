@@ -437,6 +437,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return;
   }
   
+  // Handle wallet unlock - reset lastSensitiveOp for all connected sites
+  // This allows signing immediately after password entry without re-auth
+  if (message.type === 'wallet-unlocked') {
+    console.log('[Background] Wallet unlocked - resetting lastSensitiveOp for all sites');
+    getConnectedSites().then(sites => {
+      const now = Date.now();
+      Object.keys(sites).forEach(origin => {
+        sites[origin].lastSensitiveOp = now;
+      });
+      return saveConnectedSites(sites);
+    }).then(() => {
+      console.log('[Background] Reset lastSensitiveOp for all connected sites');
+      sendResponse({ success: true });
+    }).catch(err => {
+      console.error('[Background] Error resetting lastSensitiveOp:', err);
+      sendResponse({ success: false, error: err.message });
+    });
+    return true; // Keep channel open for async response
+  }
+  
   // Handle provider requests from content script
   if (message.type === 'provider-request') {
     handleProviderRequest(message, sender).then(sendResponse).catch(err => {
