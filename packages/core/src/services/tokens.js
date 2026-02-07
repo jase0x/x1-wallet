@@ -132,63 +132,43 @@ export async function fetchSolanaUSDCPrice() {
 }
 
 // ============================================
-// XDEX SWAP QUOTE PRICE - Pool-based pricing for X1 tokens
+// XDEX TOKEN PRICE API - Accurate pool-based pricing
 // ============================================
-const XDEX_SWAP_API = 'https://api.xdex.xyz/api/xendex/swap/quote';
-const swapQuotePriceCache = new Map();
-const SWAP_QUOTE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const XDEX_TOKEN_PRICE_API = 'https://api.xdex.xyz/api/token-price/price';
+const tokenPriceCache = new Map();
+const TOKEN_PRICE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 /**
- * Get the pool-based price for an X1 token via XDEX swap quote (token → USDC.X)
- * Tries increasing amounts since very low-value tokens (e.g. XEN) return zero for small quotes.
+ * Get the price for a token from the XDEX token-price API.
+ * Returns the USD price derived from on-chain pool data.
  */
-async function fetchSwapQuotePrice(mint, network = 'X1 Mainnet') {
-  const cacheKey = `swap-price:${mint}`;
-  const cached = swapQuotePriceCache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < SWAP_QUOTE_CACHE_TTL) {
+async function fetchXDEXTokenPrice(mint, network = 'X1 Mainnet') {
+  const cacheKey = `xdex-tp:${mint}`;
+  const cached = tokenPriceCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < TOKEN_PRICE_CACHE_TTL) {
     return cached.price;
   }
 
-  // Try increasing amounts: 1, 1K, 1M, 1B - needed for very low-value tokens
-  const amounts = ['1', '1000', '1000000', '1000000000'];
+  try {
+    const params = new URLSearchParams({ network, token_address: mint });
+    const response = await fetch(`${XDEX_TOKEN_PRICE_API}?${params}`, {
+      headers: { 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(5000)
+    });
 
-  for (const amount of amounts) {
-    try {
-      const params = new URLSearchParams({
-        network,
-        token_in: mint,
-        token_out: USDCX_MINT,
-        token_in_amount: amount,
-        is_exact_amount_in: 'true'
-      });
-
-      const response = await fetch(`${XDEX_SWAP_API}?${params}`, {
-        headers: { 'Accept': 'application/json' },
-        signal: AbortSignal.timeout(3000)
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data?.success === false) continue; // "output amount is zero" - try larger amount
-        const rate = parseFloat(data?.data?.rate || 0);
-        if (rate > 0) {
-          swapQuotePriceCache.set(cacheKey, { price: rate, timestamp: Date.now() });
-          logger.log('[SwapQuote] Pool price for', mint.slice(0, 8), ':', rate, '(amount:', amount + ')');
-          return rate;
-        }
-        // If rate is 0 but outputAmount exists, compute from output/input
-        const output = parseFloat(data?.data?.outputAmount || 0);
-        const input = parseFloat(data?.data?.inputAmount || amount);
-        if (output > 0 && input > 0) {
-          const price = output / input;
-          swapQuotePriceCache.set(cacheKey, { price, timestamp: Date.now() });
-          logger.log('[SwapQuote] Computed price for', mint.slice(0, 8), ':', price, '(amount:', amount + ')');
+    if (response.ok) {
+      const data = await response.json();
+      if (data?.success && data?.data?.price !== undefined) {
+        const price = parseFloat(data.data.price);
+        if (!isNaN(price) && price >= 0) {
+          tokenPriceCache.set(cacheKey, { price, timestamp: Date.now() });
+          logger.log('[TokenPrice] XDEX price for', mint.slice(0, 8), ':', price);
           return price;
         }
       }
-    } catch (e) {
-      logger.warn('[SwapQuote] Failed for', mint.slice(0, 8), 'amount:', amount, ':', e.message);
     }
+  } catch (e) {
+    logger.warn('[TokenPrice] Failed for', mint.slice(0, 8), ':', e.message);
   }
   return null;
 }
@@ -1230,35 +1210,34 @@ async function fetchXDEXWalletTokens(walletAddress, network) {
       logger.warn('[XDEX] Failed to apply Solana USDC price:', e.message);
     }
 
-    // For X1 networks, use XDEX swap quote (pool-based) prices for all tokens
+    // For X1 networks, use XDEX token-price API for accurate pool-based prices
     // The wallet API can return incorrect prices sourced from other chains
     if (networkName.includes('X1')) {
       const NATIVE_MINT = 'So11111111111111111111111111111111111111112';
       const skipMints = new Set([SOLANA_USDC_MINT, USDCX_MINT, NATIVE_MINT]);
-      const tokensToQuote = Object.entries(priceMap).filter(([mint, data]) => {
+      const tokensToPrice = Object.entries(priceMap).filter(([mint, data]) => {
         if (skipMints.has(mint)) return false;
         if (data.isLPToken) return false;
         return true;
       });
 
-      if (tokensToQuote.length > 0) {
+      if (tokensToPrice.length > 0) {
         // Clear wallet API prices first — they come from other chains and are unreliable
-        for (const [mint, data] of tokensToQuote) {
+        for (const [, data] of tokensToPrice) {
           data.price = null;
         }
 
-        logger.log('[XDEX] Fetching swap quote prices for', tokensToQuote.length, 'X1 tokens');
+        logger.log('[XDEX] Fetching token prices for', tokensToPrice.length, 'X1 tokens');
         const batchSize = 5;
-        for (let i = 0; i < tokensToQuote.length; i += batchSize) {
-          const batch = tokensToQuote.slice(i, i + batchSize);
+        for (let i = 0; i < tokensToPrice.length; i += batchSize) {
+          const batch = tokensToPrice.slice(i, i + batchSize);
           const results = await Promise.allSettled(
-            batch.map(([mint]) => fetchSwapQuotePrice(mint, networkName))
+            batch.map(([mint]) => fetchXDEXTokenPrice(mint, networkName))
           );
           results.forEach((result, idx) => {
             if (result.status === 'fulfilled' && result.value !== null) {
-              const [mint, data] = batch[idx];
+              const [, data] = batch[idx];
               data.price = result.value;
-              logger.log('[XDEX] Pool price for', data.symbol || mint.slice(0, 8), ':', result.value);
             }
           });
         }
